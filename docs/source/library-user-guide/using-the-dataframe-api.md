@@ -39,12 +39,26 @@ DataFusion [`DataFrame`]s are modeled after the [Pandas DataFrame] interface and
 
 ## SessionContext: The Entry Point for DataFrames
 
-The [`SessionContext`] is the main interface for executing queries with DataFusion. It maintains the state of the connection between a user and an instance of the DataFusion engine, serving as:
+The [`SessionContext`] is the main interface for executing queries with DataFusion. It maintains the state of the connection between a user and an instance of the DataFusion engine.
 
-- **DataFrame factory**: Create DataFrames from CSV, Parquet, JSON, Avro files, or in-memory Arrow data
-- **Table catalog**: Register and manage tables, views, and custom data sources by name
-- **Execution environment**: Holds configuration, optimizer rules, and runtime state
-- **Query coordinator**: Manages optimization and execution of both DataFrame and SQL queries
+### SessionContext Method Categories
+
+Like DataFrame, SessionContext exposes a large API surface that becomes easier to navigate once you understand the main categories:
+
+| Category               | Purpose                                | Examples                                                         |
+| ---------------------- | -------------------------------------- | ---------------------------------------------------------------- |
+| **DataFrame Creation** | Create DataFrames from various sources | `read_parquet()`, `read_csv()`, `sql()`, `table()`               |
+| **Table Management**   | Register and manage tables by name     | `register_table()`, `register_parquet()`, `deregister_table()`   |
+| **Configuration**      | Control execution behavior             | `with_config()`, `state()`                                       |
+| **Catalog Operations** | Manage schemas and databases           | `catalog()`, `catalog_names()`                                   |
+| **Extensions**         | Add custom functionality               | `register_udf()`, `register_udaf()`, `register_table_provider()` |
+
+**Common pattern:** Most workflows follow this sequence:
+
+1. **Create context** → Configure if needed
+2. **Load/register data** → Files, tables, or in-memory data
+3. **Create DataFrame** → From files, tables, or SQL
+4. **Execute** → Call action methods
 
 **Query execution flow:**
 
@@ -335,16 +349,32 @@ let df = ctx.read_batches(batches)?;
 
 ### 5. From Inline Data (using the `dataframe!` macro)
 
-Create DataFrames from inline literals using the [`dataframe!`] macro. This is ideal for:
+Create DataFrames from inline literals. This is ideal for quick examples, unit tests, prototyping, and learning without external files.
 
-- **Quick examples and documentation**: Demonstrate DataFusion features without external files
-- **Unit tests**: Provide test data inline without fixtures
-- **Prototyping**: Experiment with transformations on small datasets
-- **Learning**: Follow tutorials and examples without setup overhead
+#### Method 1: `DataFrame::from_columns()` - Pandas-like approach\*\*
 
-**Syntax:** `dataframe!("column_name" => [values], ...)?`
+If you're coming from pandas, [`DataFrame::from_columns()`] provides a familiar dictionary-like pattern:
 
-**Example - Basic usage:**
+```rust
+use std::sync::Arc;
+use datafusion::prelude::*;
+use datafusion::arrow::array::{ArrayRef, Int32Array, StringArray};
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let df = DataFrame::from_columns(vec![
+        ("id", Arc::new(Int32Array::from(vec![1, 2, 3])) as ArrayRef),
+        ("name", Arc::new(StringArray::from(vec!["Alice", "Bob", "Carol"])) as ArrayRef),
+    ])?;
+    df.show().await?;
+    Ok(())
+}
+```
+
+#### Method 2: `dataframe!` macro - Simplified syntax\*\*
+
+The [`dataframe!`] macro provides the same functionality with much less boilerplate:
 
 ```rust
 use datafusion::prelude::*;
@@ -354,86 +384,236 @@ use datafusion::error::Result;
 async fn main() -> Result<()> {
     let df = dataframe!(
         "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"],
-        "age" => [25, 30, 35]
+        "name" => ["Alice", "Bob", "Carol"]
     )?;
     df.show().await?;
-    // Outputs:
-    // +----+-------+-----+
-    // | id | name  | age |
-    // +----+-------+-----+
-    // | 1  | Alice | 25  |
-    // | 2  | Bob   | 30  |
-    // | 3  | Carol | 35  |
-    // +----+-------+-----+
     Ok(())
 }
 ```
 
 **Handling null values:**
 
-The macro automatically handles `Option` types for nullable columns:
+Both approaches use Rust's `Option` type for nullable values:
 
 ```rust
+// With dataframe! macro
 let df = dataframe!(
     "id" => [1, 2, 3],
-    "value" => [Some("foo"), None, Some("bar")],  // String column with nulls
-    "score" => [Some(100), Some(200), None]       // Int column with nulls
+    "value" => [Some("foo"), None, Some("bar")],  // Nullable string column
+    "score" => [Some(100), Some(200), None]       // Nullable int column
 )?;
 ```
 
+> **Note on null values**: In Rust, `Some(value)` represents a present value and `None` represents a null (SQL `NULL`). For important distinctions between `None`, `Null`, and `NaN`, see [Understanding Null Values](../../user-guide/dataframe.md#understanding-null-values-none-null-and-nan) in the Users Guide.
+
+**Key differences:**
+
+| Aspect                | `from_columns()`                           | `dataframe!` macro         |
+| --------------------- | ------------------------------------------ | -------------------------- |
+| **Syntax**            | Requires `Arc`, `ArrayRef`, type imports   | Minimal, infers everything |
+| **Use case**          | When you have existing Arrow arrays        | Quick inline data creation |
+| **Type inference**    | Manual (`Int32Array`, `StringArray`, etc.) | Automatic from literals    |
+| **Verbosity**         | ~10 lines for simple example               | ~3 lines for same result   |
+| **Nullability**       | Use `Some(value)` / `None`                 | Same - `Some()` / `None`   |
+| **Pandas similarity** | Dictionary-like `vec![("col", array)]`     | Cleaner column syntax      |
+
+#### Testing with `assert_batches_eq!`
+
+When writing tests, the `dataframe!` macro pairs perfectly with [`assert_batches_eq!`] for validating results. While `dataframe!` creates test data, `assert_batches_eq!` validates that your DataFrame operations produce the expected output.
+
+The [`assert_batches_eq!`] macro compares the pretty-formatted output of RecordBatches with an expected vector of strings. It's designed so that **failure output can be directly copy/pasted** into your test code as expected results—making test maintenance simple. This works with **any** DataFrame (from files, SQL, in-memory, etc.), not just those created with `dataframe!`.
+
+**How it works:**
+
+- **On success**: Returns `()` silently (test passes)
+- **On mismatch**: Panics with a readable diff showing expected vs actual tables
+- **Comparison**: Exact string match of the pretty-printed table (order-sensitive)
+- **Error location**: Being a macro, errors appear on the correct line in your test
+
+**Signature:** `assert_batches_eq!(expected_lines: &[&str], batches: &[RecordBatch])`
+
+**Example - Testing DataFrame transformations:**
+
+```rust
+use datafusion::prelude::*;
+use datafusion::assert_batches_eq;
+
+#[tokio::test]
+async fn test_filter_and_aggregate() -> datafusion::error::Result<()> {
+    // Create test data
+    let df = dataframe!(
+        "department" => ["Sales", "Sales", "Engineering", "Engineering"],
+        "salary" => [50000, 55000, 80000, 85000]
+    )?;
+
+    // Apply transformations
+    let result = df
+        .aggregate(vec![col("department")], vec![sum(col("salary")).alias("total")])?
+        .filter(col("total").gt(lit(100000)))?
+        .sort(vec![col("total").sort(false, true)])?;
+
+    // Collect and validate
+    let batches = result.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+-------------+--------+",
+            "| department  | total  |",
+            "+-------------+--------+",
+            "| Engineering | 165000 |",
+            "| Sales       | 105000 |",
+            "+-------------+--------+",
+        ],
+        &batches
+    );
+
+    Ok(())
+}
+```
+
+**Key features:**
+
+- **Failure output is copy-pasteable**: When tests fail, you can copy the actual output directly into your expected result
+- **Handles NULL and NaN distinctly**: Nulls display as empty cells or `NULL`, NaN displays as `NaN`
+- **Works with any data source**: Files, SQL, in-memory, etc.—not just `dataframe!` macro
+
+**Variants:**
+
+- [`assert_batches_sorted_eq!`]: For order-insensitive comparisons
+
 ### 6. Advanced: Constructing from a LogicalPlan
 
-For advanced integrations, you can construct a `DataFrame` directly from a pre-built [`LogicalPlan`] and [`SessionState`] using [`DataFrame::new`]. This is useful when you build plans with [`LogicalPlanBuilder`] or when adapting plans from other systems. Most users won't need this; prefer the higher-level creation methods above.
+For advanced integrations, you can construct a `DataFrame` directly from a pre-built [`LogicalPlan`] using [`DataFrame::new`]. This low-level approach is useful for:
+
+- **Building custom query builders**: Create your own DSL or API that compiles to DataFusion plans
+- **Integrating with other systems**: Convert plans from Substrait, Spark, or other query engines
+- **Programmatic plan construction**: Use [`LogicalPlanBuilder`] for complex plan manipulations
+- **Query rewriting**: Intercept and modify plans before execution
+- **Testing optimizer rules**: Create specific plan structures for testing
+
+**Example - Basic construction:**
+
+```rust
+use datafusion::prelude::*;
+use datafusion::logical_expr::LogicalPlanBuilder;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Build a plan using LogicalPlanBuilder
+    let plan = LogicalPlanBuilder::empty(true).build()?;
+
+    // Construct DataFrame from plan and session state
+    let df = DataFrame::new(ctx.state(), plan);
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+**Example - Building a plan programmatically:**
 
 ```rust
 use datafusion::logical_expr::LogicalPlanBuilder;
 
-// Build a plan using LogicalPlanBuilder
-let plan = LogicalPlanBuilder::empty(true).build()?;
+// Load a table and build a complex plan
+let table = ctx.table("users").await?;
+let (_state, base_plan) = table.into_parts();
 
-// Construct DataFrame from plan and session state
+let plan = LogicalPlanBuilder::from(base_plan)
+    .filter(col("age").gt(lit(21)))?
+    .project(vec![col("name"), col("age")])?
+    .sort(vec![col("age").sort(false, true)])?
+    .limit(0, Some(10))?
+    .build()?;
+
 let df = DataFrame::new(ctx.state(), plan);
 ```
 
-See [`DataFrame::new`] and [`LogicalPlanBuilder`] documentation for details.
+**Going deeper:**
 
-**For testing:** DataFusion provides the [`assert_batches_eq!`] macro to validate query results in tests:
+- **[`DataFrame::new`]**: Low-level constructor documentation
+- **[`LogicalPlanBuilder`]**: Builder API for constructing plans
+- **[`LogicalPlan`]**: Plan node types and structure
+- **[Query Optimizer guide](query-optimizer.md)**: Understanding how plans are optimized
+- **Relationship between `LogicalPlan`s and `DataFrame`s**: See [section below](#relationship-between-logicalplans-and-dataframes) for converting between them
+
+Most users won't need this level of control—the higher-level creation methods (1-5 above) cover typical use cases. Use this approach when you need to work directly with DataFusion's query plan representation.
+
+## DataFrame Execution
+
+DataFusion [`DataFrame`]s use **lazy evaluation**: transformations build a query plan without processing data. Execution only happens when you call an action method like [`collect()`] or [`show()`]. This allows DataFusion to optimize the entire query before touching any data.
+
+**Key properties:**
+
+- **Reusable**: DataFrames can be executed multiple times—each execution re-runs the optimized query
+- **Async**: All execution methods are async and require an async runtime (e.g., `tokio`)
+- **Non-destructive**: Executing a DataFrame doesn't consume it; you can execute the same DataFrame repeatedly
+
+> **Learn more about lazy evaluation**: See [How DataFrames Work](../user-guide/dataframe.md#how-dataframes-work-lazy-evaluation-and-arrow-output) in the Users Guide for a detailed explanation of lazy evaluation and optimization.
+
+### Execution Methods
+
+Execution methods trigger query execution. They fall into two categories:
+
+#### Methods that Return Results
+
+These methods execute the query and return data to your application:
+
+| Method                               | Returns                          | Memory Usage              | Use When                                                       |
+| ------------------------------------ | -------------------------------- | ------------------------- | -------------------------------------------------------------- |
+| **[`collect()`]**                    | `Vec<RecordBatch>`               | High (entire result set)  | You need all results in memory for further processing          |
+| **[`collect_partitioned()`]**        | `Vec<Vec<RecordBatch>>`          | High (entire result set)  | Preserving partition boundaries (e.g., parallel writing)       |
+| **[`execute_stream()`]**             | `SendableRecordBatchStream`      | Low (one batch at a time) | Processing large results that don't fit in memory              |
+| **[`execute_stream_partitioned()`]** | `Vec<SendableRecordBatchStream>` | Low (one batch at a time) | Streaming results while maintaining partition information      |
+| **[`count()`]**                      | `usize`                          | Low (optimized)           | Getting total row count without fetching data                  |
+| **[`show()`]**                       | `()`                             | Low (configurable limit)  | Interactive exploration and debugging                          |
+| **[`show_limit()`]**                 | `()`                             | Low (limited rows)        | Quick data preview with specific row limit                     |
+| **[`cache()`]**                      | `DataFrame`                      | High (entire result set)  | Reusing expensive computations (only if result fits in memory) |
+
+#### Methods that Write Results
+
+These methods execute the query and write results to external destinations (covered in detail in [Write DataFrame to Files](#write-dataframe-to-files)):
+
+| Method                  | Returns | Memory Usage    | Use When                                   |
+| ----------------------- | ------- | --------------- | ------------------------------------------ |
+| **[`write_parquet()`]** | `()`    | Low (streaming) | Persisting results in columnar format      |
+| **[`write_csv()`]**     | `()`    | Low (streaming) | Exporting for spreadsheets or other tools  |
+| **[`write_json()`]**    | `()`    | Low (streaming) | Exporting for web APIs or document stores  |
+| **[`write_table()`]**   | `()`    | Low (streaming) | Updating or creating tables in the catalog |
+
+**For testing:** After collecting results with [`collect()`], you can validate them using [`assert_batches_eq!`] or [`assert_batches_sorted_eq!`] for order-independent comparisons. See [From Inline Data](#5-from-inline-data-using-the-dataframe-macro) for testing examples.
+
+**Performance tuning:** Execution behavior can be configured via [`SessionConfig`]. See [Performance and Best Practices](#performance-and-best-practices) for details on batch sizes, parallelism, and optimization controls.
+
+### DataFrame Reusability
+
+DataFrames can be executed multiple times. Each execution re-runs the optimized query:
 
 ```rust
-use datafusion::assert_batches_eq;
+use datafusion::prelude::*;
 
-let results = dataframe.collect().await?;
-assert_batches_eq!(
-    &[
-        "+----+--------------+",
-        "| id | bank_account |",
-        "+----+--------------+",
-        "| 1  | 9000         |",
-        "| 2  | 8000         |",
-        "+----+--------------+",
-    ],
-    &results
-);
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    let df = ctx.read_csv("data.csv", CsvReadOptions::new()).await?
+        .filter(col("amount").gt(lit(100)))?;
+
+    // First execution - runs the query
+    let result1 = df.clone().collect().await?;
+    println!("First execution: {} batches", result1.len());
+
+    // Second execution - re-runs the same query (may re-read the file)
+    let result2 = df.clone().collect().await?;
+    println!("Second execution: {} batches", result2.len());
+
+    // Each execution is independent and starts fresh
+    Ok(())
+}
 ```
 
-Now let's explore the different ways to execute DataFrames and retrieve results.
-
-## Collect / Streaming Exec
-
-DataFusion [`DataFrame`]s are "lazy", meaning they do no processing until
-they are executed, which allows for additional optimizations.
-
-### Execution Methods: Triggering Query Execution
-
-**Execution methods** are what actually run your query. Until you call one of these methods, DataFusion just builds up a plan without touching any data. The main execution methods are:
-
-1. **[`collect()`]**: Executes the query and buffers all output into a `Vec<RecordBatch>` in memory
-2. **[`execute_stream()`]**: Begins execution and returns a stream that incrementally computes output
-3. **[`show()`]**: Executes the query and prints results to stdout (great for exploration)
-4. **[`cache()`]**: Executes the query and buffers the output into a new in-memory DataFrame
-
-**For testing:** After collecting results with [`collect()`], you can validate them using [`assert_batches_eq!`] (as shown in the previous section).
+**Tip:** If you need to execute the same expensive query multiple times, use [`cache()`] to materialize results once and reuse them.
 
 ### Collecting Results into Memory
 
@@ -474,8 +654,9 @@ async fn main() -> Result<()> {
     // begin execution (returns quickly, does not compute results)
     let mut stream = df.execute_stream().await?;
     // results are returned incrementally as they are computed
-    while let Some(record_batch) = stream.next().await {
-        println!("{record_batch:?}");
+    while let Some(batch_result) = stream.next().await {
+        let batch = batch_result?; // Handle errors from stream
+        println!("Received batch with {} rows", batch.num_rows());
     }
     Ok(())
 }
@@ -526,8 +707,10 @@ async fn main() -> datafusion::error::Result<()> {
 
     for (i, mut stream) in streams.into_iter().enumerate() {
         println!("Processing partition {i}");
-        while let Some(batch) = stream.next().await {
+        while let Some(batch_result) = stream.next().await {
+            let batch = batch_result?; // Handle errors from stream
             // Process batch from this partition
+            println!("  Batch: {} rows", batch.num_rows());
         }
     }
 
@@ -559,181 +742,6 @@ async fn main() -> datafusion::error::Result<()> {
     // Now you can reuse cached_df multiple times without re-execution
     let result1 = cached_df.clone().filter(col("total").gt(lit(10000)))?;
     let result2 = cached_df.clone().sort(vec![col("total").sort(false, true)])?;
-
-    Ok(())
-}
-```
-
-# Write DataFrame to Files
-
-You can write the contents of a `DataFrame` to files or tables. When writing,
-DataFusion executes the `DataFrame` and streams the results to the output.
-
-**SQL Equivalents:**
-
-- `write_table()` is similar to `INSERT INTO table_name ...`
-- `write_parquet()`, `write_csv()`, etc. are similar to `COPY TO` in some SQL dialects
-- DataFusion also supports `COPY TO` via SQL for file writes
-
-DataFusion comes with support for writing `csv`, `json` `arrow` `avro`, and
-`parquet` files, and supports writing custom file formats via API (see
-[`custom_file_format.rs`] for an example)
-
-For example, to read a CSV file and write it to a parquet file, use the
-[`DataFrame::write_parquet`] method
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::dataframe::DataFrameWriteOptions;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    // read example.csv file into a DataFrame
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    // stream the contents of the DataFrame to the `example.parquet` file
-    let target_path = tempfile::tempdir()?.path().join("example.parquet");
-    df.write_parquet(
-        target_path.to_str().unwrap(),
-        DataFrameWriteOptions::new(),
-        None, // writer_options
-    ).await;
-    Ok(())
-}
-```
-
-The output file will look like (Example Output):
-
-```sql
-> select * from '../datafusion/core/example.parquet';
-+---+---+---+
-| a | b | c |
-+---+---+---+
-| 1 | 2 | 3 |
-+---+---+---+
-```
-
-### Advanced Write Options
-
-You can control partitioning, compression, and other aspects of file writing:
-
-**Partitioned Parquet Files:**
-
-```rust
-use datafusion::prelude::*;
-use datafusion::dataframe::DataFrameWriteOptions;
-use parquet::basic::Compression;
-use parquet::file::properties::WriterProperties;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-    let df = dataframe!(
-        "year" => [2023, 2023, 2024, 2024],
-        "month" => [12, 12, 1, 1],
-        "sales" => [100, 200, 150, 300]
-    )?;
-
-    // Write partitioned by year and month
-    df.write_parquet(
-        "output/sales/",
-        DataFrameWriteOptions::new()
-            .with_partition_by(vec!["year".to_string(), "month".to_string()]),
-        Some(
-            WriterProperties::builder()
-                .set_compression(Compression::SNAPPY)
-                .build()
-        )
-    ).await?;
-
-    // Creates structure: output/sales/year=2023/month=12/...
-    //                    output/sales/year=2024/month=1/...
-    Ok(())
-}
-```
-
-**CSV with Custom Delimiters and Compression:**
-
-```rust
-use datafusion::prelude::*;
-use datafusion::dataframe::DataFrameWriteOptions;
-use datafusion::common::config::CsvOptions;
-use datafusion::common::parsers::CompressionTypeVariant;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.read_csv("input.csv", CsvReadOptions::new()).await?;
-
-    // Write CSV with tab delimiter and gzip compression
-    df.write_csv(
-        "output.csv.gz",
-        DataFrameWriteOptions::new(),
-        Some(
-            CsvOptions::default()
-                .with_delimiter(b'\t')
-                .with_header(true)
-                .with_compression(CompressionTypeVariant::GZIP)
-        )
-    ).await?;
-
-    Ok(())
-}
-```
-
-**Writing to a Registered Table:**
-
-```rust
-use datafusion::prelude::*;
-use datafusion::dataframe::{DataFrameWriteOptions, InsertOp};
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    // Create a table
-    ctx.sql("CREATE EXTERNAL TABLE my_table (id INT, name TEXT)
-             STORED AS PARQUET LOCATION './data/my_table/'")
-        .await?
-        .collect()
-        .await?;
-
-    // Write DataFrame to the table
-    let df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
-
-    df.write_table(
-        "my_table",
-        DataFrameWriteOptions::new()
-            .with_insert_operation(InsertOp::Append)
-    ).await?;
-
-    Ok(())
-}
-```
-
-**Single File Output:**
-
-By default, DataFusion may write multiple files (one per partition). To force a single output file:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::dataframe::DataFrameWriteOptions;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.read_csv("input.csv", CsvReadOptions::new()).await?;
-
-    df.write_parquet(
-        "output/data.parquet",
-        DataFrameWriteOptions::new()
-            .with_single_file_output(true),
-        None
-    ).await?;
 
     Ok(())
 }
@@ -1296,6 +1304,181 @@ Common features:
 - `parquet`: Parquet support (enabled by default)
 - `compression`: Compression support for various formats
 
+## Write DataFrame to Files
+
+You can write the contents of a `DataFrame` to files or tables. When writing,
+DataFusion executes the `DataFrame` and streams the results to the output.
+
+**SQL Equivalents:**
+
+- `write_table()` is similar to `INSERT INTO table_name ...`
+- `write_parquet()`, `write_csv()`, etc. are similar to `COPY TO` in some SQL dialects
+- DataFusion also supports `COPY TO` via SQL for file writes
+
+DataFusion comes with support for writing `csv`, `json` `arrow` `avro`, and
+`parquet` files, and supports writing custom file formats via API (see
+[`custom_file_format.rs`] for an example)
+
+For example, to read a CSV file and write it to a parquet file, use the
+[`DataFrame::write_parquet`] method
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::dataframe::DataFrameWriteOptions;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+    // read example.csv file into a DataFrame
+    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
+    // stream the contents of the DataFrame to the `example.parquet` file
+    let target_path = tempfile::tempdir()?.path().join("example.parquet");
+    df.write_parquet(
+        target_path.to_str().unwrap(),
+        DataFrameWriteOptions::new(),
+        None, // writer_options
+    ).await;
+    Ok(())
+}
+```
+
+The output file will look like (Example Output):
+
+```sql
+> select * from '../datafusion/core/example.parquet';
++---+---+---+
+| a | b | c |
++---+---+---+
+| 1 | 2 | 3 |
++---+---+---+
+```
+
+### Advanced Write Options
+
+You can control partitioning, compression, and other aspects of file writing:
+
+**Partitioned Parquet Files:**
+
+```rust
+use datafusion::prelude::*;
+use datafusion::dataframe::DataFrameWriteOptions;
+use parquet::basic::Compression;
+use parquet::file::properties::WriterProperties;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+    let df = dataframe!(
+        "year" => [2023, 2023, 2024, 2024],
+        "month" => [12, 12, 1, 1],
+        "sales" => [100, 200, 150, 300]
+    )?;
+
+    // Write partitioned by year and month
+    df.write_parquet(
+        "output/sales/",
+        DataFrameWriteOptions::new()
+            .with_partition_by(vec!["year".to_string(), "month".to_string()]),
+        Some(
+            WriterProperties::builder()
+                .set_compression(Compression::SNAPPY)
+                .build()
+        )
+    ).await?;
+
+    // Creates structure: output/sales/year=2023/month=12/...
+    //                    output/sales/year=2024/month=1/...
+    Ok(())
+}
+```
+
+**CSV with Custom Delimiters and Compression:**
+
+```rust
+use datafusion::prelude::*;
+use datafusion::dataframe::DataFrameWriteOptions;
+use datafusion::common::config::CsvOptions;
+use datafusion::common::parsers::CompressionTypeVariant;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+    let df = ctx.read_csv("input.csv", CsvReadOptions::new()).await?;
+
+    // Write CSV with tab delimiter and gzip compression
+    df.write_csv(
+        "output.csv.gz",
+        DataFrameWriteOptions::new(),
+        Some(
+            CsvOptions::default()
+                .with_delimiter(b'\t')
+                .with_header(true)
+                .with_compression(CompressionTypeVariant::GZIP)
+        )
+    ).await?;
+
+    Ok(())
+}
+```
+
+**Writing to a Registered Table:**
+
+```rust
+use datafusion::prelude::*;
+use datafusion::dataframe::{DataFrameWriteOptions, InsertOp};
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Create a table
+    ctx.sql("CREATE EXTERNAL TABLE my_table (id INT, name TEXT)
+             STORED AS PARQUET LOCATION './data/my_table/'")
+        .await?
+        .collect()
+        .await?;
+
+    // Write DataFrame to the table
+    let df = dataframe!(
+        "id" => [1, 2, 3],
+        "name" => ["Alice", "Bob", "Carol"]
+    )?;
+
+    df.write_table(
+        "my_table",
+        DataFrameWriteOptions::new()
+            .with_insert_operation(InsertOp::Append)
+    ).await?;
+
+    Ok(())
+}
+```
+
+**Single File Output:**
+
+By default, DataFusion may write multiple files (one per partition). To force a single output file:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::dataframe::DataFrameWriteOptions;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+    let df = ctx.read_csv("input.csv", CsvReadOptions::new()).await?;
+
+    df.write_parquet(
+        "output/data.parquet",
+        DataFrameWriteOptions::new()
+            .with_single_file_output(true),
+        None
+    ).await?;
+
+    Ok(())
+}
+```
+
 ## Common Operations Quick Reference
 
 - SELECT a,b → `df.select(vec![col("a"), col("b")])?`
@@ -1326,7 +1509,11 @@ Common features:
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
 [`dataframe::new`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.new
+[`dataframe::from_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.from_columns
 [`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
+[`assert_batches_sorted_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_sorted_eq.html
+[`count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`SessionConfig`]: https://docs.rs/datafusion/latest/datafusion/execution/config/struct.SessionConfig.html
 [`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
 [`sessioncontext` api docs]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
 [`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html

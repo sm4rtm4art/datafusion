@@ -54,9 +54,74 @@ The DataFusion DataFrame API—modeled after pandas but built on Arrow—gives y
 
 ### How DataFrames Work: Lazy Evaluation and Arrow Output
 
-A DataFrame is a **lazy description** of a computation, not the data itself. When you build a DataFrame (e.g., scanning a file or table, applying filters, joins), you're constructing a logical plan that DataFusion optimizes and executes only when you explicitly request results via methods like [`collect`].
+A DataFrame is a **lazy description** of a computation, not the data itself. When you build a DataFrame (e.g., scanning a file or table, applying filters, joins), you're constructing a logical plan that DataFusion optimizes and executes only when you explicitly request results via methods like [`collect`], [`show()`], or file writes.
 
-This lazy evaluation enables powerful optimizations—DataFusion can reorder operations, prune columns, push down predicates, and parallelize execution before touching any data. When executed, DataFusion produces results as Arrow RecordBatches: each batch contains a set of Arrow Arrays (one per column) that follow a shared Arrow Schema. Whether you build queries using DataFrames or SQL, DataFusion always produces results in Arrow's columnar format—enabling zero-copy integration with other Arrow-compatible tools and languages.
+#### Understanding Lazy Evaluation
+
+**What "lazy" means:**
+
+When you call transformation methods like `filter()`, `select()`, or `join()`, DataFusion doesn't immediately process any data. Instead, it:
+
+1. **Builds a query plan**: Each transformation adds nodes to a logical plan tree
+2. **Defers execution**: No data is read or processed yet
+3. **Optimizes holistically**: When you finally execute, DataFusion can optimize the entire plan as a whole
+
+**Why lazy evaluation is powerful:**
+
+```rust
+// Example: None of this reads or processes data yet!
+let df = ctx.read_parquet("sales_2024.parquet", ParquetReadOptions::default()).await?
+    .filter(col("region").eq(lit("EMEA")))?              // Just adds a filter node
+    .select(vec![col("product_id"), col("revenue")])?    // Just adds a projection node
+    .aggregate(vec![col("product_id")], vec![sum(col("revenue"))])?; // Just adds aggregation
+
+// The query plan is built, but DataFusion hasn't opened the file yet!
+// You could inspect the plan with df.explain() or continue adding transformations...
+
+// Only when you call an action does execution happen:
+let results = df.collect().await?;
+
+// What actually happened during execution:
+// 1. Optimizer pushed the filter down to the Parquet reader
+// 2. Optimizer determined only "region", "product_id", and "revenue" columns are needed
+// 3. Parquet reader skipped irrelevant row groups and columns
+// 4. Data processed in a single optimized pass
+```
+
+**Contrast with eager evaluation:**
+
+In an eager system, each operation would:
+
+- Process the entire dataset immediately
+- Create intermediate results
+- Require multiple passes over the data
+- Use significantly more memory
+
+```rust
+// Hypothetical eager system (NOT how DataFusion works):
+let df1 = read_parquet("sales_2024.parquet");     // Loads entire file into memory
+let df2 = df1.filter(col("region").eq("EMEA"));    // Scans all data, creates new dataset
+let df3 = df2.select(...);                         // Scans filtered data, creates another dataset
+let df4 = df3.aggregate(...);                      // Scans projected data, final result
+```
+
+**Lazy vs Eager methods:**
+
+DataFusion methods fall into two categories:
+
+- **Lazy (transformations)**: `filter()`, `select()`, `join()`, `aggregate()`, `sort()` - build the plan
+- **Eager (actions)**: `collect()`, `show()`, `execute_stream()`, `write_parquet()` - trigger execution
+
+This lazy/eager distinction allows DataFusion to:
+
+- See the entire query before execution
+- Apply optimizations across all operations (e.g., predicate pushdown, projection pruning, join reordering)
+- Minimize data movement and memory usage
+- Push filters and projections down to the data source
+
+#### Arrow Output Format
+
+When executed, DataFusion produces results as Arrow RecordBatches: each batch contains a set of Arrow Arrays (one per column) that follow a shared Arrow Schema. Whether you build queries using DataFrames or SQL, DataFusion always produces results in Arrow's columnar format—enabling zero-copy integration with other Arrow-compatible tools and languages.
 
 **Execution flow:**
 
@@ -77,6 +142,40 @@ Streams → RecordBatch (Arrow Arrays)
 ```
 
 For comprehensive API documentation and advanced usage patterns, see the [Library Users Guide].
+
+### Understanding Null Values: None, Null, and NaN
+
+When working with DataFrames, it's critical to understand the distinction between three concepts that represent "missing" or "special" values:
+
+| Concept    | What it is                                     | Example                         | Arrow representation        |
+| ---------- | ---------------------------------------------- | ------------------------------- | --------------------------- |
+| **`None`** | Rust's way to represent absence in `Option<T>` | `None` in `Option<f64>`         | Maps to Arrow null          |
+| **`Null`** | SQL/Arrow concept for missing data             | `NULL` in SQL                   | Validity bitmap (bit = 0)   |
+| **`NaN`**  | IEEE 754 floating-point value (Not a Number)   | `f64::NAN`, result of `0.0/0.0` | A _present_ value (bit = 1) |
+
+**Critical distinction:**
+
+```rust
+// These are DIFFERENT:
+Some(f64::NAN)  // Present value that happens to be NaN (not null!)
+None            // Absent value (null in SQL terms)
+
+// Example in a DataFrame:
+let df = dataframe!(
+    "result" => [Some(1.0), Some(f64::NAN), None]  // 1.0, NaN, NULL
+    //                      ^^^^^^^^^^^^^^  ^^^^
+    //                      present NaN     absent (null)
+)?;
+```
+
+**How this affects queries:**
+
+- **`COUNT(*)`**: Counts NaN, excludes NULL
+- **`SUM(col)`**: Propagates NaN (result is NaN), skips NULL
+- **`IS NULL`**: Returns `false` for NaN, `true` for NULL
+- **`IS NAN`**: Returns `true` for NaN, `false` for NULL
+
+Understanding this distinction is essential when working with floating-point data and missing values.
 
 ## API at a Glance
 
