@@ -71,7 +71,7 @@ LogicalPlan
   ↓ optimizes
 Optimized LogicalPlan
   ↓ plans into
-ExecutionPlan
+ExecutionPlan (Pysical Plan)
   ↓ optimizes
 Optimized ExecutionPlan
   ↓ executes
@@ -97,6 +97,112 @@ let ctx = SessionContext::with_config(config);
 ```
 
 See the [Performance and Best Practices](#performance-and-best-practices) section for more on configuration options.
+
+## Relationship between [`LogicalPlan`]s and `DataFrame`s
+
+A [`DataFrame`] is best understood as a pairing of two components: a [`LogicalPlan`] that defines **what** to compute, and a snapshot of [`SessionState`] that defines **how** and **when** to compute it. This pairing ensures consistent behavior even as the session evolves—for example, time-dependent functions like [`now()`](../user-guide/sql/scalar_functions.md#now) use the state captured when the DataFrame was created.
+
+**Lifecycle overview:**
+
+```
+SessionContext → DataFrame (SessionState + LogicalPlan)
+                    ↓ optimize
+                 Optimized LogicalPlan
+                    ↓ plan into
+                 ExecutionPlan
+                    ↓ execute
+                 RecordBatch streams
+```
+
+For a detailed explanation of lazy evaluation and the full execution flow, see [How DataFrames Work](../user-guide/dataframe.md#how-dataframes-work-lazy-evaluation-and-arrow-output) in the User Guide.
+
+### Converting Between `DataFrame` and `LogicalPlan`
+
+You can easily move between `DataFrame` and `LogicalPlan` representations:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::logical_expr::LogicalPlanBuilder;
+
+#[tokio::main]
+async fn main() -> Result<()>{
+    let ctx = SessionContext::new();
+    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
+
+    // Extract both SessionState and LogicalPlan from the DataFrame
+    let (state, plan) = df.into_parts();
+
+    // Manipulate the plan using LogicalPlanBuilder
+    let modified_plan = LogicalPlanBuilder::from(plan)
+        .filter(col("a").gt(lit(5)))?
+        .build()?;
+
+    // Reconstruct a DataFrame with the modified plan
+    let new_df = DataFrame::new(state, modified_plan);
+
+    Ok(())
+}
+```
+
+### DataFrame and LogicalPlanBuilder Equivalence
+
+Using [`DataFrame`] methods produces the same [`LogicalPlan`] as using [`LogicalPlanBuilder`] directly:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::logical_expr::LogicalPlanBuilder;
+
+#[tokio::main]
+async fn main() -> Result<()>{
+    let ctx = SessionContext::new();
+
+    // Build a plan using DataFrame API
+    let df_from_api = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
+    let plan_from_api = df_from_api.select(vec![col("a"), col("b")])?
+        .sort(vec![col("a").sort(true, true)])?;
+
+    // Build the same plan using LogicalPlanBuilder
+    // Equivalent to: SELECT a, b FROM example.csv ORDER BY a
+    let df_for_builder = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
+    let (_state, base_plan) = df_for_builder.into_parts();
+    let plan_from_builder = LogicalPlanBuilder::from(base_plan)
+        .project(vec![col("a"), col("b")])?
+        .sort(vec![col("a").sort(true, true)])?
+        .build()?;
+
+    // Both approaches produce identical logical plans
+    assert_eq!(plan_from_api.logical_plan(), &plan_from_builder);
+    Ok(())
+}
+```
+
+### Key API Methods
+
+When working with the `DataFrame`/`LogicalPlan` boundary, be aware of these methods:
+
+- **[`into_parts()`]**: Returns `(SessionState, LogicalPlan)`. Use this when you need to manipulate the plan while preserving the exact session snapshot. This is the recommended way to extract both components.
+
+- **[`into_unoptimized_plan()`]**: Returns the unoptimized `LogicalPlan` but **loses the `SessionState` snapshot**. Useful for plan inspection or tests; for production, prefer [`into_parts()`] (or executing the `DataFrame`) to preserve session state.
+
+  > ⚠️ **Warning: Perils of Lost State**
+  >
+  > Discarding `SessionState` means the execution context can change unexpectedly. For example, the `now()` function returns the query execution start time captured in the session state—if you lose that snapshot and re-execute the plan later, `now()` will return a different timestamp. Similarly, changes to session configuration (like timezone settings) will affect re-execution. Always use [`into_parts()`] when you intend to execute the plan later.
+  >
+  > See the [scalar functions documentation](../user-guide/sql/scalar_functions.md#now) for details on how `now()` and other time-dependent functions work.
+
+- **[`into_optimized_plan()`]**: Returns the optimized `LogicalPlan` after running query optimization rules. Also **loses session state**. Useful for plan inspection/tests; for production re-use, prefer [`into_parts()`].
+
+- **[`create_physical_plan()`]**: Converts the `LogicalPlan` to an [`ExecutionPlan`] (doesn't execute). Actions like [`collect()`] and [`show()`] handle this internally—you rarely need to call this directly.
+
+- **[`into_view()`]**: Converts a `DataFrame` into a [`TableProvider`] that can be registered as a view using [`SessionContext::register_table()`].
+
+> **See also:**
+>
+> - [DataFrame Execution](#dataframe-execution) for execution methods
+> - [DataFrame Transformations](#dataframe-transformations) for building queries
+> - [How DataFrames Work](../user-guide/dataframe.md#how-dataframes-work-lazy-evaluation-and-arrow-output) for lazy evaluation details
 
 ## How to Create a DataFrame
 
@@ -635,73 +741,6 @@ let partitions = df.collect_partitioned().await?;
 >
 > - Batch size (~8K rows by default) can be tuned via `SessionConfig`
 > - For partition tuning, see [Performance and Best Practices](#performance-and-best-practices)
-
-## Relationship between `LogicalPlan`s and `DataFrame`s
-
-The `DataFrame` struct is defined like this:
-
-```rust
-use datafusion::execution::session_state::SessionState;
-use datafusion::logical_expr::LogicalPlan;
-pub struct DataFrame {
-    // state required to execute a LogicalPlan
-    session_state: Box<SessionState>,
-    // LogicalPlan that describes the computation to perform
-    plan: LogicalPlan,
-}
-```
-
-As shown above, `DataFrame` is a thin wrapper of `LogicalPlan`, so you can
-easily go back and forth between them.
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::logical_expr::LogicalPlanBuilder;
-
-#[tokio::main]
-async fn main() -> Result<()>{
-    let ctx = SessionContext::new();
-    // read example.csv file into a DataFrame
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    // You can easily get the LogicalPlan from the DataFrame
-    let (_state, plan) = df.into_parts();
-    // Just combine LogicalPlan with SessionContext and you get a DataFrame
-    // get LogicalPlan in dataframe
-    let new_df = DataFrame::new(ctx.state(), plan);
-    Ok(())
-}
-```
-
-In fact, using the [`DataFrame`]s methods you can create the same
-[`LogicalPlan`]s as when using [`LogicalPlanBuilder`]:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::logical_expr::LogicalPlanBuilder;
-
-#[tokio::main]
-async fn main() -> Result<()>{
-    let ctx = SessionContext::new();
-    // read example.csv file into a DataFrame
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    // Create a new DataFrame sorted by  `id`, `bank_account`
-    let new_df = df.select(vec![col("a"), col("b")])?
-        .sort_by(vec![col("a")])?;
-    // Build the same plan using the LogicalPlanBuilder
-    // Similar to `SELECT a, b FROM example.csv ORDER BY a`
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    let (_state, plan) = df.into_parts(); // get the DataFrame's LogicalPlan
-    let plan = LogicalPlanBuilder::from(plan)
-        .project(vec![col("a"), col("b")])?
-        .sort_by(vec![col("a")])?
-        .build()?;
-    // prove they are the same
-    assert_eq!(new_df.logical_plan(), &plan);
-    Ok(())
-}
-```
 
 ## DataFrame Transformations
 
@@ -1477,8 +1516,17 @@ Common features:
 [`state()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.state
 [`register_table_provider()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table_provider
 [`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessioncontext::register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
 [`read_csv`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
 [`read_parquet`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`into_parts()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts
+[`into_unoptimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_unoptimized_plan
+[`into_optimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_optimized_plan
+[`create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
+[`into_view()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
 [`read_json`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
 [`read_avro`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
 [`read_arrow`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
