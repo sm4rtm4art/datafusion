@@ -454,7 +454,7 @@ async fn test_filter_and_aggregate() -> datafusion::error::Result<()> {
 
     // Collect and validate
     let batches = result.collect().await?;
-    assert_batches_eq!(
+    datafusion::assert_batches_eq!(
         &[
             "+-------------+--------+",
             "| department  | total  |",
@@ -554,198 +554,87 @@ DataFusion [`DataFrame`]s use **lazy evaluation**: transformations build a query
 
 ### Execution Methods
 
-Execution methods trigger query execution. They fall into two categories:
+Execution methods trigger query execution and either return results to your application or write results to external sinks.
+
+See [Debugging Techniques](#debugging-techniques) to inspect logical/physical plans and use EXPLAIN.
+
+- For methods that return results, see the table below.
+- For writing to files or tables (sinks), see Write DataFrame to Files.
 
 #### Methods that Return Results
 
 These methods execute the query and return data to your application:
 
-| Method                               | Returns                          | Memory Usage              | Use When                                                       |
-| ------------------------------------ | -------------------------------- | ------------------------- | -------------------------------------------------------------- |
-| **[`collect()`]**                    | `Vec<RecordBatch>`               | High (entire result set)  | You need all results in memory for further processing          |
-| **[`collect_partitioned()`]**        | `Vec<Vec<RecordBatch>>`          | High (entire result set)  | Preserving partition boundaries (e.g., parallel writing)       |
-| **[`execute_stream()`]**             | `SendableRecordBatchStream`      | Low (one batch at a time) | Processing large results that don't fit in memory              |
-| **[`execute_stream_partitioned()`]** | `Vec<SendableRecordBatchStream>` | Low (one batch at a time) | Streaming results while maintaining partition information      |
-| **[`count()`]**                      | `usize`                          | Low (optimized)           | Getting total row count without fetching data                  |
-| **[`show()`]**                       | `()`                             | Low (configurable limit)  | Interactive exploration and debugging                          |
-| **[`show_limit()`]**                 | `()`                             | Low (limited rows)        | Quick data preview with specific row limit                     |
-| **[`cache()`]**                      | `DataFrame`                      | High (entire result set)  | Reusing expensive computations (only if result fits in memory) |
+| Method                               | Pattern & Behavior                                                                 | Best For                                                                            |
+| ------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **[`collect()`]**                    | Get all data - buffers entire result                                               | Small-medium results, in-memory processing                                          |
+| **[`collect_partitioned()`]**        | Get all data - preserves partition structure                                       | Parallel processing/writing                                                         |
+| **[`execute_stream()`]**             | Process lazily - yields batches incrementally (one batch ~8K rows)                 | Large results, ETL, memory-constrained                                              |
+| **[`execute_stream_partitioned()`]** | Process lazily - one stream per partition                                          | Parallel streaming with partition awareness                                         |
+| **[`count()`]**                      | Metadata only - may skip reading actual data (Parquet statistics when available)   | Quick row counts (optimized when possible)                                          |
+| **[`show()`]**                       | Display (prints); collects **all** rows then pretty-prints                         | Interactive preview on small data; use `to_string()` for programmatic string output |
+| **[`show_limit(n)`]**                | Display (prints); injects `LIMIT n` into the plan, then collects and pretty-prints | Quick preview on large data; prefer over `show()`                                   |
+| **[`cache()`]**                      | Materialize - stores entire result in memory for reuse                             | Expensive queries used multiple times                                               |
 
-#### Methods that Write Results
+### Execution Patterns and Trade-offs
 
-These methods execute the query and write results to external destinations (covered in detail in [Write DataFrame to Files](#write-dataframe-to-files)):
+Choose your execution method based on these key trade-offs:
 
-| Method                  | Returns | Memory Usage    | Use When                                   |
-| ----------------------- | ------- | --------------- | ------------------------------------------ |
-| **[`write_parquet()`]** | `()`    | Low (streaming) | Persisting results in columnar format      |
-| **[`write_csv()`]**     | `()`    | Low (streaming) | Exporting for spreadsheets or other tools  |
-| **[`write_json()`]**    | `()`    | Low (streaming) | Exporting for web APIs or document stores  |
-| **[`write_table()`]**   | `()`    | Low (streaming) | Updating or creating tables in the catalog |
-
-**For testing:** After collecting results with [`collect()`], you can validate them using [`assert_batches_eq!`] or [`assert_batches_sorted_eq!`] for order-independent comparisons. See [From Inline Data](#5-from-inline-data-using-the-dataframe-macro) for testing examples.
-
-**Performance tuning:** Execution behavior can be configured via [`SessionConfig`]. See [Performance and Best Practices](#performance-and-best-practices) for details on batch sizes, parallelism, and optimization controls.
-
-### DataFrame Reusability
-
-DataFrames can be executed multiple times. Each execution re-runs the optimized query:
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    let df = ctx.read_csv("data.csv", CsvReadOptions::new()).await?
-        .filter(col("amount").gt(lit(100)))?;
-
-    // First execution - runs the query
-    let result1 = df.clone().collect().await?;
-    println!("First execution: {} batches", result1.len());
-
-    // Second execution - re-runs the same query (may re-read the file)
-    let result2 = df.clone().collect().await?;
-    println!("Second execution: {} batches", result2.len());
-
-    // Each execution is independent and starts fresh
-    Ok(())
-}
+```
+Need to execute a DataFrame?
+  ├─ Result fits in memory and you need all rows → collect()
+  │
+  ├─ Result is large and can be processed incrementally → execute_stream()
+  │    └─ Need partition awareness → execute_stream_partitioned()
+  │
+  ├─ Quick preview for interactive work → show_limit(n)
+  │
+  ├─ You will reuse results multiple times → cache() then operate
+  │
+  └─ You need only metadata (row count) → count()
 ```
 
-**Tip:** If you need to execute the same expensive query multiple times, use [`cache()`] to materialize results once and reuse them.
+**Trade-off 1: Collect vs Streaming (and show/show_limit)**
 
-### Collecting Results into Memory
+`show()` collects all rows before printing; `show_limit(n)` injects LIMIT n and then collects. Prefer `show_limit(n)` for quick previews on large datasets. Use `to_string()` to get the same formatted table as a `String` for logging or testing.
 
-To collect all outputs into a memory buffer, use the [`collect()`] method:
+Use `collect()` when the result fits in memory and you need random access to all rows. Use `execute_stream()` for large datasets that exceed available RAM or when you can process data incrementally.
 
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
+**Trade-off 2: Cache vs Re-execution**
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    // read the contents of a CSV file into a DataFrame
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    // execute the query and collect the results as a Vec<RecordBatch>
-    let batches = df.collect().await?;
-    for record_batch in batches {
-        println!("{record_batch:?}");
-    }
-    Ok(())
-}
-```
-
-### Streaming Results
-
-Use [`execute_stream()`] to incrementally generate output one `RecordBatch` at a time:
+Cache results when you'll query the same DataFrame multiple times. The upfront execution cost pays off when amortized across multiple operations, but only use caching when the result fits comfortably in memory. Cached data lives in executor memory and is invalidated when the `SessionContext` is dropped.
 
 ```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use futures::stream::StreamExt;
+// Without cache - re-executes query each time
+let df = ctx.read_csv("large.csv", CsvReadOptions::new()).await?
+    .filter(col("amount").gt(lit(1000)))?
+    .aggregate(...)?;
+let count1 = df.clone().count().await?; // Executes full query
+let preview = df.clone().limit(0, Some(10))?.collect().await?; // Executes again
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    // read example.csv file into a DataFrame
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    // begin execution (returns quickly, does not compute results)
-    let mut stream = df.execute_stream().await?;
-    // results are returned incrementally as they are computed
-    while let Some(batch_result) = stream.next().await {
-        let batch = batch_result?; // Handle errors from stream
-        println!("Received batch with {} rows", batch.num_rows());
-    }
-    Ok(())
-}
+// With cache - execute once, reuse many times
+let cached_df = df.cache().await?; // Execute and store in memory
+let count2 = cached_df.clone().count().await?; // Uses cached data
+let preview2 = cached_df.clone().limit(0, Some(10))?.collect().await?; // Uses cached data
 ```
 
-### Advanced Execution Methods
+**Trade-off 3: Unified vs Partitioned Processing**
 
-For more control over execution, DataFusion provides additional methods:
-
-**Partitioned Collection:**
-
-When you need to preserve partition boundaries (e.g., for parallel writing):
+Use partitioned methods when you need to process data in parallel while maintaining partition boundaries. This is valuable for parallel writing to separate files or when processing each partition independently across multiple threads.
 
 ```rust
-use datafusion::prelude::*;
+// Unified - simpler code
+let batches = df.collect().await?;
 
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-
-    // Collect results preserving partition structure
-    let partitions: Vec<Vec<RecordBatch>> = df.collect_partitioned().await?;
-
-    for (i, partition) in partitions.iter().enumerate() {
-        println!("Partition {}: {} batches", i, partition.len());
-    }
-
-    Ok(())
-}
+// Partitioned - enables parallel processing
+let partitions = df.collect_partitioned().await?;
+// Process each partition in parallel threads/tasks
 ```
 
-**Partitioned Streaming:**
-
-Stream results while maintaining partition information:
-
-```rust
-use datafusion::prelude::*;
-use futures::stream::StreamExt;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-
-    // Get a stream per partition
-    let mut streams = df.execute_stream_partitioned().await?;
-
-    for (i, mut stream) in streams.into_iter().enumerate() {
-        println!("Processing partition {i}");
-        while let Some(batch_result) = stream.next().await {
-            let batch = batch_result?; // Handle errors from stream
-            // Process batch from this partition
-            println!("  Batch: {} rows", batch.num_rows());
-        }
-    }
-
-    Ok(())
-}
-```
-
-**Caching Results:**
-
-For expensive DataFrames that you'll reuse multiple times:
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    let df = ctx.read_csv("large_file.csv", CsvReadOptions::new()).await?
-        .filter(col("value").gt(lit(1000)))?
-        .aggregate(
-            vec![col("category")],
-            vec![sum(col("value")).alias("total")]
-        )?;
-
-    // Cache the results in memory
-    let cached_df = df.cache().await?;
-
-    // Now you can reuse cached_df multiple times without re-execution
-    let result1 = cached_df.clone().filter(col("total").gt(lit(10000)))?;
-    let result2 = cached_df.clone().sort(vec![col("total").sort(false, true)])?;
-
-    Ok(())
-}
-```
+> **Performance tips:**
+>
+> - Batch size (~8K rows by default) can be tuned via `SessionConfig`
+> - For partition tuning, see [Performance and Best Practices](#performance-and-best-practices)
 
 ## Relationship between `LogicalPlan`s and `DataFrame`s
 
@@ -1173,141 +1062,19 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-This flexibility allows you to use the best tool for each part of your query - SQL for declarative operations and DataFrames for programmatic logic.
-
-## Performance and Best Practices
-
-Understanding how DataFusion optimizes and executes queries is key to building efficient data applications. For details on the optimizer framework, see the [Query Optimizer guide](query-optimizer.md).
-
-### Automatic Optimizations
-
-DataFusion applies many optimizations automatically:
-
-- **Projection pushdown**: Only reads columns that are actually used
-- **Predicate pushdown**: Filters data as early as possible
-- **Partition pruning**: Skips reading irrelevant partitions
-- **Join reordering**: Optimizes join order for performance
-
-These happen transparently due to lazy evaluation.
-
-### Physical Optimizer Controls
-
-Configure the execution environment for optimal performance:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::execution::config::SessionConfig;
-
-let config = SessionConfig::new()
-    // Number of rows per batch (default: 8192)
-    .with_batch_size(8192)
-    // Number of parallel partitions (default: num_cpus)
-    .with_target_partitions(8)
-    // Enable repartitioning of file scans
-    .with_repartition_file_scans(true)
-    // Minimum file size to trigger repartitioning (64MB)
-    .with_repartition_file_min_size(64 * 1024 * 1024);
-
-let ctx = SessionContext::with_config(config);
-```
-
-**When to tune these settings:**
-
-- **Increase `batch_size`** for better throughput with large datasets (but uses more memory)
-- **Increase `target_partitions`** to utilize more CPU cores for parallel processing
-- **Enable `repartition_file_scans`** when reading large files to parallelize I/O
-
-### Common Pitfalls
-
-**Schema mismatches in unions:**
-
-```rust
-// This will fail - column names must match exactly
-let df1 = dataframe!("id" => [1, 2])?;
-let df2 = dataframe!("ID" => [3, 4])?; // Different case!
-// df1.union(df2)?; // ERROR
-
-// Use union_by_name for flexibility
-let df = df1.union_by_name(df2)?; // Works if types match
-```
-
-**Memory issues with large collects:**
-
-```rust
-// DON'T: Collect millions of rows into memory
-// let all_data = huge_df.collect().await?;
-
-// DO: Stream the results
-let mut stream = huge_df.execute_stream().await?;
-while let Some(batch) = stream.next().await {
-    // Process batch by batch
-}
-```
-
-**Avoiding Cartesian joins:**
-
-```rust
-// This creates a Cartesian product (dangerous with large tables!)
-let df = left.join(right, JoinType::Inner, &[], &[], None)?;
-
-// Always specify join conditions
-let df = left.join(right, JoinType::Inner, &["id"], &["user_id"], None)?;
-```
-
-### Debugging Techniques
-
-Inspect query plans to understand what DataFusion will execute:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::physical_plan::displayable;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?
-        .filter(col("a").gt(lit(5)))?
-        .select(vec![col("a"), col("b")])?;
-
-    // View the logical plan
-    println!("Logical Plan:\n{}", df.logical_plan().display_indent());
-
-    // View the optimized physical plan
-    let physical_plan = df.create_physical_plan().await?;
-    println!("\nPhysical Plan:\n{}",
-        displayable(physical_plan.as_ref()).indent(true));
-
-    Ok(())
-}
-```
-
-Use `EXPLAIN` to analyze queries:
-
-```rust
-let explain_df = df.explain(false, false)?; // (verbose, analyze)
-explain_df.show().await?;
-```
-
-### Feature Flags
-
-DataFusion's DataFrame API supports optional features. Enable them in `Cargo.toml`:
-
-```toml
-[dependencies]
-datafusion = { version = "38", features = ["json", "avro", "compression"] }
-```
-
-Common features:
-
-- `json`: Enables `read_json()` and `write_json()`
-- `avro`: Enables `read_avro()`
-- `parquet`: Parquet support (enabled by default)
-- `compression`: Compression support for various formats
-
 ## Write DataFrame to Files
 
 You can write the contents of a `DataFrame` to files or tables. When writing,
 DataFusion executes the `DataFrame` and streams the results to the output.
+
+### Choosing a File Format
+
+| Method                  | Format Type | Schema Preservation | Key Features                      | Best For                     |
+| ----------------------- | ----------- | ------------------- | --------------------------------- | ---------------------------- |
+| **[`write_parquet()`]** | Columnar    | Strong              | Partitioning, compression, schema | Analytics, long-term storage |
+| **[`write_csv()`]**     | Row-based   | Weak                | Delimiters, compression, portable | Data exchange, spreadsheets  |
+| **[`write_json()`]**    | Row-based   | Moderate            | NDJSON format, streaming-friendly | Web APIs, log processing     |
+| **[`write_table()`]**   | Varies      | Strong              | INSERT/APPEND operations          | Updating registered tables   |
 
 **SQL Equivalents:**
 
@@ -1479,6 +1246,137 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
+This flexibility allows you to use the best tool for each part of your query - SQL for declarative operations and DataFrames for programmatic logic.
+
+## Performance and Best Practices
+
+Understanding how DataFusion optimizes and executes queries is key to building efficient data applications. For details on the optimizer framework, see the [Query Optimizer guide](query-optimizer.md).
+
+### Automatic Optimizations
+
+DataFusion applies many optimizations automatically:
+
+- **Projection pushdown**: Only reads columns that are actually used
+- **Predicate pushdown**: Filters data as early as possible
+- **Partition pruning**: Skips reading irrelevant partitions
+- **Join reordering**: Optimizes join order for performance
+
+These happen transparently due to lazy evaluation.
+
+### Physical Optimizer Controls
+
+Configure the execution environment for optimal performance:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::execution::config::SessionConfig;
+
+let config = SessionConfig::new()
+    // Number of rows per batch (default: 8192)
+    .with_batch_size(8192)
+    // Number of parallel partitions (default: num_cpus)
+    .with_target_partitions(8)
+    // Enable repartitioning of file scans
+    .with_repartition_file_scans(true)
+    // Minimum file size to trigger repartitioning (64MB)
+    .with_repartition_file_min_size(64 * 1024 * 1024);
+
+let ctx = SessionContext::with_config(config);
+```
+
+**When to tune these settings:**
+
+- **Increase `batch_size`** for better throughput with large datasets (but uses more memory)
+- **Increase `target_partitions`** to utilize more CPU cores for parallel processing
+- **Enable `repartition_file_scans`** when reading large files to parallelize I/O
+
+### Common Pitfalls
+
+**Schema mismatches in unions:**
+
+```rust
+// This will fail - column names must match exactly
+let df1 = dataframe!("id" => [1, 2])?;
+let df2 = dataframe!("ID" => [3, 4])?; // Different case!
+// df1.union(df2)?; // ERROR
+
+// Use union_by_name for flexibility
+let df = df1.union_by_name(df2)?; // Works if types match
+```
+
+**Memory issues with large collects:**
+
+```rust
+// DON'T: Collect millions of rows into memory
+// let all_data = huge_df.collect().await?;
+
+// DO: Stream the results
+let mut stream = huge_df.execute_stream().await?;
+while let Some(batch) = stream.next().await {
+    // Process batch by batch
+}
+```
+
+**Avoiding Cartesian joins:**
+
+```rust
+// This creates a Cartesian product (dangerous with large tables!)
+let df = left.join(right, JoinType::Inner, &[], &[], None)?;
+
+// Always specify join conditions
+let df = left.join(right, JoinType::Inner, &["id"], &["user_id"], None)?;
+```
+
+### Debugging Techniques
+
+Inspect query plans to understand what DataFusion will execute:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::physical_plan::displayable;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?
+        .filter(col("a").gt(lit(5)))?
+        .select(vec![col("a"), col("b")])?;
+
+    // View the logical plan
+    println!("Logical Plan:\n{}", df.logical_plan().display_indent());
+
+    // View the optimized physical plan
+    let physical_plan = df.create_physical_plan().await?;
+    println!("\nPhysical Plan:\n{}",
+        displayable(physical_plan.as_ref()).indent(true));
+
+    Ok(())
+}
+```
+
+Use `EXPLAIN` to analyze queries:
+
+```rust
+let explain_df = df.explain(false, false)?; // (verbose, analyze)
+explain_df.show().await?;
+```
+
+### Feature Flags
+
+DataFusion's DataFrame API supports optional features. Enable them in `Cargo.toml`:
+
+```toml
+[dependencies]
+datafusion = { version = "38", features = ["json", "avro", "compression"] }
+```
+
+Common features:
+
+- `json`: Enables `read_json()` and `write_json()`
+- `avro`: Enables `read_avro()`
+- `parquet`: Parquet support (enabled by default)
+- `compression`: Compression support for various formats
+
 ## Common Operations Quick Reference
 
 - SELECT a,b → `df.select(vec![col("a"), col("b")])?`
@@ -1513,6 +1411,7 @@ async fn main() -> datafusion::error::Result<()> {
 [`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
 [`assert_batches_sorted_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_sorted_eq.html
 [`count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
 [`SessionConfig`]: https://docs.rs/datafusion/latest/datafusion/execution/config/struct.SessionConfig.html
 [`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
 [`sessioncontext` api docs]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
@@ -1523,6 +1422,7 @@ async fn main() -> datafusion::error::Result<()> {
 [`dataframe::write_json`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_json
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
 [`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`show_limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show_limit
 [`recordbatch`]: https://docs.rs/arrow-array/latest/arrow_array/struct.RecordBatch.html
 [`schema`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
 [`datatype`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html
