@@ -769,17 +769,45 @@ let partitions = df.collect_partitioned().await?;
 
 Once you have a DataFrame, you can transform it using a rich set of operations. DataFrames are immutable—each transformation returns a new DataFrame, allowing you to chain operations together. All transformations are lazily evaluated, meaning they build up a query plan that executes only when you call an action like [`collect()`] or [`show()`].
 
-**In this section:**
+### DataFrame ↔ SQL Quick Reference
 
-- Selection and projection
-- Filtering with predicates
-- Aggregations and grouping
-- Joins and set operations
-- Sorting and limiting
+DataFrames provide a programmatic API for data transformations. If you're coming from SQL, this table maps familiar SQL operations to their DataFrame equivalents:
+
+| Category             | SQL Operation                   | DataFrame Method(s)                                     | Key Differences                                                                          |
+| -------------------- | ------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Filtering**        | `WHERE condition`               | [`filter()`]                                            | Chainable predicates with `.and()`, `.or()`; helpers: `in_list()`, `like()`, `between()` |
+| **Selection**        | `SELECT col1, col2`             | [`select_columns()`], [`select()`]                      | [`select()`] supports expressions; see [SQL SELECT](../user-guide/sql/index.md)          |
+| **Selection**        | `SELECT expr AS alias`          | [`select()`], [`with_column()`]                         | [`with_column()`] adds or replaces columns (not in SQL)                                  |
+| **Selection**        | `... AS new_name` (rename)      | [`with_column_renamed()`]                               | Rename one column at a time                                                              |
+| **Aggregation**      | `GROUP BY ... aggregate(...)`   | [`aggregate()`]                                         | See [Aggregate functions](../user-guide/sql/aggregate_functions.md)                      |
+| **Aggregation**      | `HAVING condition`              | [`aggregate()`] then [`filter()`]                       | HAVING implemented as post-aggregation filter                                            |
+| **Joins**            | `INNER/LEFT/RIGHT/FULL JOIN`    | [`join()`], [`join_on()`]                               | [`join_on()`] supports arbitrary join conditions; includes `Semi` and `Anti` joins       |
+| **Joins**            | `CROSS JOIN`                    | [`join()`] with empty keys                              | Pass empty `&[]` for left and right keys                                                 |
+| **Sorting/Limiting** | `ORDER BY ... LIMIT n OFFSET m` | [`sort()`], [`limit()`]                                 | `limit(skip, fetch)`; [`show_limit()`] for quick preview without full execution          |
+| **Set Operations**   | `UNION ALL`                     | [`union()`]                                             | —                                                                                        |
+| **Set Operations**   | `UNION` (distinct)              | [`union_distinct()`]                                    | —                                                                                        |
+| **Set Operations**   | `UNION ALL` by name             | [`union_by_name()`]                                     | **DataFrame-only:** aligns by column name, not position                                  |
+| **Set Operations**   | `UNION` by name (distinct)      | [`union_by_name_distinct()`]                            | **DataFrame-only:** name-based alignment + deduplication                                 |
+| **Set Operations**   | `DISTINCT`                      | [`distinct()`]                                          | —                                                                                        |
+| **Set Operations**   | `DISTINCT ON (cols)`            | [`distinct_on()`]                                       | **DataFrame-only:** Postgres-style, not ANSI SQL                                         |
+| **Set Operations**   | `INTERSECT` / `EXCEPT`          | [`intersect()`], [`except()`]                           | —                                                                                        |
+| **Window Functions** | `ROW_NUMBER() OVER (...)`       | [`window()`]                                            | Add window exprs; see [Window functions](../user-guide/sql/window_functions.md)          |
+| **Reshaping**        | `UNNEST` / `EXPLODE`            | [`unnest_columns()`], [`unnest_columns_with_options()`] | Fine-grained control via [`unnest_columns_with_options()`]                               |
+
+**Key differences from SQL:**
+
+- **Lazy evaluation**: DataFrame methods build a plan; execution happens on [`collect()`], [`show()`], etc.
+- **Immutable**: Each method returns a new DataFrame
+- **Programmatic**: Easy to conditionally build queries, loop over columns, parameterize transformations
+- **Type-safe**: Rust compiler catches many errors at compile time
+
+> **See also:** [Mixing SQL and DataFrames](#mixing-sql-and-dataframes) for combining both approaches
 
 ### Selection and Projection
 
-Select specific columns or create computed columns using [`select()`], [`select_columns()`], and [`drop_columns()`]:
+Select specific columns, add computed columns, or rename columns using [`select()`], [`select_columns()`], [`with_column()`], [`with_column_renamed()`], and [`drop_columns()`].
+
+**SQL equivalent:** `SELECT a, b AS b_renamed, a + b AS sum FROM table`
 
 ```rust
 use datafusion::prelude::*;
@@ -790,15 +818,21 @@ async fn main() -> Result<()> {
     let ctx = SessionContext::new();
     let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
 
-    // Select columns by name
+    // Select specific columns by name
     let df = df.select_columns(&["a", "b"])?;
 
-    // Select with expressions
+    // Select with expressions (computed columns)
     let df = df.select(vec![
         col("a"),
         col("b").alias("b_renamed"),
         (col("a") + col("b")).alias("sum")
     ])?;
+
+    // Add a new column (or replace existing)
+    let df = df.with_column("total", col("a") + col("b") + col("c"))?;
+
+    // Rename a column
+    let df = df.with_column_renamed("total", "grand_total")?;
 
     // Drop specific columns
     let df = df.drop_columns(&["c"])?;
@@ -806,6 +840,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+> **Going deeper:**
+>
+> - **Advanced:** [`select_exprs()`] for SQL-like string expressions
+> - **Examples:** See [`expr_api.rs`] for complex expression patterns
+> - **Performance:** Projection pushdown automatically optimizes column reads—see [Automatic Optimizations](#automatic-optimizations)
 
 ### Filtering
 
@@ -1175,7 +1215,7 @@ async fn main() -> Result<()> {
 The output file will look like (Example Output):
 
 ```sql
-> select * from '../datafusion/core/example.parquet';
+> SELECT * FROM '../datafusion/core/example.parquet';
 +---+---+---+
 | a | b | c |
 +---+---+---+
