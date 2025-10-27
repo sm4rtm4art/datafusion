@@ -100,25 +100,47 @@ See the [Performance and Best Practices](#performance-and-best-practices) sectio
 
 ## Relationship between [`LogicalPlan`]s and `DataFrame`s
 
-A [`DataFrame`] is best understood as a pairing of two components: a [`LogicalPlan`] that defines **what** to compute, and a snapshot of [`SessionState`] that defines **how** and **when** to compute it. This pairing ensures consistent behavior even as the session evolves—for example, time-dependent functions like [`now()`](../user-guide/sql/scalar_functions.md#now) use the state captured when the DataFrame was created.
+A DataFusion [`DataFrame`] is best understood as a pairing of two components:
 
-**Lifecycle overview:**
+- **[`LogicalPlan`]**: A tree representation of your query operations (like `.select()`, `.filter()`, `.join()`) that describes **what** computation to perform without specifying how to execute it
+- **[`SessionState`]**: A snapshot of the session's configuration and runtime context (like timezone, memory limits, registered functions) that defines **how** and **when** to execute the plan
+
+This pairing ensures consistent behavior even as the session evolves—for example, time-dependent functions like [`now()`] use the state captured when the DataFrame was created, not when it executes.
+
+**DataFrame composition and origins:**
+
+A `DataFrame` is an immutable handle that bundles a [`LogicalPlan`] (the "what") with a [`SessionState`] snapshot (the "how/when") taken from the creating [`SessionContext`]. Transformations like `.select()`, `.filter()`, and `.join()` derive a new `LogicalPlan` and return a new `DataFrame` that carries forward the same `SessionState`. Actions (for example, `.collect()`, `.show()`, or `create_physical_plan()`) materialize the plan; until then, nothing executes.
 
 ```
-SessionContext → DataFrame (SessionState + LogicalPlan)
-                    ↓ optimize
-                 Optimized LogicalPlan
-                    ↓ plan into
-                 ExecutionPlan
-                    ↓ execute
-                 RecordBatch streams
-```
+SessionContext
+  ├─ provides → SessionState (snapshot)
+  └─ creates  → DataFrame
+                   ├─ SessionState ← from SessionContext at creation time
+                   └─ LogicalPlan  ← built via:
+                       - DataFrame ops: .select(), .filter(), .join(), ...
+                       - SQL: ctx.sql("...") → DataFrame
+                       - LogicalPlanBuilder: build plan → DataFrame::new(state, plan)
 
-For a detailed explanation of lazy evaluation and the full execution flow, see [How DataFrames Work](../user-guide/dataframe.md#how-dataframes-work-lazy-evaluation-and-arrow-output) in the User Guide.
+Key API paths
+DataFrame ↔ into_parts() ↔ (SessionState, LogicalPlan)
+DataFrame → into_optimized_plan() → Optimized LogicalPlan
+DataFrame → create_physical_plan() → ExecutionPlan
+```
 
 ### Converting Between `DataFrame` and `LogicalPlan`
 
-You can easily move between `DataFrame` and `LogicalPlan` representations:
+While the DataFrame API covers most use cases, you may need to work directly with the `LogicalPlan`—for example, to apply custom optimizer rules, integrate with advanced query rewriting logic, or programmatically inspect/modify the query structure before execution.
+
+**DataFrame vs LogicalPlan - Same query, different representations:**
+
+| **Using DataFrame API**            | **Using LogicalPlan directly**                                    |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| Fluent, high-level                 | Low-level, explicit tree building                                 |
+| `df.select(...).filter(...)`       | `LogicalPlanBuilder::from(plan).project(...).filter(...).build()` |
+| Automatically carries SessionState | You must manage SessionState separately                           |
+| Easy to read and write             | More verbose, requires understanding plan structure               |
+
+The API makes it easy to move between representations:
 
 ```rust
 use datafusion::prelude::*;
@@ -160,8 +182,9 @@ async fn main() -> Result<()>{
 
     // Build a plan using DataFrame API
     let df_from_api = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    let plan_from_api = df_from_api.select(vec![col("a"), col("b")])?
+    let df_from_api = df_from_api.select(vec![col("a"), col("b")])?
         .sort(vec![col("a").sort(true, true)])?;
+    let (_, plan_from_api) = df_from_api.into_parts();
 
     // Build the same plan using LogicalPlanBuilder
     // Equivalent to: SELECT a, b FROM example.csv ORDER BY a
@@ -173,7 +196,7 @@ async fn main() -> Result<()>{
         .build()?;
 
     // Both approaches produce identical logical plans
-    assert_eq!(plan_from_api.logical_plan(), &plan_from_builder);
+    assert_eq!(plan_from_api, plan_from_builder);
     Ok(())
 }
 ```
@@ -1530,3 +1553,4 @@ Common features:
 [`read_json`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
 [`read_avro`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
 [`read_arrow`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
+[`now()`]: ../user-guide/sql/scalar_functions.md#now
