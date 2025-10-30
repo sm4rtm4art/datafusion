@@ -137,7 +137,7 @@ To get started, see
    library-user-guide/extensions
    library-user-guide/using-the-sql-api
    library-user-guide/working-with-exprs
-   library-user-guide/using-the-dataframe-api
+   library-user-guide/dataframe-api/index
    library-user-guide/building-logical-plans
    library-user-guide/catalogs
    library-user-guide/functions/index
