@@ -19,9 +19,11 @@
 
 # Creating and Executing DataFrames
 
-This guide covers all the ways to create DataFrames and how to execute them to get results.
+Creating a DataFrame is the foundational first step for building any query pipeline in DataFusion. It's the entry point to the query engine. True to the flexible, interoperable spirit of Apache Arrow, DataFusion offers a rich set of methods for ingesting data, which is the focus of this guide.
 
-> **Quick reference for advanced topics**: See [Advanced Creation Topics](creating-dataframes-advanced.md) for a navigable index of schema management, error handling, S3, Kafka, Arrow Flight, optimizations, and debugging.
+This document is designed for developers and data engineers of all levels. It covers every method for creating DataFrames—from reading a simple CSV file for an ad-hoc query to configuring high-performance connectors for production data pipelines in cloud storage. You will learn not just how to create DataFrames, but also why to choose one method over another, ensuring your application is both correct and efficient.
+
+> **For Advanced Topics**: This guide covers the foundational API calls for creating DataFrames. For a deeper dive into production-level concerns like schema management, error handling, connecting to S3, Arrow Flight, Kafka, custom providers, and performance tuning, please see our dedicated guide to [Advanced Creation Topics](creating-dataframes-advanced.md) .
 
 ```{contents}
 :local:
@@ -34,16 +36,18 @@ SessionContext → [DataFrame] ← you are here: creation
   config      LogicalPlan → transforms → ExecutionPlan → RecordBatches
 ```
 
-> **Road map**: This guide focuses on **DataFrame creation**. For core concepts, see [Concepts](concepts.md). For transformations, see [Transformations](transformations.md). For execution details, see [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations).
-
 ## How to Create a DataFrame
 
-DataFrames can be created in several ways, each suited to different use cases:
+DataFusion provides a comprehensive set of methods for creating DataFrames, each designed to fit a specific use case. This flexibility is intentional: as a query engine, DataFusion integrates into diverse environments—from large-scale data pipelines to interactive SQL queries and embedded applications.
+
+The [`SessionContext`] is the main entry point for creating DataFrames. It maintains session state (catalogs, tables, configuration) and is where every DataFrame journey begins. Both the DataFrame API and SQL API compile to the same [`LogicalPlan`], which DataFusion then optimizes and executes identically. For architectural details, see [Concepts](concepts.md) or [Mixing SQL and DataFrames](transformations.md#mixing-sql-and-dataframes).
+
+Choose your creation method based on where your data lives and how you'll use it:
 
 1. **From files**: Read Parquet, CSV, JSON, Avro, or Arrow files — [From Files](#1-from-files)
 
    - **Best for**: Production data pipelines, large datasets, cloud storage
-   - **Avoid if**: Data is already in memory or < 1000 rows (use inline data instead)
+   - **Avoid if**: Data is already in memory or < 1000 rows like test cases (use inline data instead)
 
 2. **From a registered table**: Access tables by name — [From a Registered Table](#2-from-a-registered-table)
 
@@ -69,13 +73,16 @@ DataFrames can be created in several ways, each suited to different use cases:
    - **Best for**: Custom query builders, Substrait integration, optimizer testing
    - **Avoid if**: Higher-level methods (1-5) meet your needs
 
-> **Tip**: You can mix these approaches—for example, creating a DataFrame from SQL and then applying DataFrame transformations. See [Mixing SQL and DataFrames](transformations.md#mixing-sql-and-dataframes) for examples.
-
 ### 1. From Files
 
-Read files like Parquet, CSV, JSON, Avro, or Arrow files directly into a `DataFrame`.
+Reading from files is the most common and powerful way to load data into DataFusion. It is the primary entry point for production workloads—whether you're querying a partitioned data lake, processing ETL batches from cloud storage (S3/GCS/Azure), or analyzing a local file.
 
-**Common pattern:** `ctx.read_X(path, options).await?`
+DataFusion is designed for efficient file scans:
+
+- **Lazy & streaming** – reads data in batches and only when an action runs, keeping memory usage low and handling datasets larger than RAM.
+- **Optimized by default** – applies predicate and projection pushdown, reading only the rows and columns you need.
+
+Basic pattern: `ctx.read_<format>(path, options).await?`
 
 ```rust
 use datafusion::prelude::*;
@@ -85,64 +92,81 @@ use datafusion::error::Result;
 async fn main() -> Result<()> {
     let ctx = SessionContext::new();
 
-    // Read Parquet file
-    let df = ctx.read_parquet("data.parquet", ParquetReadOptions::default()).await?;
-    df.show().await?;
+    // Read a Parquet file into a DataFrame
+    let df = ctx
+        .read_parquet("path/to/data.parquet", ParquetReadOptions::default())
+        .await?;
 
+    // Data is streamed; nothing loads until an action
+    df.show().await?;
     Ok(())
 }
 ```
 
-#### Supported File Formats
+#### Choosing a File Format
 
-| Format        | Method             | Memory | Startup  | Streaming | Predicate Pushdown | Best For                          |
-| ------------- | ------------------ | ------ | -------- | --------- | ------------------ | --------------------------------- |
-| **Parquet**   | [`read_parquet()`] | Low    | Low      | Yes       | Yes (statistics)   | Production, analytics, large data |
-| **CSV**       | [`read_csv()`]     | Medium | High     | Yes       | No                 | Simple data exchange, imports     |
-| **JSON**      | [`read_json()`]    | Medium | Medium   | Yes       | No                 | Semi-structured, web APIs         |
-| **Avro**      | [`read_avro()`]    | Medium | Low      | Yes       | Limited            | Kafka, schema evolution           |
-| **Arrow IPC** | [`read_arrow()`]   | Low    | Very Low | Yes       | No                 | Arrow ecosystem, zero-copy        |
+DataFusion supports several common formats. Storage layout (columnar vs row-oriented) strongly affects analytics performance.
 
-> **Performance note**: Parquet provides the best performance for analytics workloads due to columnar storage, compression, and statistics-based optimizations. For details on predicate and projection pushdown, see [Creation-Time Optimizations](#creation-time-optimizations).
+| Format        | Layout   | Memory | Startup  | Streaming | Predicate Pushdown | Best For                         |
+| ------------- | -------- | ------ | -------- | --------- | ------------------ | -------------------------------- |
+| **Parquet**   | Columnar | Low    | Low      | Yes       | Yes (statistics)   | Production analytics, large data |
+| **Arrow IPC** | Columnar | Low    | Very Low | Yes       | No                 | Arrow ecosystem, zero-copy       |
+| **Avro**      | Row      | Medium | Low      | Yes       | Limited            | Kafka, schema evolution          |
+| **CSV**       | Row      | Medium | High     | Yes       | No                 | Simple exchange, imports         |
+| **NDJSON**    | Row      | Medium | Medium   | Yes       | No                 | Semi-structured logs/APIs        |
 
-#### Common File Reading Patterns
+> For analytics, prefer columnar formats like **Parquet** or **Arrow IPC**. Columnar storage lets DataFusion read only the needed columns, drastically reducing I/O. Row-based formats (Avro, CSV, JSON) must read entire rows even when you need one field.
+
+#### Common Reading Patterns and Schema Handling
+
+Beyond reading a single file, two key areas to understand are how to read multiple files and how to manage schemas.
+
+##### 1) Reading multiple files and customizing options
+
+DataFusion can read multiple files as a single `DataFrame` (via a list of paths or glob patterns) and lets you tune format-specific options.
 
 ```rust
 use datafusion::prelude::*;
 use datafusion::datasource::arrow::ArrowReadOptions;
 
 // CSV with custom options
-let df = ctx.read_csv("data.csv", CsvReadOptions::new()
-    .has_header(true)
-    .delimiter(b';')).await?;
-
-// JSON (NDJSON - newline delimited JSON)
-let df = ctx.read_json("data.ndjson", NdJsonReadOptions::default()).await?;
-
-// Arrow IPC (.arrow / .feather files)
-let df = ctx.read_arrow("data.arrow", ArrowReadOptions::default()).await?;
+let df_csv = ctx.read_csv(
+    "data.csv",
+    CsvReadOptions::new()
+        .has_header(true)
+        .delimiter(b';')
+).await?;
 
 // Multiple files (works for all formats)
-let df = ctx.read_csv(vec!["data1.csv", "data2.csv"], CsvReadOptions::new()).await?;
+let df_multi = ctx.read_parquet(
+    vec!["data1.parquet", "data2.parquet"],
+    ParquetReadOptions::default()
+).await?;
 
-// Glob patterns for discovering files
-let df = ctx.read_parquet("s3://bucket/data/*.parquet", ParquetReadOptions::default()).await?;
+// Glob patterns to discover files (local or object stores)
+let df_glob = ctx.read_parquet(
+    "s3://bucket/data/year=2024/**/*.parquet",
+    ParquetReadOptions::default()
+).await?;
 ```
 
-> **Note on NDJSON**: DataFusion uses NDJSON (Newline Delimited JSON), where each line is a separate JSON object. This differs from standard JSON (a single array/object) and enables efficient streaming of large datasets. Common file extensions: `.ndjson`, `.jsonl`, or `.json`.
+```{note}
+**NDJSON**: Each line is a separate JSON object (efficient for streaming). Common extensions: `.ndjson`, `.jsonl` (sometimes `.json`).
+```
 
-> **Note on Arrow IPC**: The Arrow IPC (Inter-Process Communication) format is Arrow's native serialization format. If you've heard of "Feather v2", that's the same thing—Feather v2 is now synonymous with Arrow IPC.
+```{note}
+**Arrow IPC**: Arrow's native serialization format (a.k.a. Feather v2). Zero-copy in Arrow ecosystem and very fast to read.
+```
 
-#### Schema Inference vs Explicit Schema
+##### 2) Schema handling: inference vs explicit schema
 
-By default, DataFusion infers schemas automatically:
+By default, DataFusion infers schemas:
 
-- **Parquet/Arrow**: Schema is embedded in the file metadata (instant, accurate)
+- **Parquet/Avro/Arrow**: Schema embedded in file metadata (instant, accurate)
 - **CSV**: Scans the first `schema_infer_max_records` rows (default: 100)
-- **JSON**: Scans the first `schema_infer_max_records` objects (default: 100)
-- **Avro**: Schema is embedded in the file header
+- **NDJSON**: Scans the first `schema_infer_max_records` objects (default: 100)
 
-For CSV and JSON, you can provide an explicit schema to skip inference and ensure correct types:
+For CSV/NDJSON in production, providing an explicit schema is strongly recommended to avoid inference overhead and mis-typed columns:
 
 ```rust
 use datafusion::arrow::datatypes::{Schema, Field, DataType};
@@ -156,17 +180,29 @@ let schema = Arc::new(Schema::new(vec![
 ]));
 
 // Use explicit schema (skips inference)
-let df = ctx.read_csv("data.csv", CsvReadOptions::new()
-    .schema(&schema)
-    .has_header(true)).await?;
+let df = ctx.read_csv(
+    "data.csv",
+    CsvReadOptions::new()
+        .schema(&schema)
+        .has_header(true)
+).await?;
 ```
 
-> **When to use explicit schemas**:
->
-> - CSV/JSON files with inconsistent early rows
-> - Ensuring specific types (e.g., forcing string instead of int)
-> - Performance: skipping inference on very large files
-> - Consistency: guaranteeing schema across multiple files
+```{tip}
+**When to use explicit schemas**:
+- CSV/NDJSON in production for reliability
+- Enforcing specific types (e.g., force `Utf8` vs inferred integer)
+- Skipping inference on very large files for performance
+- When early rows/objects aren't representative (avoid mis-inference)
+```
+
+[SessionContext]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[LogicalPlan]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
+[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
+[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
 
 ### 2. From a Registered Table
 
@@ -1453,7 +1489,9 @@ DataFusion integrates seamlessly with the Arrow ecosystem and can exchange data 
 
 ### Creating DataFrames from Arrow Flight
 
-Arrow Flight is a high-performance framework for transferring Arrow data over the network:
+[Arrow Flight] is a high-performance framework for transferring Arrow data over the network:
+
+[Arrow Flight]: https://arrow.apache.org/blog/2019/10/13/introducing-arrow-flight/
 
 ```rust
 use datafusion::prelude::*;
