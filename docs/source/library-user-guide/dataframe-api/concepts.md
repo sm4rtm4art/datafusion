@@ -19,7 +19,7 @@
 
 # DataFrame Concepts
 
-This guide covers the core concepts you need to understand when working with DataFusion DataFrames: SessionContext, LogicalPlan relationships, lazy evaluation, and handling null values.
+This guide covers the core concepts you need to understand when working with DataFusion DataFrames: SessionContext, LogicalPlan relationships, lazy evaluation, and handling null values. It should show interested, how and where the DatFrame concept fits in. As described elsewhere the DataFrame concept is mainly derived from the DataScience community, where it is nessessary and wantet do transform datastructure, for getting more insight. This concept brings several benefits conidering datastructures. One of the main driver for improving this concept is the ["Apache Arrow"] project. For a small introduction, please follow ["Arrow Introdiction"](../../user-guide/arrow-introduction.md).
 
 > **Conceptual Foundation**: For high-level concepts about why DataFrames exist and their role in the data science ecosystem, see the [User Guide](../../user-guide/dataframe.md#how-dataframes-work-lazy-evaluation-and-arrow-output).
 
@@ -27,6 +27,12 @@ This guide covers the core concepts you need to understand when working with Dat
 ::local:
 ::depth: 2
 ```
+
+## Introduction
+
+Do see where the dataframe lives in the following a architecutal overview scheme is shown. This scheme should not be informative, but as well guide the interest thourhgout this documentations. The Main focus is here, to understand where the Dataframe lives, what it is made of (under the hood) to get a deeper understanding of the inner workings and how changes or descisions might interact with the querey execution.
+
+**The archtiectural overview Schema:**
 
 ```
 SessionContext
@@ -56,7 +62,15 @@ RecordBatch streams
 ## SessionContext: The Entry Point for DataFrames
 
 ```
-[SessionContext] -> DataFrame -> LogicalPlan -> ExecutionPlan -> RecordBatches
+SessionContext
+  ↓ creates
+DataFrame
+  ↓ builds
+LogicalPlan
+  ↓ optimizes & plans
+ExecutionPlan
+  ↓ executes
+RecordBatches
 ```
 
 The [`SessionContext`] is the main interface for executing queries with DataFusion. It maintains the state of the connection between a user and an instance of the DataFusion engine and is the place where every DataFrame journey starts.
@@ -82,39 +96,61 @@ Like DataFrame, SessionContext exposes a large API surface that becomes easier t
 | **Catalog Operations** | Manage schemas and databases           | `catalog()`, `catalog_names()`                                   |
 | **Extensions**         | Add custom functionality               | `register_udf()`, `register_udaf()`, `register_table_provider()` |
 
-You can create a `SessionContext` with default settings or customize it for your needs using the configuration methods:
+> **Learn more about creation methods**: The table above shows the API surface—for complete examples of each pattern, see [Creating DataFrames](creating-dataframes.md).
+
+### Creating and Configuring SessionContext
+
+The `SessionContext` is your starting point. You can use defaults or tune it for your workload:
 
 ```rust
 use datafusion::prelude::*;
 use datafusion::execution::config::SessionConfig;
 
-// Default context
+// Default context (good for getting started)
 let ctx = SessionContext::new();
 
 // Customized context for performance tuning
 let config = SessionConfig::new()
-    .with_batch_size(8192)
-    .with_target_partitions(num_cpus::get());
+    .with_batch_size(8192)               // Rows per batch
+    .with_target_partitions(num_cpus::get());  // Parallelism
 let ctx = SessionContext::with_config(config);
 ```
 
-> See [Best Practices](best-practices.md) for more on configuration options and tuning knobs that affect execution.
+Once you have a `SessionContext`, you can create DataFrames, register tables, and execute queries. The context maintains all state (configuration, catalogs, registered tables/UDFs) that DataFrames need during execution.
+
+> **Configuration tuning**: Batch size and partitions significantly affect performance. See [Best Practices](best-practices.md) and [Creating DataFrames § Configuration Impact](creating-dataframes.md#configuration-impact-on-dataframe-creation) for detailed guidance.
 
 ### Core Design Principles
 
-DataFrames are built on three foundational ideas:
+Every DataFrame operation follows these foundational principles:
 
-1.  **Lazy evaluation**: Transformations build up a query plan that executes only when you call an action method like [`.collect()`] or [`.show()`]. This allows the entire query to be optimized holistically.
-2.  **Immutable transformations**: DataFrame methods return new DataFrames, leaving the original unchanged. This functional style makes pipelines easier to reason about.
-3.  **Arrow-native data model**: Data is represented in memory using Apache Arrow's columnar format. This enables efficient, vectorized processing and zero-copy data sharing with other systems.
+1.  **Lazy evaluation**: Transformations build up a query plan that executes only when you call an action method like [`.collect()`] or [`.show()`]. This allows the entire query to be optimized holistically before touching any data.
+2.  **Immutable transformations**: DataFrame methods return new DataFrames, leaving the original unchanged. This functional style makes pipelines easier to reason about and compose.
+3.  **Arrow-native data model**: Data is represented in memory using Apache Arrow's columnar format. This enables efficient vectorized processing and zero-copy data sharing with other Arrow-based systems.
 
-## Schemas and Data Types
+## Data Model & Schema
 
 ```
-SessionContext -> DataFrame -> [LogicalPlan] -> ExecutionPlan -> RecordBatches
+SessionContext
+  ↓ creates
+DataFrame
+  ↓ builds
+LogicalPlan    <= Schema (types + nullability) defined here
+  ↓ optimizes & plans
+ExecutionPlan  <= Null handling semantics implemented here
+  ↓ executes
+RecordBatches  <= Actual null values (bitmaps) stored here
 ```
 
-A DataFrame’s schema is the schema of its underlying [`LogicalPlan`]. Sources (files, tables, SQL) provide or infer a base schema, and each transformation (e.g., `select`, `with_column`, `aggregate`, `join`) derives a new output schema from its inputs and expressions. [`DataFrame::schema()`] simply exposes the plan’s current schema (names, order, [`DataType`], and nullability).
+DataFrames work with structured, typed data following Apache Arrow's columnar model. Understanding schemas and null handling is crucial for effective DataFrame usage:
+
+- **Schema** (field names, types, nullability) is part of the LogicalPlan
+- **Null semantics** (three-valued logic, aggregation rules) are implemented in ExecutionPlan operators
+- **Null values** themselves are stored as bitmaps in Arrow RecordBatches
+
+### Schemas and Data Types
+
+A DataFrame's schema is the schema of its underlying [`LogicalPlan`]. Sources (files, tables, SQL) provide or infer a base schema, and each transformation (e.g., `select`, `with_column`, `aggregate`, `join`) derives a new output schema from its inputs and expressions. [`DataFrame::schema()`] simply exposes the plan’s current schema (names, order, [`DataType`], and nullability).
 
 - Base schemas come from data sources (e.g., Parquet metadata, explicit CSV schema, MemTable schema)
 - Transformations derive new schemas (rename, add/drop columns, expression output types, aggregation output)
@@ -138,53 +174,232 @@ async fn main() -> Result<()> {
 
 > **Reference:** For a deeper tour of Arrow schemas and RecordBatches, see [Introduction to Arrow & RecordBatches](../../user-guide/arrow-introduction.md). For SQL type compatibility and coercion rules, see [SQL Data Types](../../user-guide/sql/data_types.md).
 
-## Handling Null Values
+### Handling Null Values
 
-```
-SessionContext -> DataFrame -> LogicalPlan -> ExecutionPlan -> [RecordBatches]
-```
+Arrow represents [nulls via a bitmap], so DataFusion handles null values consistently following SQL standards. Understanding null behavior is essential for correct queries.
 
-Arrow represents nulls via a bitmap, so DataFusion treats null-handling consistently across operators. Keep these rules in mind:
+> **New to SQL NULL semantics?** If you're coming from other programming languages, SQL's NULL behavior may surprise you. Unlike `null` in most languages (which is just a special value), SQL's `NULL` represents _"unknown"_ and propagates through expressions in non-intuitive ways. We recommend reading the [PruningPredicate Boolean Tri-state logic section] for detailed truth tables and examples.
 
-- **Three-valued logic**: comparisons involving nulls become `NULL` (unknown). Filters keep only rows where the predicate is `TRUE`.
-- **Conditional helpers**: functions like [`is_null()`], [`is_not_null()`], [`coalesce()`], `fill_null`, and `nvl` help eliminate or replace nulls explicitly.
-- **Aggregations**: aggregators such as `sum` and `avg` skip null inputs; use `count` vs. `count_distinct` to control null semantics.
-- **Sorting and joins**: joins treat `NULL = NULL` as `FALSE` (except for `IS NOT DISTINCT FROM` style comparisons); sorting places nulls last by default but you can control this via [`sort()`] expressions.
-- **Window & set ops**: window frames and set operations follow Arrow semantics—consider filling nulls first when they carry business meaning.
+**Three-Valued Logic & Filters**
+
+SQL uses three-valued logic: expressions can be `TRUE`, `FALSE`, or `NULL` (unknown).
+
+- Comparisons with `NULL` return `NULL` (unknown), not true or false
+  - `5 > NULL` → `NULL` (we don't know)
+  - `NULL = NULL` → `NULL` (even comparing NULL to itself is unknown!)
+- `WHERE` filters keep **only** rows that evaluate to `TRUE` — rows that are `NULL` or `FALSE` are filtered out
+- Example: `WHERE age > 18` excludes both rows where `age ≤ 18` AND rows where `age IS NULL`
 
 ```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    // Sample data with NULL values
+    // +-------+------+
+    // | name  | age  |
+    // +-------+------+
+    // | Alice | 25   |
+    // | Bob   | 17   |
+    // | Carol | NULL |
+    // +-------+------+
+    let df = ctx.read_csv("people.csv", CsvReadOptions::default()).await?;
+
+    // Query 1: Standard filter (excludes NULLs)
+    let adults = df.clone().filter(col("age").gt(lit(18)))?;
+    // Result: Only Alice (age=25)
+    // Bob filtered out: 17 > 18 is FALSE
+    // Carol filtered out: NULL > 18 is NULL (treated as FALSE by WHERE)
+
+    // Query 2: Explicitly include NULLs
+    let adults_or_unknown = df.filter(
+        col("age").gt(lit(18)).or(col("age").is_null())
+    )?;
+    // Result: Alice (age=25) AND Carol (age=NULL)
+    // Bob still filtered out: (17 > 18 OR 17 IS NULL) is FALSE
+
+    Ok(())
+}
+```
+
+**Conditional Helpers**
+DataFusion provides several tools to handle nulls explicitly:
+
+- [`is_null()`] and `is_not_null()` expressions test for null values
+- [`coalesce()`] returns the first non-null argument: `coalesce(col("price"), lit(0))`
+- [`nullif()`] returns null if two values are equal
+- `nvl(expr, default)` and `ifnull(expr, default)` provide default values for nulls
+- [`.fill_null()`] DataFrame method replaces nulls in all columns
+
+**Aggregations**
+
+- Functions like `sum`, `avg`, `min`, `max` skip null inputs entirely
+- `count(*)` counts all rows; `count(column)` counts only non-null values
+- `count_distinct` also ignores nulls by default
+
+**Joins**
+
+- Standard joins treat `NULL = NULL` as `FALSE` (nulls don't match)
+- Use `IS NOT DISTINCT FROM` for null-safe equality (treats `NULL = NULL` as `TRUE`)
+- See [`datafusion::common::NullEquality`] for join null-handling modes
+
+**Sorting**
+
+- Default behavior (following PostgreSQL): `ORDER BY col ASC` places nulls **last**
+- Control null placement with the `nulls_first` parameter:
+  - `col("score").sort(false, false)` // DESC NULLS LAST
+  - `col("score").sort(false, true)` // DESC NULLS FIRST
+- See [`DataFrame::sort()`] and [configuration] for customization
+
+```rust
+use datafusion::prelude::*;
+
+// Replace nulls with defaults
 let cleaned = df
     .with_column("revenue", coalesce(vec![col("revenue"), lit(0)]))?
     .filter(col("country").is_not_null())?;
+
+// Null-safe join (IS NOT DISTINCT FROM)
+use datafusion::common::NullEquality;
+let result = left.join_detailed(
+    right,
+    JoinType::Inner,
+    (vec!["id"], vec!["id"]),
+    None,
+    NullEquality::NullEqualsNull, // NULL = NULL is TRUE
+)?;
 ```
 
-> **Tip:** The [Transformations guide](transformations.md#dataframe-transformations) shows end-to-end patterns for filtering, imputing, and aggregating null-aware data.
+> **References**:
+>
+> - Three-valued logic: [`PruningPredicate`] documentation (see "Boolean Tri-state logic" section)
+> - Aggregation null handling: [`GroupsAccumulator::accumulate`]
+> - Join null semantics: [`datafusion::common::NullEquality`]
+> - Sort behavior: [`DataFrame::sort()`], [PostgreSQL ORDER BY rules](https://www.postgresql.org/docs/current/queries-order.html)
+> - Practical patterns: [Transformations guide](transformations.md#dataframe-transformations)
+
+[PruningPredicate Boolean Tri-state logic section]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html#background
+[nulls via a bitmap]: https://arrow.apache.org/docs/format/Columnar.html#validity-bitmaps
+[`PruningPredicate`]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html
+[`datafusion::common::NullEquality`]: https://docs.rs/datafusion-common/latest/datafusion_common/enum.NullEquality.html
+[`GroupsAccumulator::accumulate`]: https://docs.rs/datafusion-functions-aggregate-common/latest/datafusion_functions_aggregate_common/aggregate/groups_accumulator/fn.accumulate.html
+[`DataFrame::sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[configuration]: ../../user-guide/configs.md#default-null-ordering
 
 ## Execution Model: Actions vs. Transformations
 
+### The DataFrame Lifecycle
+
 ```
-SessionContext -> DataFrame -> LogicalPlan -> [ExecutionPlan] -> [RecordBatches]
+SessionContext
+  ↓ creates
+DataFrame       ← Lazy: holds LogicalPlan, no execution yet
+  ↓ transforms (select, filter, join...)
+LogicalPlan     ← Abstract query representation
+  ↓ on action (collect, show, write...)
+Optimizer       ← Rewrites plan (predicate pushdown, projection pruning, etc.)
+  ↓
+Physical Planner ← Converts to ExecutionPlan with concrete algorithms
+  ↓
+ExecutionPlan   ← Physical operators (HashJoin, ParquetExec, etc.)
+  ↓ executes
+RecordBatches   ← Streaming Arrow data chunks
 ```
 
-[`DataFrame`] exposes three broad groups of methods that mirror the lifecycle of building and executing a query. Knowing which bucket a method belongs to makes the API surface less overwhelming.
+DataFrames follow a **lazy execution model**: transformations build up a query plan without processing data, while actions trigger optimization and execution.
 
-| Category                     | Purpose                                                  | Representative methods                                                                  | Closest SQL concept                       |
-| ---------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **Transformations**          | Build/modify the logical plan without executing          | [`select()`], [`filter()`], [`aggregate()`], [`join()`], [`limit()`], [`with_column()`] | `SELECT`, `WHERE`, `JOIN`, `GROUP BY`     |
-| **Result-producing actions** | Trigger execution and return data to the caller          | [`collect()`], [`show()`], [`limit()` with action], [`explain()`]                       | Materializing a query result              |
-| **Sink actions**             | Execute and persist results to external systems          | [`write_parquet()`], [`write_csv()`], [`write_json()`], [`write_table()`]               | `CREATE TABLE AS`, `COPY TO`, file writes |
-| **Introspection/Admin**      | Inspect plans, schema, or reuse pieces in other contexts | [`schema()`], [`into_parts()`], [`into_view()`], [`into_optimized_plan()`]              | `EXPLAIN`, catalog metadata               |
+### DataFrame Method Categories
 
-> Expressions such as `col("a").gt(lit(5))` come from the logical expression API. If you're new to building expressions, see [Working with Expressions](../working-with-exprs.md) for a guided tour.
+`DataFrame` methods fall into four categories:
 
-DataFrames are **lazy**. Transformations mutate the logical plan, while actions trigger execution and stream [`RecordBatch`]es through an [`ExecutionPlan`].
+| Category              | Purpose                              | Examples                                                                   | SQL Analogy                   |
+| --------------------- | ------------------------------------ | -------------------------------------------------------------------------- | ----------------------------- |
+| **Transformations**   | Build/modify the logical plan (lazy) | [`select()`], [`filter()`], [`aggregate()`], [`join()`], [`with_column()`] | `SELECT`, `WHERE`, `GROUP BY` |
+| **Execution Actions** | Trigger execution and return data    | [`collect()`], [`show()`], [`execute_stream()`], [`count()`]               | Running the query             |
+| **Write Actions**     | Execute and persist results          | [`write_parquet()`], [`write_csv()`], [`write_table()`]                    | `CREATE TABLE AS`, `COPY TO`  |
+| **Introspection**     | Inspect without executing            | [`schema()`], [`explain()`], [`logical_plan()`], [`into_optimized_plan()`] | `EXPLAIN`, metadata queries   |
 
-1.  **Transformations** return new DataFrames: `select`, `filter`, `with_column`, `aggregate`, `sort`, `limit`, etc.
-2.  **Actions** execute the plan:
+### What Happens During Execution?
 
-- **Return data**: [`collect()`] gathers the entire result into memory; [`show()`] pretty prints; [`explain()`] produces a textual plan.
-- **Stream batches**: [`execute_stream()`] (via `SessionContext`) returns a `SendableRecordBatchStream` for incremental processing.
-- **Write results**: `write_parquet`, `write_csv`, `write_json`, `write_table` persist to sinks.
+When you call an action like `collect()`:
+
+1. **Logical Optimization** ([21+ optimizer rules][optimizer-rules], multiple passes):
+
+   - Predicate pushdown (move filters closer to scans)
+   - Projection pruning (remove unused columns)
+   - Common subexpression elimination
+   - Constant folding and simplification
+
+2. **Physical Planning** ([19+ physical rules][physical-rules]):
+
+   - Choose concrete algorithms (HashJoin vs SortMergeJoin)
+   - Insert repartitioning for parallelism
+   - Add sorts where needed
+   - Select scan strategies (parallel file readers)
+
+3. **Execution**:
+   - Stream data through operators in chunks (RecordBatches)
+   - Execute operators in parallel when possible
+   - Spill to disk if memory limits exceeded
+   - Collect statistics for adaptive optimization
+
+> **Memory vs. Streaming**: `collect()` buffers all results in memory—convenient but risky for large datasets. Use `execute_stream()` for incremental processing or write directly to files.
+
+### Optimizer architecture note
+
+DataFusion uses a **pragmatic hybrid approach**:
+
+- **Logical optimization**: Rule-based iterative rewrites (21+ rules like predicate pushdown, projection pruning)
+- **Physical planning**: Statistics-informed decisions where beneficial (e.g., join algorithm selection, partition count)
+- **Design philosophy**: "Solid heuristic optimizer as default + extension points for experimentation" (from [#1972](https://github.com/apache/datafusion/issues/1972))
+
+This is **not** a Cascades-style optimizer (no memoized search over equivalence classes). Plans are deterministic for a given query structure, and while statistics are used, there's no exhaustive cost-based enumeration.
+
+### Historical context—different optimizer approaches
+
+- **Volcano/Cascades** (1990s): Exhaustive cost-based search with memoization ([Graefe 1993](https://15799.courses.cs.cmu.edu/spring2025/papers/04-volcano/graefe-icde1993.pdf), [1995](https://15721.courses.cs.cmu.edu/spring2016/papers/graefe-ieee1995.pdf))
+- **Rule-based systems** (2000s): Pattern-matching rewrites without cost models (Spark Catalyst, early DataFusion)
+- **E-graphs** (2020s): Equality saturation—explore all rewrites simultaneously then extract optimal ([egg](https://egraphs-good.github.io/))
+- **Multi-level IRs (MLIR)**: Compiler infrastructure for layered IRs; recent work proposes open IRs and "optimization-as-passes" to enable cross-domain optimization and lower compilation latency ([Lattner et al. 2021](https://rcs.uwaterloo.ca/~ali/cs842-s23/papers/mlir.pdf), [PVLDB 2022](https://db.in.tum.de/~jungmair/papers/p2485-jungmair.pdf))
+
+> **Positioning ("LLVM of databases")**: This analogy refers to DataFusion's modular, embeddable architecture and extensibility (types, operators, planner/optimizer/execution), not to using LLVM IR/JIT. Today, execution is vectorized over Arrow and the optimizer is hybrid (rule-based logical rewrites + statistics-informed physical planning). DataFusion serves as a reusable backend in systems such as InfluxDB 3.0; comparable systems like DuckDB (vectorized execution) and Apache Spark (Catalyst rule-based optimizer) illustrate the broader design space. See the [DataFusion paper (SIGMOD 2024)](https://dl.acm.org/doi/10.1145/3626246.3653368) and the [Query Optimizer guide](https://datafusion.apache.org/library-user-guide/query-optimizer.html). Ongoing discussions: [#1972](https://github.com/apache/datafusion/issues/1972), [#15878](https://github.com/apache/datafusion/issues/15878).
+
+### Performance Example: Why the Physical Plan Matters
+
+The optimizer makes critical performance decisions when translating your [`LogicalPlan`] to an [`ExecutionPlan`]. Consider this simple filter:
+
+```rust
+let df = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?
+    .filter(col("region").eq(lit("EMEA")))?;
+```
+
+**The optimizer can choose different physical strategies:**
+
+- **Efficient ExecutionPlan**: Filter pushed to Parquet reader—only _EMEA_ row groups are read (minimizes I/O)
+- **Naive ExecutionPlan**: Read entire file, then filter in memory (slow for large files)
+
+DataFusion chooses the efficient plan automatically, but you can inspect what it chose using [`.explain()`]:
+
+```rust
+df.explain(false, false)?.show().await?;
+```
+
+The output shows chosen algorithms ([`HashJoinExec`], [`SortMergeJoinExec`]), operation order, and applied optimizations. Understanding the physical plan is essential for diagnosing bottlenecks.
+
+> **Performance tip**: Use `.explain()` to verify that filters are pushed down, unused columns are pruned, and efficient join algorithms are selected. See [Creation-Time Optimizations](creating-dataframes.md#creation-time-optimizations) for tuning techniques.
+
+**References:**
+
+- [Optimizer rules (source)](https://github.com/apache/datafusion/blob/main/datafusion/optimizer/src/optimizer.rs#L230-L257)
+- [Physical optimizer rules (source)](https://github.com/apache/datafusion/blob/main/datafusion/physical-optimizer/src/optimizer.rs#L86-L134)
+- [Parquet pruning deep-dive](https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/)
+
+### Complete Example: DataFrame Lifecycle
+
+Context: The example below demonstrates the full lifecycle: build a lazy plan, inspect it with `explain()`, then either buffer everything with `collect()` or stream `RecordBatch`es with `execute_stream()`. This mirrors the lifecycle described above (logical plan → optimization → physical plan → execution).
 
 ```rust
 use datafusion::prelude::*;
@@ -218,204 +433,244 @@ async fn main() -> Result<()> {
 
 > **Mind the trade-offs:** `collect()` is convenient but buffers the entire result set. Prefer streaming or writing to sinks for large outputs.
 
-### Why the Execution Plan Matters: From Recipe to Reality
+See also:
 
-It is crucial to understand the difference between the `LogicalPlan` and the `ExecutionPlan` because all performance tuning and debugging happens at the physical level.
+- Query Optimizer overview: ../query-optimizer.md
+- DataFrame methods: [`collect()`], [`execute_stream()`], [`explain()`]
+- Parquet pruning background (projection, stats, page pruning): [Parquet Pruning]
 
-- The **DataFrame** and its **`LogicalPlan`** are the **recipe**: they describe **what** result you want in abstract terms (e.g., "join A and B, then filter").
-- The **`ExecutionPlan`** (or "physical plan") is the **factory assembly line**: it describes **how** to get that result with specific algorithms and operations.
-
-The query optimizer's job is to translate the logical recipe into an efficient physical assembly line. For the same DataFrame, the optimizer might choose very different plans based on data statistics, available memory, and configuration.
-
-**Example: A Simple Query, Two Potential Plans**
-
-Imagine this simple DataFrame:
-
-```rust
-let df = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?
-    .filter(col("region").eq(lit("EMEA")))?;
-```
-
-- **Plan A (Efficient):** The optimizer "pushes down" the filter. The `ExecutionPlan` instructs the Parquet reader to **only** read the row groups relevant to the 'EMEA' region and to skip all others. This is fast because it minimizes I/O.
-- **Plan B (Inefficient):** A naive plan reads the _entire_ Parquet file into memory and **then** applies the filter. This is vastly slower for large files.
-
-You can inspect the chosen `ExecutionPlan` for any DataFrame using [`explain()`]:
-
-```rust
-df.explain(false, false)?.show().await?;
-```
-
-The output of `explain` shows you the chosen algorithms (e.g., `HashJoin`, `SortMergeJoin`), the order of operations, and how filters are applied. Understanding this plan is the key to diagnosing bottlenecks and improving query performance.
+[Parquet Pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
 
 ## Relationship between [`LogicalPlan`]s and `DataFrame`s
 
-A DataFusion [`DataFrame`] is a lazy recipe for a computation, defined by two key components:
+A DataFusion `DataFrame` is a lazy recipe for a computation. Both the SQL API ([`sql()`]) and the DataFrame API compile to the same underlying [`LogicalPlan`] representation and are optimized/executed identically. To understand how this works, consider these three components:
 
-- A **`LogicalPlan`**: An immutable tree describing **what** to compute (e.g., scan a file, filter by a predicate, project some columns).
-- A **`SessionState` snapshot**: An immutable capture of the session's configuration and resources (e.g., registered tables, UDFs, timezone settings) at the moment the DataFrame was created.
+At a high level:
 
-This design ensures that a DataFrame's behavior is reproducible and predictable. From a DataFrame's perspective, the world is frozen in time. The `SessionContext` is a mutable, high-level control surface you use to manage the session, but each DataFrame holds an immutable `SessionState` snapshot. Every transformation you apply to a DataFrame (like `.select()` or `.filter()`) doesn't change the original; it returns a **new** DataFrame with an updated `LogicalPlan`.
+- **[`SessionContext`]** — mutable session environment (catalog, UDFs, configuration)
+- **[`LogicalPlan`]** — immutable description of what to compute
+- **[`DataFrame`]** — [`LogicalPlan`] + [`SessionState`] snapshot at creation
 
-**DataFrame composition and origins:**
+A `DataFrame` consists of two immutable parts:
 
-A `DataFrame` is an immutable handle that bundles a [`LogicalPlan`] (the "what") with a [`SessionState`] snapshot (the "how/when") taken from the creating [`SessionContext`]. Transformations like `.select()`, `.filter()`, and `.join()` derive a new `LogicalPlan` and return a new `DataFrame` that carries forward the same `SessionState`. Actions (for example, `.collect()`, `.show()`, or `create_physical_plan()`) materialize the plan; until then, nothing executes.
+- A **[`LogicalPlan`]** describing what to compute
+- A **[`SessionState`] snapshot** capturing the session configuration and resources at creation time
+
+The [`SessionContext`] is mutable, but each `DataFrame` holds a frozen view of it. Transformations like `.select()`, `.filter()`, and `.join()` return a new `DataFrame` with a new [`LogicalPlan`] and the same [`SessionState`] snapshot. Actions such as `.collect()`, `.show()`, or `.create_physical_plan()` materialize the computation; until then, nothing executes.
+
+> Quick analogy: [`SessionContext`] = kitchen (mutable environment), [`LogicalPlan`] = recipe (immutable), [`DataFrame`] = recipe + kitchen snapshot. The diagram below uses this terminology.
+
+### The DataFrame Lifecycle: Step by Step
 
 ```
+[Step 1: The Kitchen (Mutable)]
 SessionContext
-  ├─ provides → SessionState (snapshot)
-  └─ creates  → DataFrame
-                   ├─ SessionState ← from SessionContext at creation time
-                   └─ LogicalPlan  ← built via:
-                       - DataFrame ops: .select(), .filter(), .join(), ...
-                       - SQL: ctx.sql("...") → DataFrame
-                       - LogicalPlanBuilder: build plan → DataFrame::new(state, plan)
+  - Config (target_partitions = 8, batch_size = 8192)
+  - Registered UDF "my_custom_func"
+  - Catalog with "sales" table
 
-Key API paths
+     │
+     │ .read_table("sales")
+     ▼
+
+[Step 2: The Snapshot (Immutable)]
+DataFrame is created
+  ├─ SessionState (Snapshot of the kitchen at this moment)
+  │    - Config (target_partitions = 8, batch_size = 8192)
+  │    - UDF "my_custom_func" is available
+  │    - "sales" table is registered
+  │
+  └─ LogicalPlan
+       - TableScan("sales")
+
+     │
+     │ .filter(col("amount").gt(100))
+     ▼
+
+[Step 3: Transformation (Recipe changes, snapshot doesn't)]
+New DataFrame is returned
+  ├─ SessionState (The SAME immutable snapshot carries forward)
+  │    - Config (target_partitions = 8, batch_size = 8192)
+  │    - UDF "my_custom_func" still available
+  │
+  └─ LogicalPlan (A NEW immutable plan)
+       - Filter(amount > 100)
+         - TableScan("sales")
+
+     │
+     │ .collect() or .show() [Action triggers execution]
+     ▼
+
+[Step 4: Execution]
+ExecutionPlan created using the frozen SessionState
+  → Runs with original config and resources
+  → Produces RecordBatches
+```
+
+**Key API paths:**
+
+```
 DataFrame ↔ into_parts() ↔ (SessionState, LogicalPlan)
 DataFrame → into_optimized_plan() → Optimized LogicalPlan
 DataFrame → create_physical_plan() → ExecutionPlan
 ```
 
-> **SessionState snapshot details**
->
-> A `SessionState` captures the exact execution context at DataFrame creation time, including:
->
-> - Configuration (e.g., batch size, target partitions, optimizer toggles, timezone)
-> - Registered catalogs, schemas, tables, UDFs/UDTFs/UDAFs
-> - The query execution start timestamp used by time-dependent functions
->
-> Practical implications:
->
-> - `now()` and similar functions use the captured start time; reusing a plan later will not “advance time”.
-> - Changing configuration (e.g., timezone) after creating a DataFrame will not affect that DataFrame’s execution.
-> - Register UDFs before building DataFrames that rely on them.
+### Why This Matters: The Guarantees of the Snapshot
+
+This design provides critical guarantees for **predictable and reproducible queries**:
+
+**1. Configuration Reproducibility**
+
+- Batch size, target partitions, timezone, and optimizer settings are frozen at DataFrame creation.
+- Your DataFrame will execute with the same performance characteristics even if you change global [`SessionContext`] settings later.
+
+**2. Resource Safety**
+
+- Catalogs, schemas, registered tables, and UDFs available at creation time are preserved.
+- Prevents errors where a query fails because a table or UDF it depends on was deregistered after the DataFrame was built.
+
+**3. Point-in-Time Consistency**
+
+- The query execution start timestamp is captured in the snapshot.
+- Functions like [`.now()`] return the **same value** every time you execute the DataFrame, based on the snapshot time, not wall-clock time.
+
+**Practical implications:**
+
+- **Reproducibility**: Re-running a DataFrame later happens in the exact same context—critical for debugging and testing.
+- **Safety**: You can safely modify the [`SessionContext`] (e.g., to prepare for a different query) without breaking existing DataFrame objects.
+- **Best practice**: Always register UDFs and tables **before** creating the DataFrames that rely on them.
+
+> **Learn more:** See [SessionContext and SessionState relationship][SessionContext and SessionState] for implementation details.
+
+[SessionContext and SessionState]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#relationship-between-sessioncontext-sessionstate-and-taskcontext
 
 ### Converting Between `DataFrame` and `LogicalPlan`
 
-While the DataFrame API covers most use cases, you may need to work directly with the `LogicalPlan`—for example, to apply custom optimizer rules, integrate with advanced query rewriting logic, or programmatically inspect/modify the query structure before execution.
+While the DataFrame API covers most use cases, you may need direct [`LogicalPlan`] access for custom optimizer rules, query rewriting systems, or programmatic plan inspection/modification.
 
-**DataFrame vs LogicalPlan — Same query, different representations:**
+**When to use each:**
 
-| **Using DataFrame API**            | **Using LogicalPlan directly**                                    |
-| ---------------------------------- | ----------------------------------------------------------------- |
-| Fluent, high-level                 | Low-level, explicit tree building                                 |
-| `df.select(...).filter(...)`       | `LogicalPlanBuilder::from(plan).project(...).filter(...).build()` |
-| Automatically carries SessionState | You must manage SessionState separately                           |
-| Easy to read and write             | More verbose, requires understanding plan structure               |
+| **DataFrame API**                    | **LogicalPlan directly**                 |
+| ------------------------------------ | ---------------------------------------- |
+| Standard queries and transformations | Custom optimizer rules                   |
+| Automatic SessionState management    | Fine-grained control over plan structure |
+| Rapid prototyping                    | Query rewriting systems                  |
 
-The API makes it easy to move between representations:
+Extract and modify plans using [`.into_parts()`]:
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::error::Result;
 use datafusion::logical_expr::LogicalPlanBuilder;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
+let ctx = SessionContext::new();
+let df = ctx.read_csv("data.csv", CsvReadOptions::new()).await?;
 
-    // Extract both SessionState and LogicalPlan from the DataFrame
-    let (state, plan) = df.into_parts();
-
-    // Manipulate the plan using LogicalPlanBuilder
-    let modified_plan = LogicalPlanBuilder::from(plan)
-        .filter(col("a").gt(lit(5)))?
-        .build()?;
-
-    // Reconstruct a DataFrame with the modified plan
-    let new_df = DataFrame::new(state, modified_plan);
-
-    Ok(())
-}
+// Extract state + plan, modify, rebuild DataFrame
+let (state, plan) = df.into_parts();
+let modified_plan = LogicalPlanBuilder::from(plan)
+    .filter(col("a").gt(lit(5)))?
+    .build()?;
+let new_df = DataFrame::new(state, modified_plan);
 ```
 
 ### DataFrame and LogicalPlanBuilder Equivalence
 
-Using [`DataFrame`] methods produces the same [`LogicalPlan`] as using [`LogicalPlanBuilder`] directly:
+[`DataFrame`] methods and [`LogicalPlanBuilder`] produce identical plans:
 
 ```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::logical_expr::LogicalPlanBuilder;
+// These produce the same LogicalPlan:
+let df = ctx.read_csv("data.csv", CsvReadOptions::new()).await?
+    .select(vec![col("a"), col("b")])?;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
+let builder_plan = LogicalPlanBuilder::from(base_plan)
+    .project(vec![col("a"), col("b")])?.build()?;
 
-    // Build a plan using DataFrame API
-    let df_from_api = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    let df_from_api = df_from_api.select(vec![col("a"), col("b")])?
-        .sort(vec![col("a").sort(true, true)])?;
-    let (_, plan_from_api) = df_from_api.into_parts();
-
-    // Build the same plan using LogicalPlanBuilder
-    // Equivalent to: SELECT a, b FROM example.csv ORDER BY a
-    let df_for_builder = ctx.read_csv("tests/data/example.csv", CsvReadOptions::new()).await?;
-    let (_state, base_plan) = df_for_builder.into_parts();
-    let plan_from_builder = LogicalPlanBuilder::from(base_plan)
-        .project(vec![col("a"), col("b")])?
-        .sort(vec![col("a").sort(true, true)])?
-        .build()?;
-
-    // Both approaches produce identical logical plans
-    assert_eq!(plan_from_api, plan_from_builder);
-    Ok(())
-}
+// assert_eq!(plan_from_df, builder_plan);  ✅ Identical
 ```
 
-> See also: [Building Logical Plans](../building-logical-plans.md) for a deeper dive into `LogicalPlanBuilder` and manual plan construction.
+> See [Building Logical Plans](../building-logical-plans.md) for advanced [`LogicalPlanBuilder`] usage.
 
-### Mixing SQL and DataFrames
+### Mixing SQL and DataFrames for Powerful Workflows
 
-It is common to mix programmatic DataFrames with SQL. One ergonomic pattern is to turn a `DataFrame` into a view and query it with SQL:
+One of DataFusion's most powerful features is the ability to seamlessly combine the programmatic `DataFrame` API with the declarative power of SQL. Because both APIs lower to the same [`LogicalPlan`] and are optimized/executed identically, this hybrid approach gives you zero-cost interop while leveraging each API's strengths in a single, unified workflow.
+
+**The Best of Both Worlds:**
+
+- **Use the DataFrame API** for tasks that benefit from programmatic control, such as:
+
+  - Dynamically constructing queries with conditional logic (`if/else`)
+  - Integrating with other Rust functions and libraries
+  - Step-by-step data preparation and cleaning
+
+- **Use SQL** for complex analytical queries that are often more readable and familiar, such as:
+  - Aggregations (`GROUP BY`), window functions (`OVER(...)`), and complex joins
+  - Queries that are loaded from configuration files or provided by non-developer users
+
+A common and highly effective pattern is to perform initial data preparation with the `DataFrame` API, and then register the result as a temporary view to be consumed by a final SQL query.
 
 ```rust
-use std::sync::Arc;
 use datafusion::prelude::*;
 
 let ctx = SessionContext::new();
 
-// Build a DataFrame programmatically
+// 1. Prepare data programmatically with the DataFrame API
 let sales = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?
     .filter(col("region").eq(lit("EMEA")))?;
 
-// Register as a temporary view
-let view = sales.clone().into_view();
-ctx.register_table("sales_emea", view)?;
+// 2. Register the DataFrame as a temporary view.
+// .into_view() consumes 'sales'; use .clone() if needed later (cheap Arc clone)
+ctx.register_table("sales_emea", sales.into_view())?;
 
-// Now query with SQL and continue with the DataFrame API
-let top = ctx.sql("SELECT product_id, SUM(revenue) AS rev FROM sales_emea GROUP BY product_id ORDER BY rev DESC LIMIT 10").await?;
-top.show().await?;
+// 3. Use SQL for the final, complex analytical query.
+let top_products = ctx.sql(
+    "SELECT product_id, SUM(revenue) AS rev
+     FROM sales_emea
+     GROUP BY product_id
+     ORDER BY rev DESC
+     LIMIT 10"
+).await?;
+
+top_products.show().await?;
 ```
 
-> You can also register arbitrary `TableProvider`s or use `into_view()` to compose multi-step pipelines across SQL and DataFrames.
+**Zero-Cost Abstraction:**
 
-## Key API Methods
+Because both the `DataFrame` API and the SQL engine produce a [`LogicalPlan`] under the hood, this pattern is a **zero-cost abstraction**. Before execution, the DataFusion optimizer performs holistic, end-to-end optimization across the entire workflow, regardless of how it was constructed. The final [`ExecutionPlan`] will be just as efficient as if you had written the entire query in a single API.
 
-When working with the `DataFrame`/`LogicalPlan` boundary, be aware of these methods:
+> Use [`.into_view()`] to compose multi-step pipelines across SQL and DataFrame APIs.
 
-- **[`into_parts()`]**: Returns `(SessionState, LogicalPlan)`. Use this when you need to manipulate the plan while preserving the exact session snapshot. This is the recommended way to extract both components.
+## Summary: The Big Picture
 
-- **[`into_unoptimized_plan()`]**: Returns the unoptimized `LogicalPlan` but **loses the `SessionState` snapshot**. Useful for plan inspection or tests; for production, prefer [`into_parts()`] (or executing the `DataFrame`) to preserve session state.
+The DataFusion DataFrame is more than just a table—it's a powerful recipe for computation. By understanding its core principles, you can build complex, efficient, and predictable data pipelines:
 
-  > ⚠️ **Warning: Perils of Lost State**
-  >
-  > Discarding `SessionState` means the execution context can change unexpectedly. For example, the `now()` function returns the query execution start time captured in the session state—if you lose that snapshot and re-execute the plan later, `now()` will return a different timestamp. Similarly, changes to session configuration (like timezone settings) will affect re-execution. Always use [`into_parts()`] when you intend to execute the plan later.
-  >
-  > See the [scalar functions documentation](../../user-guide/sql/scalar_functions.md) for details on how `now()` and other time-dependent functions work.
+- **Stay lazy & immutable** – build a [`LogicalPlan`] first; nothing executes until an action
+- **Execute reproducibly** – every DataFrame carries its own [`SessionState`] snapshot
+- **Mix APIs freely** – SQL and DataFrame compile to the _same_ [`LogicalPlan`], so interop is zero-cost
 
-- **[`into_optimized_plan()`]**: Returns the optimized `LogicalPlan` after running query optimization rules. Also **loses session state**. Useful for plan inspection/tests; for production re-use, prefer [`into_parts()`].
+Together these properties let you write declarative SQL for clarity, drop to Rust for control, and still get one optimized execution pipeline.
 
-- **[`create_physical_plan()`]**: Converts the `LogicalPlan` to an [`ExecutionPlan`] (doesn't execute). Actions like [`collect()`] and [`show()`] handle this internally—you rarely need to call this directly.
+### Where to Go Next
 
-- **[`into_view()`]**: Converts a `DataFrame` into a [`TableProvider`] that can be registered as a view using [`SessionContext::register_table()`].
+With these concepts understood, you're ready to build data pipelines:
 
-> **See also:**
->
-> - [DataFrame Execution](#dataframe-execution) for execution methods
-> - [DataFrame Transformations](#dataframe-transformations) for building queries
-> - [How DataFrames Work](../../user-guide/dataframe.md#how-dataframes-work-lazy-evaluation-and-arrow-output) for lazy evaluation details
+1. **[Create DataFrames](creating-dataframes.md)** – load Parquet, CSV, in-memory data
+2. **[Transform DataFrames](transformations.md)** – select, filter, aggregate, join
+3. **[Write / Execute](writing-dataframes.md)** – collect, stream, or persist results
+
+### Advanced Reference: API Cheat-Sheet
+
+For experienced users, this quick reference helps you pick the right method for advanced tasks:
+
+| Goal                         | Primary API(s)                              | Keeps SessionState? | Typical Follow-up                                  |
+| ---------------------------- | ------------------------------------------- | :-----------------: | -------------------------------------------------- |
+| **Re-use plan later**        | [`.into_parts()`]                           |         ✅          | mutate plan → [`create_physical_plan()`] → execute |
+| **Inspect optimizer output** | [`.explain()`], [`.into_optimized_plan()`]  |         ⚠️          | check pushdown/pruning, join choice                |
+| **Inspect unoptimized plan** | [`.into_unoptimized_plan()`]                |         ⚠️          | verify pre-optimization structure                  |
+| **Mix SQL & DataFrame**      | [`.into_view()`] + [`sql()`]                |         ✅          | iterate between SQL & DF, then [`.collect()`]      |
+| **Stream large result**      | [`.execute_stream()`], [`.write_parquet()`] |         ✅          | pipe to Parquet/CSV, Kafka, etc.                   |
+| **Quick interactive result** | [`.collect()`], [`.show()`]                 |         ✅          | debug, notebooks, CLI                              |
+
+> **SessionState matters**: Methods marked ⚠️ drop the snapshot. They're great for inspection, but to execute later use [`.into_parts()`] to preserve deterministic semantics (timestamps, timezone, config, UDF catalog). See "Re-use plan later" in the cheat-sheet for the safest way to extract and modify a plan.
 
 ## References
 
@@ -485,3 +740,78 @@ When working with the `DataFrame`/`LogicalPlan` boundary, be aware of these meth
     - [`into_optimized_plan`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_optimized_plan)
     - [`create_physical_plan`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan)
     - [`into_view`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view)
+
+[optimizer-rules]: https://github.com/apache/datafusion/blob/main/datafusion/optimizer/src/optimizer.rs#L230-L257
+[physical-rules]: https://github.com/apache/datafusion/blob/main/datafusion/physical-optimizer/src/optimizer.rs#L86-L162
+[`PushDownFilter`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/push_down_filter/struct.PushDownFilter.html
+[`OptimizeProjections`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/optimize_projections/index.html
+[`CommonSubexprEliminate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/common_subexpr_eliminate/struct.CommonSubexprEliminate.html
+[`SimplifyExpressions`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/simplify_expressions/struct.SimplifyExpressions.html
+[`JoinSelection`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/join_selection/struct.JoinSelection.html
+[`HashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html
+[`SortMergeJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html
+[`SymmetricHashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html
+[`ParquetExec`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/struct.ParquetExec.html
+[`EnforceDistribution`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_distribution/struct.EnforceDistribution.html
+[`EnforceSorting`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_sorting/struct.EnforceSorting.html
+[`FairSpillPool`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/memory_pool/struct.FairSpillPool.html
+[`DiskManager`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/disk_manager/struct.DiskManager.html
+[`CoalesceBatches`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/coalesce_batches/struct.CoalesceBatches.html
+[config-dynamic]: ../../user-guide/configs.md#enable_join_dynamic_filter_pushdown
+[config-partitions]: ../../user-guide/configs.md#target_partitions
+[`EliminateJoin`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/eliminate_join/struct.EliminateJoin.html
+[`ExtractEquijoinPredicate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/extract_equijoin_predicate/struct.ExtractEquijoinPredicate.html
+
+# Reference-style links for methods and types used above
+
+# Types
+
+[SessionContext]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[SessionState]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`SessionConfig`]: https://docs.rs/datafusion/latest/datafusion/config/struct.SessionConfig.html
+[DataFrame]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[LogicalPlan]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[LogicalPlanBuilder]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html
+[ExecutionPlan]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[TableProvider]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+
+# SessionContext methods
+
+[`with_config()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.with_config
+[`state()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.state
+[`read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
+[`sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
+[`register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`register_udf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udf
+[`register_udaf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udaf
+[`register_table_provider()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table_provider
+[`catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
+[`catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
+
+# DataFrame methods
+
+[`select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
+[`sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[`with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
+[`write_parquet()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_parquet
+[`write_csv()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_csv
+[`write_json()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_json
+[`write_table()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_table
+[`.into_parts()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts
+[`into_unoptimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_unoptimized_plan
+[`into_optimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_optimized_plan
+[`create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
+[`.into_view()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view
