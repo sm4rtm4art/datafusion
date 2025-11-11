@@ -52,6 +52,35 @@ ctx.register_parquet(
 let df = ctx.table("warehouse.analytics.sales").await?;
 ```
 
+## Custom TableProviders
+
+Build custom sources when you need to read from APIs, databases, generated/virtual tables, or specialized storage.
+
+- Responsibilities:
+
+  - **Schema**: Provide an accurate `SchemaRef`.
+  - **Scan**: Return an `ExecutionPlan` for reading data.
+  - **Filter/projection pushdown**: Advertise and honor pushdown when possible.
+  - **Statistics** (optional): Provide row counts/distinct counts to help the optimizer.
+  - **Table type**: Return `TableType::Base` (or `View` if appropriate).
+
+- Registration:
+
+  - Use `ctx.register_table("name", Arc::new(provider))?` to expose it in the session catalog.
+
+- Best practices:
+
+  - Push down filters and projections early to minimize I/O.
+  - Avoid materializing large intermediates; prefer streaming execution.
+  - Verify plans with `EXPLAIN` to ensure pushdown and plan shape.
+  - Expose constraints/defaults when relevant for correctness and optimization.
+  - Consider `ViewTable` (logical plan view) or `MemTable` (materialized) when simpler.
+
+- Related:
+  - `ListingTable` for files-as-tables
+  - `ViewTable` for SQL-defined views
+  - `MemTable` for small in-memory data
+
 ### Using information_schema
 
 Enable `information_schema` for SQL-based metadata discovery:
