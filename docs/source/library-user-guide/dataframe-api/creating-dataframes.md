@@ -96,6 +96,17 @@ To situate DataFrames in the overall architecture, here is a brief recap from [C
 > - Transformations: [`transformations.md`](transformations.md)
 > - DataFrame Execution (later in this guide)
 
+> **📚 About the examples in this guide**
+>
+> Throughout this document, you'll see examples using [`assert_batches_eq!`] to verify DataFrame outputs. This isn't just for testing—it's a learning tool! When you see:
+>
+> ```rust
+> let batches = df.collect().await?;
+> assert_batches_eq!(&[...], &batches);
+> ```
+>
+> You're seeing both **what the code does** and **what result it produces**. This pattern will help you understand DataFusion's behavior as you read through the examples.
+
 <!-- TODO: add reference-->
 
 ## Before Creating a DataFrame
@@ -385,9 +396,10 @@ For quick exploration, SQL is often more convenient.
 ```rust
 use datafusion::prelude::*;
 use datafusion::error::Result;
+use datafusion::assert_batches_eq;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+#[tokio::test]
+async fn test_show_tables() -> Result<()> {
     let ctx = SessionContext::new();
 
     ctx.register_csv("sales", "sales.csv", CsvReadOptions::new()).await?;
@@ -395,22 +407,26 @@ async fn main() -> Result<()> {
 
     // SHOW TABLES for a quick overview
     let df = ctx.sql("SHOW TABLES").await?;
-    df.show().await?;
+
+    // Verify the registered tables appear in the catalog
+    let batches = df.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+------------+",
+            "| table_name |",
+            "+------------+",
+            "| sales      |",
+            "| users      |",
+            "+------------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
 ```
 
-Output (simplified):
-
-```
-+------------+
-| table_name |
-+------------+
-| sales      |
-| users      |
-+------------+
-```
+> **Testing pattern**: Using [`assert_batches_eq!`] verifies the exact output. This is more robust than visual inspection with `.show()` and is the recommended pattern for examples that demonstrate expected results.
 
 For detailed metadata (columns and types), enable [`information_schema`] and query it:
 
@@ -510,7 +526,7 @@ DataFusion is designed for efficient file scans:
 
 Basic pattern: `ctx.read_<format>(path, options).await?`
 
-- Note: For options use the representiv builders
+- Note: For options use the representative builders
 - **Exception** : CSV options differes! Use the builder: [`CsvReadOptions::new()`][CsvReadOptions] (not `default()`, `new()` is for common cases, default() pro minimal, base configuration)
 
 > **Scan, not read**: The `read_*` methods build a lazy file scan—no bytes are loaded until an action runs ([`.collect()`], [`.show()`], [`.execute_stream()`]). Data is streamed in batches during execution.
@@ -936,7 +952,7 @@ async fn main() -> Result<()> {
 Now that you've seen the patterns:
 
 | SQL excels at                          | DataFrame excels at                   |
-| -------------------------------------- | ------------------------------------- |
+| :------------------------------------- | ------------------------------------- |
 | Window functions (`ROW_NUMBER`, `LAG`) | Dynamic filtering based on variables  |
 | CTEs for multi-step transformations    | Programmatic column selection         |
 | Complex JOINs and set operations       | Iterative/conditional transformations |
@@ -993,9 +1009,10 @@ use datafusion::prelude::*;
 use datafusion::arrow::array::{ArrayRef, Int32Array, Float64Array};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
+use datafusion::assert_batches_eq;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+#[tokio::test]
+async fn test_read_batch_one_shot() -> Result<()> {
     let ctx = SessionContext::new();
 
     // Assume this batch came from Arrow Flight or another source
@@ -1009,18 +1026,26 @@ async fn main() -> Result<()> {
         .filter(col("revenue").gt(lit(500.0)))?
         .sort(vec![col("revenue").sort(false, true)])?;
 
-    df.show().await?;
-    // +------------+---------+
-    // | product_id | revenue |
-    // +------------+---------+
-    // | 4          | 2100.0  |
-    // | 1          | 1200.0  |
-    // | 3          | 890.0   |
-    // +------------+---------+
+    // Verify the filtered and sorted results
+    let batches = df.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+------------+---------+",
+            "| product_id | revenue |",
+            "+------------+---------+",
+            "| 4          | 2100.0  |",
+            "| 1          | 1200.0  |",
+            "| 3          | 890.0   |",
+            "+------------+---------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
 ```
+
+> **Why this pattern?** Instead of using `.show()` which just prints output, [`assert_batches_eq!`] lets you verify the transformation worked correctly. This is essential for testing but also makes examples more educational—you see both the operation AND its expected outcome.
 
 #### Pattern 2: Reusable Table with [`.register_batch()`]
 
@@ -1080,19 +1105,36 @@ Create DataFrames directly from Rust literals—no files, no external data sourc
 ```rust
 use datafusion::prelude::*;
 use datafusion::error::Result;
+use datafusion::assert_batches_eq;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+#[tokio::test]
+async fn test_dataframe_macro_basic() -> Result<()> {
+    // Create DataFrame from inline data
     let df = dataframe!(
         "id" => [1, 2, 3],
         "name" => ["Alice", "Bob", "Carol"]
     )?;
-    df.show().await?;
+
+    // Verify the DataFrame contains expected data
+    let batches = df.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----+-------+",
+            "| id | name  |",
+            "+----+-------+",
+            "| 1  | Alice |",
+            "| 2  | Bob   |",
+            "| 3  | Carol |",
+            "+----+-------+",
+        ],
+        &batches
+    );
+
     Ok(())
 }
 ```
 
-#### Handling null values
+#### Handling null values <!-- TODO: More input -->
 
 Use Rust's `Option` type for nullable columns:
 
@@ -1108,7 +1150,7 @@ let df = dataframe!(
 
 #### Complete testing workflow
 
-The [`dataframe!`] macro pairs perfectly with [`assert_batches_eq!`] for validating DataFrame transformations. Here's a complete unit test:
+The [`dataframe!`] macro pairs perfectly with [`assert_batches_eq!`] for validating DataFrame transformations. Here's a complete unit test showing the three-step pattern:
 
 ```rust
 use datafusion::prelude::*;
@@ -1116,19 +1158,19 @@ use datafusion::assert_batches_eq;
 
 #[tokio::test]
 async fn test_filter_and_aggregate() -> datafusion::error::Result<()> {
-    // 1) Create test data inline
+    // 1) CREATE: Set up test data inline (no files needed!)
     let df = dataframe!(
         "department" => ["Sales", "Sales", "Engineering", "Engineering"],
         "salary" => [50000, 55000, 80000, 85000]
     )?;
 
-    // 2) Apply transformations under test
+    // 2) TRANSFORM: Apply the operations you want to test
     let result = df
         .aggregate(vec![col("department")], vec![sum(col("salary")).alias("total")])?
         .filter(col("total").gt(lit(100000)))?
         .sort(vec![col("total").sort(false, true)])?;
 
-    // 3) Assert expected output
+    // 3) VERIFY: Assert the exact expected output
     let batches = result.collect().await?;
     assert_batches_eq!(
         &[
@@ -1147,8 +1189,13 @@ async fn test_filter_and_aggregate() -> datafusion::error::Result<()> {
 ```
 
 > **About [`assert_batches_eq!`]**: Compares pretty-formatted output of [`RecordBatch`]es. **Failure output is copy-pasteable**—when tests fail, you can paste the actual output directly into your expected results. Works with any DataFrame source (files, SQL, in-memory, etc.), not just [`dataframe!`].
-
-**Testing variants:**
+> **Conclusion**: This three-step pattern (CREATE → TRANSFORM → VERIFY) is your blueprint for testing DataFrames:
+>
+> - `dataframe!` creates test data without files
+> - Standard DataFrame operations apply your logic
+> - [`assert_batches_eq!`]verifies the exact output
+>
+> **Testing variants:**
 
 - [`assert_batches_sorted_eq!`]: For order-insensitive comparisons
 
@@ -1364,9 +1411,17 @@ See the planning overview for where this fits in the pipeline: [Datafusion plann
 
 ---
 
-## Executing DataFrames
+## DataFrame Execution <!-- TODO: More input -->
 
-DataFrames are lazy—nothing executes until you call an action. Both SQL (`ctx.sql(...)`) and the DataFrame API produce the same optimized plan and share the same execution mechanics.
+DataFusion [`DataFrame`]s use **lazy evaluation**: transformations build a query plan without processing data. Execution only happens when you call an action method like [`collect()`] or [`show()`].
+
+> **For complete execution documentation**, see [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations), which covers:
+>
+> - Transformations vs Actions
+> - Result-producing methods ([`collect()`], [`show()`], [`execute_stream()`])
+> - Sink actions ([`write_parquet()`], [`write_csv()`])
+> - Execution trade-offs (collect vs streaming, caching, partitioning)
+> - Performance tuning and debugging
 
 ### Action methods
 
@@ -1521,7 +1576,7 @@ df.write_table("target_table", DataFrameWriteOptions::new()).await?;
 
 ---
 
-## Error Handling & Recovery
+## Error Handling & Recovery <!-- TODO: More input -->
 
 Production systems need robust error handling when creating DataFrames. Understanding common failure modes helps you build resilient applications.
 
@@ -1682,7 +1737,7 @@ async fn main() -> Result<()> {
 
 ---
 
-## Real-World Creation Patterns
+## Real-World Creation Patterns <!-- TODO: More input -->
 
 ### Reading from Cloud Storage (S3)
 
@@ -1812,7 +1867,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-## Creation-Time Optimizations
+## Creation-Time Optimizations <!-- TODO: More input -->
 
 DataFusion applies several optimizations during DataFrame creation that significantly improve performance.
 
@@ -1938,7 +1993,7 @@ async fn main() -> Result<()> {
 
 For more optimization strategies, see [Best Practices](best-practices.md).
 
-## Configuration Impact on DataFrame Creation
+## Configuration Impact on DataFrame Creation <!-- TODO: More input -->
 
 The [`SessionContext`][SessionContext] configuration significantly affects how DataFrames are created and executed. Understanding these settings helps you tune performance for your workload.
 
@@ -2022,7 +2077,7 @@ let df = ctx.read_parquet("large_file.parquet", ParquetReadOptions::default()).a
 // File will be split into ~16 partitions if large enough
 ```
 
-### Format-Specific Configuration
+### Format-Specific Configuration <!-- TODO: More input -->
 
 #### CSV Reading Options
 
@@ -2039,7 +2094,7 @@ let df = ctx.read_csv("data.csv", CsvReadOptions::new()
 ).await?;
 ```
 
-#### Parquet Reading Options
+#### Parquet Reading Options <!-- TODO: More input -->
 
 ```rust
 use datafusion::prelude::*;
@@ -2050,7 +2105,7 @@ let df = ctx.read_parquet("data.parquet", ParquetReadOptions::new()
 ).await?;
 ```
 
-### Memory Limits and Spilling
+### Memory Limits and Spilling <!-- TODO: More input -->
 
 ```rust
 use datafusion::prelude::*;
@@ -2072,7 +2127,7 @@ let df = ctx.read_csv("huge.csv", CsvReadOptions::new()).await?;
 
 > **Note**: Memory limits apply during execution, not file scanning. File reading is streaming by default.
 
-### Connection Pooling for Remote Sources
+### Connection Pooling for Remote Sources <!-- TODO: More input -->
 
 For S3 and other remote sources, configure connection pooling:
 
@@ -2113,7 +2168,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Configuration summary**: Tuning these settings can dramatically improve performance. Start with defaults and adjust based on profiling. See [Best Practices](best-practices.md) for more tuning guidance.
 
-## Interoperability
+## Interoperability <!-- TODO: More input -->
 
 DataFusion integrates seamlessly with the Arrow ecosystem and can exchange data with other systems.
 
@@ -2290,7 +2345,7 @@ async fn from_kafka_microbatch(
 
 For more integration examples, see the [DataFusion examples](https://github.com/apache/datafusion/tree/main/datafusion-examples/examples).
 
-## Best Practices for DataFrame Creation
+## Best Practices for DataFrame Creation <!-- TODO: More input -->
 
 ### Creation Anti-patterns
 
@@ -2433,6 +2488,48 @@ match ctx.read_parquet(
 | ✅ Leverage Parquet for analytics      | ❌ Use CSV for large-scale processing      |
 | ✅ Check explain() plans               | ❌ Assume operations are efficient         |
 
+### Testing Best Practices
+
+Throughout this guide, you've seen the [`assert_batches_eq!`] pattern in action. Here's why it's a best practice:
+
+**The Pattern:**
+
+```rust
+let batches = df.collect().await?;
+assert_batches_eq!(
+    &[
+        "+-------+-----+",
+        "| name  | age |",
+        "+-------+-----+",
+        "| Alice | 30  |",
+        "+-------+-----+",
+    ],
+    &batches
+);
+```
+
+**Why use this pattern?**
+
+- ✅ **Self-documenting**: Shows both the code AND expected output
+- ✅ **Verifiable**: Tests actually run and catch regressions
+- ✅ **Copy-pasteable**: When tests fail, output can be directly pasted back
+- ✅ **Universal**: Works with any DataFrame source (files, SQL, in-memory)
+
+**When to use:**
+
+- Unit tests for DataFrame transformations
+- Documentation examples (like this guide!)
+- Regression tests for bug fixes
+- Learning materials where showing output helps understanding
+
+**Alternatives:**
+
+- `.show().await?` - Good for development/debugging, but not verifiable
+- Manual assertions on column values - More code, less readable
+- Comparing serialized formats - Fragile to formatting changes
+
+> **Conclusion\*: By now you've seen this pattern multiple times. It's not just about testing—it's about **understanding\*\*. Each [`assert_batches_eq!`] tells you "this is what happens when you run this code." That's powerful for learning, debugging, and maintaining code.
+
 ### Debugging DataFrame Creation
 
 #### Inspecting Query Plans
@@ -2560,30 +2657,6 @@ async fn monitored_read(ctx: &SessionContext, paths: Vec<&str>) -> datafusion::e
 > **Debugging tip**: Always use `explain()` to understand what DataFusion is actually doing. The physical plan shows the exact operations and their order, which is essential for performance tuning.
 
 For more debugging and profiling techniques, see [Best Practices § Debugging Techniques](best-practices.md#debugging-techniques).
-
-## DataFrame Execution
-
-DataFusion [`DataFrame`]s use **lazy evaluation**: transformations build a query plan without processing data. Execution only happens when you call an action method like [`collect()`] or [`show()`].
-
-> **For complete execution documentation**, see [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations), which covers:
->
-> - Transformations vs Actions
-> - Result-producing methods ([`collect()`], [`show()`], [`execute_stream()`])
-> - Sink actions ([`write_parquet()`], [`write_csv()`])
-> - Execution trade-offs (collect vs streaming, caching, partitioning)
-> - Performance tuning and debugging
-
-**Quick execution reference:**
-
-| Method                         | Use Case                                          |
-| ------------------------------ | ------------------------------------------------- |
-| [`collect()`]                  | Buffer entire result in memory                    |
-| [`execute_stream()`]           | Stream large results incrementally                |
-| [`show()`] / [`show_limit(n)`] | Display preview (use `show_limit` for large data) |
-| [`count()`]                    | Get row count (optimized for Parquet)             |
-| [`cache()`]                    | Materialize for reuse across multiple queries     |
-
-For writing results to files, see [Writing DataFrames](writing-dataframes.md).
 
 <!-- datafram methods  -->
 
