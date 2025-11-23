@@ -21,6 +21,8 @@
 
 Master the art of data transformation with DataFusion's powerful DataFrame API. This comprehensive guide takes you from basic operations to advanced patterns, with practical examples, debugging techniques, and real-world workflows.
 
+> **Style Note:** In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+
 ```{contents}
 :local:
 :depth: 2
@@ -2351,27 +2353,27 @@ let ctx = SessionContext::with_config(config);
 
 Common DataFrame operations at a glance:
 
-| Task                 | Code                                                                     | Notes                 |
-| -------------------- | ------------------------------------------------------------------------ | --------------------- |
-| **Create from data** | `dataframe!("col" => [1, 2, 3])?`                                        | In-memory data        |
-| **Read CSV**         | `ctx.read_csv("file.csv", CsvReadOptions::default()).await?`             |                       |
+| Task                 |                                   Code                                   | Notes                 |
+| -------------------- | :----------------------------------------------------------------------: | --------------------- |
+| **Create from data** |                    `dataframe!("col" => [1, 2, 3])?`                     | In-memory data        |
+| **Read CSV**         |       `ctx.read_csv("file.csv", CsvReadOptions::default()).await?`       |                       |
 | **Read Parquet**     | `ctx.read_parquet("file.parquet", ParquetReadOptions::default()).await?` |                       |
-| **Select columns**   | `df.select_columns(&["a", "b"])?`                                        | By name               |
-| **Computed column**  | `df.with_column("c", col("a") + col("b"))?`                              | Add/replace           |
-| **Rename column**    | `df.with_column_renamed("old", "new")?`                                  |                       |
-| **Filter rows**      | `df.filter(col("a").gt(lit(10)))?`                                       | WHERE                 |
-| **Aggregate**        | `df.aggregate(vec![col("dept")], vec![sum(col("sal"))])?`                | GROUP BY              |
-| **Join**             | `df1.join(df2, JoinType::Inner, &["id"], &["id"], None)?`                |                       |
-| **Sort**             | `df.sort(vec![col("a").sort(false, true)])?`                             | DESC, nulls last      |
-| **Limit**            | `df.limit(skip, Some(fetch))?`                                           | Pagination            |
-| **Union**            | `df1.union(df2)?`                                                        | UNION ALL             |
-| **Distinct**         | `df.distinct()?`                                                         | Remove duplicates     |
-| **Show results**     | `df.show().await?`                                                       | Display (limited)     |
-| **Collect**          | `df.collect().await?`                                                    | Load all (careful!)   |
-| **Stream**           | `df.execute_stream().await?`                                             | Process incrementally |
-| **Explain plan**     | `df.explain(false, false)?.show().await?`                                | Debug                 |
-| **Count rows**       | `df.clone().count().await?`                                              |                       |
-| **Get schema**       | `df.schema()`                                                            | Column info           |
+| **Select columns**   |                    `df.select_columns(&["a", "b"])?`                     | By name               |
+| **Computed column**  |               `df.with_column("c", col("a") + col("b"))?`                | Add/replace           |
+| **Rename column**    |                 `df.with_column_renamed("old", "new")?`                  |                       |
+| **Filter rows**      |                    `df.filter(col("a").gt(lit(10)))?`                    | WHERE                 |
+| **Aggregate**        |        `df.aggregate(vec![col("dept")], vec![sum(col("sal"))])?`         | GROUP BY              |
+| **Join**             |        `df1.join(df2, JoinType::Inner, &["id"], &["id"], None)?`         |                       |
+| **Sort**             |               `df.sort(vec![col("a").sort(false, true)])?`               | DESC, nulls last      |
+| **Limit**            |                      `df.limit(skip, Some(fetch))?`                      | Pagination            |
+| **Union**            |                            `df1.union(df2)?`                             | UNION ALL             |
+| **Distinct**         |                             `df.distinct()?`                             | Remove duplicates     |
+| **Show results**     |                            `df.show().await?`                            | Display (limited)     |
+| **Collect**          |                          `df.collect().await?`                           | Load all (careful!)   |
+| **Stream**           |                       `df.execute_stream().await?`                       | Process incrementally |
+| **Explain plan**     |                `df.explain(false, false)?.show().await?`                 | Debug                 |
+| **Count rows**       |                       `df.clone().count().await?`                        |                       |
+| **Get schema**       |                              `df.schema()`                               | Column info           |
 
 ### Common Aggregates
 

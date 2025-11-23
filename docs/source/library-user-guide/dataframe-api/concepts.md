@@ -32,22 +32,55 @@ This guide covers the core concepts you need to understand when working with Dat
 
 Do see where the dataframe lives in the following a architecutal overview scheme is shown. This scheme should not be informative, but as well guide the interest thourhgout this documentations. The Main focus is here, to understand where the Dataframe lives, what it is made of (under the hood) to get a deeper understanding of the inner workings and how changes or descisions might interact with the querey execution.
 
-**The archtiectural overview Schema:**
+**The architectural overview schema:**
 
 ```
-SessionContext
-  ↓ creates
-DataFrame (lazy)
-  ↓ wraps
-LogicalPlan
-  ↓ optimizes
-Optimized LogicalPlan
-  ↓ plans into
-ExecutionPlan (Physical Plan)
-  ↓ optimizes
-Optimized ExecutionPlan
-  ↓ executes
-RecordBatch streams
+                +------------------+
+                |  SessionContext  |
+                +------------------+
+                         |
+                         | captures state
+                         v
+                +------------------+
+                |   SessionState   |
+                |    (snapshot)    |
+                +------------------+
+                     /         \
+                    /           \
+       +-----------+             +-------------+
+       |   SQL     |             | DataFrame   |
+       |  ctx.sql  |             |   API (lazy)|
+       +-----------+             +-------------+
+               \                       /
+                \                     /
+                 v                   v
+             +-----------------------------+
+             |         LogicalPlan         |
+             +-----------------------------+
+                         |
+                         | optimize (rules: projection/predicate pushdown, etc.)
+                         v
+             +-----------------------------+
+             |     Optimized LogicalPlan   |
+             +-----------------------------+
+                         |
+                         | plan (physical planner)
+                         v
+             +-----------------------------+
+             |     ExecutionPlan (Physical)|
+             +-----------------------------+
+                         |
+                         | optimize (physical optimizer)
+                         v
+             +-----------------------------+
+             |   Optimized ExecutionPlan   |
+             +-----------------------------+
+                         |
+                         | execute (Tokio + CPU runtimes)
+                         v
+             +-----------------------------+
+             |     RecordBatch streams     |
+             +-----------------------------+
 ```
 
 > **Glossary snapshot**
@@ -62,7 +95,7 @@ RecordBatch streams
 ## SessionContext: The Entry Point for DataFrames
 
 ```
-SessionContext
+SessionContext   <== You are here
   ↓ creates
 DataFrame
   ↓ builds
@@ -150,7 +183,7 @@ DataFrames work with structured, typed data following Apache Arrow's columnar mo
 
 ### Schemas and Data Types
 
-A DataFrame's schema is the schema of its underlying [`LogicalPlan`]. Sources (files, tables, SQL) provide or infer a base schema, and each transformation (e.g., `select`, `with_column`, `aggregate`, `join`) derives a new output schema from its inputs and expressions. [`DataFrame::schema()`] simply exposes the plan’s current schema (names, order, [`DataType`], and nullability).
+A DataFrame's schema is the schema of its underlying [`LogicalPlan`]. Sources (files, tables, SQL) provide or infer a base schema, and each transformation (e.g., `.select()`, `.with_column()`, `.aggregate()`, `.join()`) derives a new output schema from its inputs and expressions. The [`.schema()`] method simply exposes the plan’s current schema (names, order, [`DataType`], and nullability).
 
 - Base schemas come from data sources (e.g., Parquet metadata, explicit CSV schema, MemTable schema)
 - Transformations derive new schemas (rename, add/drop columns, expression output types, aggregation output)
@@ -315,16 +348,16 @@ DataFrames follow a **lazy execution model**: transformations build up a query p
 
 `DataFrame` methods fall into four categories:
 
-| Category              | Purpose                              | Examples                                                                   | SQL Analogy                   |
-| --------------------- | ------------------------------------ | -------------------------------------------------------------------------- | ----------------------------- |
-| **Transformations**   | Build/modify the logical plan (lazy) | [`select()`], [`filter()`], [`aggregate()`], [`join()`], [`with_column()`] | `SELECT`, `WHERE`, `GROUP BY` |
-| **Execution Actions** | Trigger execution and return data    | [`collect()`], [`show()`], [`execute_stream()`], [`count()`]               | Running the query             |
-| **Write Actions**     | Execute and persist results          | [`write_parquet()`], [`write_csv()`], [`write_table()`]                    | `CREATE TABLE AS`, `COPY TO`  |
-| **Introspection**     | Inspect without executing            | [`schema()`], [`explain()`], [`logical_plan()`], [`into_optimized_plan()`] | `EXPLAIN`, metadata queries   |
+| Category              | Purpose                              | Examples                                                                        | SQL Analogy                   |
+| --------------------- | ------------------------------------ | ------------------------------------------------------------------------------- | ----------------------------- |
+| **Transformations**   | Build/modify the logical plan (lazy) | [`.select()`], [`.filter()`], [`.aggregate()`], [`.join()`], [`.with_column()`] | `SELECT`, `WHERE`, `GROUP BY` |
+| **Execution Actions** | Trigger execution and return data    | [`.collect()`], [`.show()`], [`.execute_stream()`], [`.count()`]                | Running the query             |
+| **Write Actions**     | Execute and persist results          | [`.write_parquet()`], [`.write_csv()`], [`.write_table()`]                      | `CREATE TABLE AS`, `COPY TO`  |
+| **Introspection**     | Inspect without executing            | [`.schema()`], [`.explain()`], [`.logical_plan()`], [`.into_optimized_plan()`]  | `EXPLAIN`, metadata queries   |
 
 ### What Happens During Execution?
 
-When you call an action like `collect()`:
+When you call an action like `.collect()`:
 
 1. **Logical Optimization** ([21+ optimizer rules][optimizer-rules], multiple passes):
 
@@ -346,7 +379,7 @@ When you call an action like `collect()`:
    - Spill to disk if memory limits exceeded
    - Collect statistics for adaptive optimization
 
-> **Memory vs. Streaming**: `collect()` buffers all results in memory—convenient but risky for large datasets. Use `execute_stream()` for incremental processing or write directly to files.
+> **Memory vs. Streaming**: `.collect()` buffers all results in memory—convenient but risky for large datasets. Use `.execute_stream()` for incremental processing or write directly to files.
 
 ### Optimizer architecture note
 
@@ -399,7 +432,7 @@ The output shows chosen algorithms ([`HashJoinExec`], [`SortMergeJoinExec`]), op
 
 ### Complete Example: DataFrame Lifecycle
 
-Context: The example below demonstrates the full lifecycle: build a lazy plan, inspect it with `explain()`, then either buffer everything with `collect()` or stream `RecordBatch`es with `execute_stream()`. This mirrors the lifecycle described above (logical plan → optimization → physical plan → execution).
+Context: The example below demonstrates the full lifecycle: build a lazy plan, inspect it with `.explain()`, then either buffer everything with `.collect()` or stream `RecordBatch`es with `.execute_stream()`. This mirrors the lifecycle described above (logical plan → optimization → physical plan → execution).
 
 ```rust
 use datafusion::prelude::*;
@@ -431,12 +464,12 @@ async fn main() -> Result<()> {
 }
 ```
 
-> **Mind the trade-offs:** `collect()` is convenient but buffers the entire result set. Prefer streaming or writing to sinks for large outputs.
+> **Mind the trade-offs:** `.collect()` is convenient but buffers the entire result set. Prefer streaming or writing to sinks for large outputs.
 
 See also:
 
 - Query Optimizer overview: ../query-optimizer.md
-- DataFrame methods: [`collect()`], [`execute_stream()`], [`explain()`]
+- DataFrame methods: [`.collect()`], [`.execute_stream()`], [`.explain()`]
 - Parquet pruning background (projection, stats, page pruning): [Parquet Pruning]
 
 [Parquet Pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
@@ -463,48 +496,50 @@ The [`SessionContext`] is mutable, but each `DataFrame` holds a frozen view of i
 ### The DataFrame Lifecycle: Step by Step
 
 ```
-[Step 1: The Kitchen (Mutable)]
-SessionContext
-  - Config (target_partitions = 8, batch_size = 8192)
-  - Registered UDF "my_custom_func"
-  - Catalog with "sales" table
+[ Step 1 · The Kitchen (mutable) ]
+┌──────────────────────────────────────────────┐
+│ SessionContext                               │
+│  • Config: target_partitions=8, batch_size=8192 │
+│  • UDFs: "my_custom_func"                    │
+│  • Catalog: table "sales"                    │
+└──────────────────────────────────────────────┘
+              │
+              │ .read_table("sales")
+              ▼
 
-     │
-     │ .read_table("sales")
-     ▼
+[ Step 2 · The Snapshot (immutable) ]
+┌──────────────────────────────────────────────┐
+│ DataFrame                                    │
+│  ├─ SessionState (snapshot of the kitchen)   │
+│  │   • Config: target_partitions=8, batch_size=8192 │
+│  │   • UDFs: "my_custom_func"               │
+│  │   • Catalog: includes table "sales"      │
+│  └─ LogicalPlan                              │
+│      • TableScan("sales")                   │
+└──────────────────────────────────────────────┘
+              │
+              │ .filter(col("amount").gt(100))
+              ▼
 
-[Step 2: The Snapshot (Immutable)]
-DataFrame is created
-  ├─ SessionState (Snapshot of the kitchen at this moment)
-  │    - Config (target_partitions = 8, batch_size = 8192)
-  │    - UDF "my_custom_func" is available
-  │    - "sales" table is registered
-  │
-  └─ LogicalPlan
-       - TableScan("sales")
+[ Step 3 · Transformation (recipe changes; snapshot doesn't) ]
+┌──────────────────────────────────────────────┐
+│ New DataFrame                                │
+│  ├─ SessionState (same immutable snapshot)   │
+│  │   • Config/UDFs/Catalog unchanged         │
+│  └─ LogicalPlan (new immutable plan)         │
+│      • Filter(amount > 100)                  │
+│         └─ TableScan("sales")               │
+└──────────────────────────────────────────────┘
+              │
+              │ .collect() or .show()  (action)
+              ▼
 
-     │
-     │ .filter(col("amount").gt(100))
-     ▼
-
-[Step 3: Transformation (Recipe changes, snapshot doesn't)]
-New DataFrame is returned
-  ├─ SessionState (The SAME immutable snapshot carries forward)
-  │    - Config (target_partitions = 8, batch_size = 8192)
-  │    - UDF "my_custom_func" still available
-  │
-  └─ LogicalPlan (A NEW immutable plan)
-       - Filter(amount > 100)
-         - TableScan("sales")
-
-     │
-     │ .collect() or .show() [Action triggers execution]
-     ▼
-
-[Step 4: Execution]
-ExecutionPlan created using the frozen SessionState
-  → Runs with original config and resources
-  → Produces RecordBatches
+[ Step 4 · Execution ]
+┌──────────────────────────────────────────────┐
+│ ExecutionPlan (created from frozen SessionState) │
+│  → Runs with original config/resources        │
+│  → Produces RecordBatches                     │
+└──────────────────────────────────────────────┘
 ```
 
 **Key API paths:**
@@ -661,14 +696,14 @@ With these concepts understood, you're ready to build data pipelines:
 
 For experienced users, this quick reference helps you pick the right method for advanced tasks:
 
-| Goal                         | Primary API(s)                              | Keeps SessionState? | Typical Follow-up                                  |
-| ---------------------------- | ------------------------------------------- | :-----------------: | -------------------------------------------------- |
-| **Re-use plan later**        | [`.into_parts()`]                           |         ✅          | mutate plan → [`create_physical_plan()`] → execute |
-| **Inspect optimizer output** | [`.explain()`], [`.into_optimized_plan()`]  |         ⚠️          | check pushdown/pruning, join choice                |
-| **Inspect unoptimized plan** | [`.into_unoptimized_plan()`]                |         ⚠️          | verify pre-optimization structure                  |
-| **Mix SQL & DataFrame**      | [`.into_view()`] + [`sql()`]                |         ✅          | iterate between SQL & DF, then [`.collect()`]      |
-| **Stream large result**      | [`.execute_stream()`], [`.write_parquet()`] |         ✅          | pipe to Parquet/CSV, Kafka, etc.                   |
-| **Quick interactive result** | [`.collect()`], [`.show()`]                 |         ✅          | debug, notebooks, CLI                              |
+| Goal                         | Primary API(s)                              | Keeps SessionState? | Typical Follow-up                                   |
+| ---------------------------- | ------------------------------------------- | :-----------------: | --------------------------------------------------- |
+| **Re-use plan later**        | [`.into_parts()`]                           |         ✅          | mutate plan → [`.create_physical_plan()`] → execute |
+| **Inspect optimizer output** | [`.explain()`], [`.into_optimized_plan()`]  |         ⚠️          | check pushdown/pruning, join choice                 |
+| **Inspect unoptimized plan** | [`.into_unoptimized_plan()`]                |         ⚠️          | verify pre-optimization structure                   |
+| **Mix SQL & DataFrame**      | [`.into_view()`] + [`.sql()`]               |         ✅          | iterate between SQL & DF, then [`.collect()`]       |
+| **Stream large result**      | [`.execute_stream()`], [`.write_parquet()`] |         ✅          | pipe to Parquet/CSV, Kafka, etc.                    |
+| **Quick interactive result** | [`.collect()`], [`.show()`]                 |         ✅          | debug, notebooks, CLI                               |
 
 > **SessionState matters**: Methods marked ⚠️ drop the snapshot. They're great for inspection, but to execute later use [`.into_parts()`] to preserve deterministic semantics (timestamps, timezone, config, UDF catalog). See "Re-use plan later" in the cheat-sheet for the safest way to extract and modify a plan.
 

@@ -23,7 +23,9 @@ Creating a DataFrame is the foundational first step for building any query pipel
 
 This document is designed for developers and data engineers of all levels. It covers every method for creating DataFrames—from reading a simple CSV file for an ad-hoc query to configuring high-performance connectors for production data pipelines in cloud storage. You will learn not just how to create DataFrames, but also why to choose one method over another, ensuring your application is both correct and efficient.
 
-> **For Advanced Topics**: This guide covers the foundational API calls for creating DataFrames. For a deeper dive into production-level concerns like schema management, error handling, connecting to S3, Arrow Flight, Kafka, custom providers, and performance tuning, please see our dedicated guide to [Advanced Creation Topics](creating-dataframes-advanced.md) .
+> **For Advanced Topics**: This guide covers the foundational API calls for creating DataFrames. For a deeper dive into production-level concerns like schema management, error handling, connecting to S3, Arrow Flight, Kafka, custom providers, and performance tuning, please see our dedicated guide to [Advanced Creation Topics](dataframe-advance.md) .
+
+> **Style Note:** In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
 
 ```{contents}
 :local:
@@ -191,7 +193,7 @@ ctx.table("SALES").await?;   // Also resolves to "sales"
 ctx.sql("SELECT * FROM \"Sales\"").await?;  // Looks for "Sales" (case-sensitive)
 ```
 
-> **Performance note**: Registration caches schema and file metadata so subsequent DataFrames avoid re-inferring schemas and re-reading file footers. This is especially valuable for Parquet files where metadata parsing can be expensive. For advanced performance techniques, see [Advanced Topics](creating-dataframes-advanced.md#performance-optimizations).
+> **Performance note**: Registration caches schema and file metadata so subsequent DataFrames avoid re-inferring schemas and re-reading file footers. This is especially valuable for Parquet files where metadata parsing can be expensive. For advanced performance techniques, see [Advanced Topics](dataframe-advance.md#performance-optimizations).
 >
 > **For advanced topics** (information_schema, dynamic file catalogs, custom providers), see the [Catalogs Guide](../catalogs.md).
 
@@ -458,7 +460,7 @@ Commonly used methods in this section: [`ctx.catalog_names()`][`.catalog_names()
   - [Catalogs, Schemas, and Tables](../catalogs.md)
   - [information_schema](../../user-guide/sql/information_schema.md)
   - [Transformations: Mixing SQL and DataFrames](transformations.md#mixing-sql-and-dataframes)
-  - [Advanced: Performance Optimizations](creating-dataframes-advanced.md#performance-optimizations)
+  - [Advanced: Performance Optimizations](dataframe-advance.md#performance-optimizations)
 - Spark (query engine + DataFrame API + discovery)
   - [Spark SQL and DataFrames Guide][spark guide]
   - [SHOW TABLES](https://spark.apache.org/docs/latest/sql-ref-syntax-aux-show-tables.html)
@@ -843,7 +845,7 @@ For custom sources (APIs, databases, computed tables), implement the [`TableProv
 ctx.register_table("custom_source", Arc::new(MyCustomProvider::new()))?;
 ```
 
-See: [Custom TableProviders](creating-dataframes-advanced.md#custom-tableproviders)
+See: [Custom TableProviders](dataframe-advance.md#custom-tableproviders)
 
 #### References
 
@@ -1404,175 +1406,49 @@ See the planning overview for where this fits in the pipeline: [Datafusion plann
 #### References: <!-- TODO; Do references -->
 
 - See also :
-  - Custom sources: [Custom TableProviders](creating-dataframes-advanced.md#custom-tableproviders)
-  - Performance and plan behavior: [Performance Optimizations](creating-dataframes-advanced.md#performance-optimizations)
-  - Debugging and best practices: [Debugging & Best Practices](creating-dataframes-advanced.md#debugging--best-practices)
+  - Custom sources: [Custom TableProviders](dataframe-advance.md#custom-tableproviders)
+  - Performance and plan behavior: [Performance Optimizations](dataframe-advance.md#performance-optimizations)
+  - Debugging and best practices: [Debugging & Best Practices](dataframe-advance.md#debugging--best-practices)
   - [Ruminations on Multi-Tenant Databases]
 
 ---
 
-## DataFrame Execution <!-- TODO: More input -->
+## DataFrame Execution
 
-DataFusion [`DataFrame`]s use **lazy evaluation**: transformations build a query plan without processing data. Execution only happens when you call an action method like [`collect()`] or [`show()`].
+After creating a DataFrame and applying transformations, you need to execute it to get results. DataFusion uses **lazy evaluation**: transformations build a query plan without processing data until you call an action method.
 
-> **For complete execution documentation**, see [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations), which covers:
+> **For complete documentation on DataFrame execution and writing**, see [Writing and Executing DataFrames](writing-dataframes.md), which covers:
 >
-> - Transformations vs Actions
-> - Result-producing methods ([`collect()`], [`show()`], [`execute_stream()`])
-> - Sink actions ([`write_parquet()`], [`write_csv()`])
-> - Execution trade-offs (collect vs streaming, caching, partitioning)
-> - Performance tuning and debugging
+> - Execution actions ([`.collect()`], [`.show()`], [`.execute_stream()`])
+> - Writing to files ([`.write_parquet()`], [`.write_csv()`], [`.write_json()`])
+> - Writing to tables ([`.write_table()`])
+> - Performance considerations and best practices
 
-### Action methods
-
-| Method                      | Purpose                                             | When to use                           |
-| --------------------------- | --------------------------------------------------- | ------------------------------------- |
-| [`.collect()`]              | Materialize into `Vec<RecordBatch>` (all in memory) | Small/medium results, tests           |
-| [`.show()`]                 | Pretty-print to stdout                              | Debugging, exploration, examples      |
-| [`.execute_stream()`]       | Backpressure-aware `SendableRecordBatchStream`      | Large results, services, pipelines    |
-| [`.create_physical_plan()`] | Build ExecutionPlan without running it              | Custom execution, metrics, inspection |
-
-> **Key insight**: Nothing runs until an action. The optimizer sees the full pipeline (SQL + DataFrame transformations) and applies pushdown/projection/limit rules before execution.
-
-### Choosing an action
-
-- Use [`.show()`] for examples and quick checks
-- Use [`.collect()`] when results are bounded and fit in memory
-- Prefer [`.execute_stream()`] for large results, production services, or when you need backpressure control
-
-> **Memory Warning**: [`.collect()`] loads all results into memory at once. For large datasets (>1GB), use [`.execute_stream()`] to process batches incrementally. Configure memory limits via `RuntimeEnv::memory_pool`.
-
-### Example: execute a DataFrame
+**Quick example:**
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::error::Result;
-use futures::StreamExt; // for .next()
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
-    // Build lazily (no I/O yet)
-    let df = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?
-        .filter(col("amount").gt(lit(1000)))?
-        .select(vec![col("region"), col("amount")])?;
+    // Create and transform a DataFrame (lazy - no execution yet)
+    let df = ctx.read_csv("data.csv", CsvReadOptions::new()).await?
+        .filter(col("amount").gt(lit(100)))?
+        .select(vec![col("id"), col("amount")])?;
 
-    // 1) Pretty print (dev/debugging)
-    df.show().await?;
+    // Execute and display results
+    df.show().await?;  // Action: triggers execution
 
-    // 2) Collect all results (bounded datasets)
-    let batches = df.clone().collect().await?;
-    println!("Collected {} batches", batches.len());
-
-    // 3) Stream results with error handling (recommended for services)
-    let mut stream = df.execute_stream().await?;
-    while let Some(batch) = stream.next().await {
-        match batch {
-            Ok(batch) => {
-                println!("Processing {} rows", batch.num_rows());
-                // ... process batch incrementally
-            }
-            Err(e) => {
-                eprintln!("Stream error: {}", e);
-                break; // or implement retry logic
-            }
-        }
-    }
+    // Or write results to a file
+    // df.write_parquet("output.parquet", DataFrameWriteOptions::new(), None).await?;
 
     Ok(())
 }
 ```
 
-### Example: execute SQL (same mechanics)
-
-```rust
-// SQL queries return DataFrames; same execution methods apply
-let df = ctx.sql("SELECT region, SUM(amount) AS total FROM sales GROUP BY region").await?;
-
-df.show().await?;
-// or: let batches = df.collect().await?;
-// or: let stream = df.execute_stream().await?;
-```
-
-### Inspect the plan before execution
-
-```rust
-// Show both logical and physical plans (verify pushdown, sort/limit position, etc.)
-df.explain(true, true).await?;
-```
-
-> **Tip**: Use `explain(true, true)` while tuning performance; it shows both the optimized logical and physical plans, confirming that filters/projections were pushed down.
-
-### Advanced: partitioned execution
-
-For parallel processing of results across partitions:
-
-```rust
-use datafusion::physical_plan::collect_partitioned;
-
-let (state, plan) = df.into_parts();
-let physical = state.create_physical_plan(&plan).await?;
-let partitions = collect_partitioned(physical, state.task_ctx()).await?;
-
-// Each partition is a Vec<RecordBatch> that was processed independently
-for (i, partition) in partitions.iter().enumerate() {
-    println!("Partition {}: {} batches", i, partition.len());
-}
-```
-
-### Efficient counting and existence checks
-
-Don't use [`.collect()`] just to count rows or check existence:
-
-```rust
-use datafusion::arrow::array::Int64Array;
-
-// Efficient row count (pushes COUNT down to source when possible)
-let count_df = df.clone().aggregate(vec![], vec![count(lit(1))])?;
-let batches = count_df.collect().await?;
-let count = batches[0]
-    .column(0)
-    .as_any()
-    .downcast_ref::<Int64Array>()
-    .unwrap()
-    .value(0);
-println!("Row count: {}", count);
-
-// Check if any rows exist (early termination after first row)
-let exists = df.clone().limit(0, Some(1))?.collect().await?
-    .iter()
-    .any(|batch| batch.num_rows() > 0);
-```
-
-### Writing results
-
-DataFrames can also execute write operations:
-
-```rust
-// Write to Parquet (executes the plan and writes results)
-df.write_parquet("output/", DataFrameWriteOptions::new(), None).await?;
-
-// Write to table (for registered table providers that support writes)
-df.write_table("target_table", DataFrameWriteOptions::new()).await?;
-```
-
-> See [Writing DataFrames](writing-dataframes.md) for comprehensive write patterns and options.
-
-### Best practices
-
-- **Project early, filter early**: Minimize I/O and memory by selecting only needed columns and applying filters before expensive operations
-- **Prefer streaming**: Use [`.execute_stream()`] for large or unbounded outputs to avoid memory exhaustion
-- **Avoid `.show()` in production**: Use [`.execute_stream()`] and format/log explicitly with proper error handling
-- **Verify plans**: Use `.explain(true, true)` to confirm pushdown/projection/limit placements
-- **Handle cancellation**: Wrap awaits with `tokio::time::timeout` or propagate cancellation tokens for long-running queries
-- **Memory limits**: Configure `RuntimeEnv::with_memory_pool` to prevent OOM on large aggregations
-
-#### References
-
-- Planning and execution overview: https://docs.rs/datafusion/latest/datafusion/#planning
-- [Concepts: Lazy Evaluation](concepts.md#lazy-evaluation-nothing-runs-until-you-ask)
-- [Advanced: Performance Tuning](creating-dataframes-advanced.md#performance-optimizations)
+> **Key insight**: Nothing runs until you call an action like `.show()`, `.collect()`, or `.write_*()`. The optimizer sees the full pipeline and applies optimizations before execution.
 
 ---
 
