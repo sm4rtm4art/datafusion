@@ -19,7 +19,7 @@
 
 # DataFrame Transformations
 
-Master the art of data transformation with DataFusion's powerful DataFrame API. This comprehensive guide takes you from basic operations to advanced patterns, with practical examples, debugging techniques, and real-world workflows.
+Aside of [loading](./creating-dataframes.md) and [writing](./writing-dataframes.md) data, the efficient **transformation and alignment** of data is essential to DataFusion. This document serves as your guide to the DataFrame API's transformation capabilities, emphasizing its unique programmatic strengths alongside its shared foundation with datafusions [SQL-API](../using-the-sql-api.md). Because both APIs compile down to the same logical plan, you get the best of both worlds: the expressiveness of Rust and the performance of a world-class query optimizer. (See [DataFrame Concepts](./concepts.md#introduction))
 
 > **Style Note:** In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
 
@@ -28,241 +28,502 @@ Master the art of data transformation with DataFusion's powerful DataFrame API. 
 :depth: 2
 ```
 
-## Introduction: Why DataFrames Matter
+Transformations allow you to shape, filter, enrich, and analyze your data through a series of composable, type-safe operations. Unlike SQL, where queries are often monolithic strings, DataFrames allow you to **build queries programmatically**. This approach shines when you need to:
 
-DataFrames provide a programmatic, type-safe way to transform data that complements SQL while offering unique advantages. While SQL excels at declarative queries, DataFrames shine when you need to:
+- **Chain operations** into readable, logical pipelines.
+- **Build queries dynamically** based on runtime conditions or configuration.
+- **Leverage the Rust type system** to catch errors at compile time.
+- **Reuse logic** by encapsulating complex transformations into functions.
 
-- **Build queries dynamically** based on runtime conditions
-- **Compose reusable transformations** as functions
-- **Leverage type safety** to catch errors at compile time
-- **Iterate over columns or datasets** programmatically
-- **Chain operations fluently** for readable data pipelines
+The following diagram illustrates the conceptual position in the DataFrame architecture. Both the SQL API and the DataFrame API share the same [`SessionContext`] and converge to the same [`LogicalPlan`] with column-based operations.<br>
 
-**Key characteristics of DataFrames:**
+```text
+           +------------------+
+           |  SessionContext  |
+           +------------------+
+                    |
+          +---------+---------+
+          |                   |
+          v                   v
+    +-----------+       +-------------+
+    |  SQL API  |       |  DataFrame  |
+    | ctx.sql() |       |  API (lazy) |
+    +-----------+       +-------------+
+          \                   /
+           \                 /
+            v               v
+       +------------------------+
+       |      LogicalPlan       |  ← Same!
+       +------------------------+
+                  |
+                  | Further processing...
+                  v
+```
 
-- **Immutable**: Each transformation returns a new DataFrame, enabling safe composition
-- **Lazy evaluation**: Operations build a query plan ([Lazy Evaluation]); execution happens only when you call [`collect()`], [`show()`], or stream results
-- **Optimized automatically**: DataFusion applies projection pushdown, predicate pushdown, and other optimizations transparently (similar to [Apache Spark DataFrames])
+For a deeper dive, see:
 
-### How to Use This Guide
+- [DataFrame Concepts](./concepts.md#introduction)
+- [SIGMOD 2024 Paper][datafusion paper],
+- [architecture overview on docs.rs][docs.rs]
 
-This guide is designed for both learning and reference:
+For most data transformations, the choice between SQL-API and DataFrame-APIs is primarily about ergonomics—both produce identical execution plans. However, the DataFrame API is more than just "SQL with different syntax." The DataFrame API is a programmatic **builder** for query plans, whereas the SQL API is a declarative **parser** for query strings. Research on [DataFrame Algebra][dataframe algebra] shows that the DataFrame paradigm offers a distinct way of _expressing_ data transformations. These patterns were established by the [pandas library][pandas] and continuously refined by projects like [Apache Spark] for efficient parallel, multi-node computation.
 
-**📖 Learning Path** (recommended for newcomers):
+## API Ergonomics: DataFrame vs SQL
 
-1. Start with [Quick Start](#quick-start-5-minutes) to see DataFrames in action
-2. Follow [The Data Cleaning Journey](#the-data-cleaning-journey) to learn core concepts through a narrative workflow
-3. Explore [Deep Dive sections](#selection-projection-mastery) for comprehensive coverage of each operation
+**The DataFusion DataFrame-API and SQL-API share the same execution engine—but the _experience_ of writing them is fundamentally different.**
 
-**📚 Reference Path** (for experienced users):
+This table maps SQL operations to their DataFrame equivalents. Methods marked **Unique** have no direct SQL counterpart—these are where the DataFrame API provides capabilities beyond standard SQL.
 
-- Jump directly to any [Deep Dive section](#selection-projection-mastery) for detailed API coverage
-- Use the [SQL ↔ DataFrame Reference Table](#dataframe-sql-quick-reference) for quick lookups
-- Check [Troubleshooting](#troubleshooting-guide) when you encounter errors
-- Consult [Anti-Patterns](#anti-pattern-gallery) to avoid common pitfalls
+| Category        |       SQL Operation        |             DataFrame Method             | Key Differences & Superpowers                                                               |
+| --------------- | :------------------------: | :--------------------------------------: | ------------------------------------------------------------------------------------------- |
+| **Filtering**   |         [`WHERE`]          |              [`.filter()`]               | Chainable predicates; programmatic filter building.                                         |
+| **Selection**   |         [`SELECT`]         |   [`.select()`], [`.select_columns()`]   | [`.select()`] supports expressions; [`.select_columns()`] is a simple projection.           |
+| **Selection**   |       [`AS`] (alias)       | [`.alias()`], [`.with_column_renamed()`] | [`.with_column_renamed()`] renames existing columns without expressions.                    |
+| **Mutation**    |   (No direct equivalent)   |            [`.with_column()`]            | **Unique**: Add or replace a column while keeping all others.                               |
+| **Aggregation** |        [`GROUP BY`]        |             [`.aggregate()`]             | Groups data and applies aggregate functions.                                                |
+| **Joins**       |          [`JOIN`]          |       [`.join()`], [`.join_on()`]        | [`.join_on()`] allows arbitrary boolean expressions for join conditions.                    |
+| **Sorting**     |        [`ORDER BY`]        |               [`.sort()`]                | Sort by one or multiple expressions.                                                        |
+| **Limiting**    |   [`LIMIT`] / [`OFFSET`]   |               [`.limit()`]               | [`limit(skip, fetch)`][`.limit()`] handles both offset and limit.                           |
+| **Set Ops**     |   [`UNION ALL`][`UNION`]   |               [`.union()`]               | concatenates DataFrames.                                                                    |
+| **Set Ops**     |         [`UNION`]          |          [`.union_distinct()`]           | concatenates and removes duplicates.                                                        |
+| **Set Ops**     |   (No direct equivalent)   |           [`.union_by_name()`]           | **Unique**: Unions based on column names, forgiving column order mismatches.                |
+| **Distinct**    |   [`DISTINCT`][`SELECT`]   |             [`.distinct()`]              | Removes duplicate rows based on all columns.                                                |
+| **Distinct**    | [`DISTINCT ON`] (Postgres) |            [`.distinct_on()`]            | **Unique**: Deduplicates based on specific columns, keeping the "first" row per sort order. |
 
-**🔍 When You're Stuck**:
+> **Note:** While you can mix SQL and DataFrames (see [Concepts](../concepts.md)), mastering these native methods unlocks the full power of programmatic data manipulation.
 
-- Quick fixes: Look for _"Quick Debug"_ tips in each transformation section
-- Systematic debugging: See [The DataFrame Detective Toolkit](#the-dataframe-detective-toolkit)
-- Common errors: Check the [Troubleshooting Guide](#troubleshooting-guide)
+### The Methodical Differences: Why DataFrames Feel Different
 
-## Quick Start (5 Minutes)
+**The DataFusion DataFrame API isn't SQL with different syntax—it's a fundamentally different way of expressing data transformations.**
 
-Let's see the power of DataFrames with a complete example. This 20-line program loads data, cleans it, analyzes it, and outputs results:
+While both produce the same [`LogicalPlan`], DataFrames integrate with Rust's type system, control flow, and tooling in ways SQL strings cannot. As the [Towards Scalable Dataframe Systems][dataframe algebra] paper notes, SQL's declarative nature makes it "awkward to develop and debug queries in a piecewise, modular fashion."
+
+| Aspect              |             DataFrame API              | SQL API                          |
+| ------------------- | :------------------------------------: | :------------------------------- |
+| **Interface**       | Method chaining (`.select().filter()`) | Declarative string (`SELECT...`) |
+| **Error Detection** |     Compile-time (syntax & types)      | Runtime (parsing)                |
+| **Composability**   |   High (variables, loops, functions)   | Low (string concatenation)       |
+| **IDE Tooling**     | Full support (autocomplete, refactor)  | Limited (opaque strings)         |
+| **Custom Logic**    | Can inject custom `LogicalPlan` nodes  | Limited to SQL grammar           |
+
+Consider building a search API where filters depend on user input:
+
+**SQL approach** — string concatenation:
 
 ```rust
-use datafusion::prelude::*;
-use datafusion::functions_aggregate::expr_fn::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    // Create sample sales data with quality issues
-    let sales = dataframe!(
-        "product" => ["Laptop", "Mouse", "laptop", "Keyboard", "mouse"],
-        "revenue" => [1200, 25, 1100, 75, 30],
-        "quantity" => [2, 50, 1, 10, 45]
-    )?;
-
-    // Transform: normalize names, aggregate, and rank
-    let result = sales
-        .with_column("product", lower(col("product")))?  // Normalize to lowercase
-        .aggregate(
-            vec![col("product")],
-            vec![
-                sum(col("revenue")).alias("total_revenue"),
-                sum(col("quantity")).alias("total_quantity")
-            ]
-        )?
-        .sort(vec![col("total_revenue").sort(false, true)])?;  // DESC
-
-    result.show().await?;
-    // +---------+---------------+----------------+
-    // | product | total_revenue | total_quantity |
-    // +---------+---------------+----------------+
-    // | laptop  | 2300          | 3              |
-    // | keyboard| 75            | 10             |
-    // | mouse   | 55            | 95             |
-    // +---------+---------------+----------------+
-
-    Ok(())
+let mut query = "SELECT * FROM employees WHERE 1=1".to_string();
+if let Some(dept) = filter_department {
+    query.push_str(&format!(" AND department = '{}'", dept));
 }
 ```
 
-**What just happened?**
+This pattern has three problems:
 
-1. **Created data** with the `dataframe!` macro
-2. **Normalized** product names with a computed column
-3. **Aggregated** revenue and quantity by product
-4. **Sorted** results by revenue (highest first)
-5. **Displayed** the results
+1. **Injection vulnerability** — if `dept` contains [`'; DROP TABLE students; --`](https://xkcd.com/327/), you're in trouble.
+2. **Runtime-only errors** — typos like `"deprtment"` won't surface until execution.
+3. **The `WHERE 1=1` hack** — exists solely to simplify conditional string building.
 
-Notice how operations **chain together** fluently, the **query is built lazily**, and DataFusion **optimizes automatically**. Now let's dive deeper!
-
-## DataFrame ↔ SQL Quick Reference
-
-DataFrames provide a programmatic API for data transformations. If you're coming from SQL, this table maps familiar SQL operations to their DataFrame equivalents:
-
-| Category             | SQL Operation                   | DataFrame Method(s)                                     | Key Differences                                                                          |
-| -------------------- | ------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| **Filtering**        | `WHERE condition`               | [`filter()`]                                            | Chainable predicates with `.and()`, `.or()`; helpers: `in_list()`, `like()`, `between()` |
-| **Selection**        | `SELECT col1, col2`             | [`select_columns()`], [`select()`]                      | [`select()`] supports expressions; see [SQL SELECT](../user-guide/sql/index.md)          |
-| **Selection**        | `SELECT expr AS alias`          | [`select()`], [`with_column()`]                         | [`with_column()`] adds or replaces columns (not in SQL)                                  |
-| **Selection**        | `... AS new_name` (rename)      | [`with_column_renamed()`]                               | Rename one column at a time                                                              |
-| **Aggregation**      | `GROUP BY ... aggregate(...)`   | [`aggregate()`]                                         | See [Aggregate functions](../user-guide/sql/aggregate_functions.md)                      |
-| **Aggregation**      | `HAVING condition`              | [`aggregate()`] then [`filter()`]                       | HAVING implemented as post-aggregation filter                                            |
-| **Joins**            | `INNER/LEFT/RIGHT/FULL JOIN`    | [`join()`], [`join_on()`]                               | [`join_on()`] supports arbitrary join conditions; includes `Semi` and `Anti` joins       |
-| **Joins**            | `CROSS JOIN`                    | [`join()`] with empty keys                              | Pass empty `&[]` for left and right keys                                                 |
-| **Sorting/Limiting** | `ORDER BY ... LIMIT n OFFSET m` | [`sort()`], [`limit()`]                                 | `limit(skip, fetch)`; [`show_limit()`] for quick preview without full execution          |
-| **Set Operations**   | `UNION ALL`                     | [`union()`]                                             | —                                                                                        |
-| **Set Operations**   | `UNION` (distinct)              | [`union_distinct()`]                                    | —                                                                                        |
-| **Set Operations**   | `UNION ALL` by name             | [`union_by_name()`]                                     | **DataFrame-only:** aligns by column name, not position                                  |
-| **Set Operations**   | `UNION` by name (distinct)      | [`union_by_name_distinct()`]                            | **DataFrame-only:** name-based alignment + deduplication                                 |
-| **Set Operations**   | `DISTINCT`                      | [`distinct()`]                                          | —                                                                                        |
-| **Set Operations**   | `DISTINCT ON (cols)`            | [`distinct_on()`]                                       | **DataFrame-only:** Postgres-style, not ANSI SQL                                         |
-| **Set Operations**   | `INTERSECT` / `EXCEPT`          | [`intersect()`], [`except()`]                           | —                                                                                        |
-| **Window Functions** | `ROW_NUMBER() OVER (...)`       | [`window()`]                                            | Add window exprs; see [Window functions](../user-guide/sql/window_functions.md)          |
-| **Reshaping**        | `UNNEST` / `EXPLODE`            | [`unnest_columns()`], [`unnest_columns_with_options()`] | Fine-grained control via [`unnest_columns_with_options()`]                               |
-
-**Key differences from SQL:**
-
-- **Lazy evaluation**: DataFrame methods build a plan; execution happens on [`collect()`], [`show()`], etc.
-- **Immutable**: Each method returns a new DataFrame
-- **Programmatic**: Easy to conditionally build queries, loop over columns, parameterize transformations
-- **Type-safe**: Rust compiler catches many errors at compile time
-
-> **See also:** [Mixing SQL and DataFrames](#mixing-sql-and-dataframes) for combining both approaches
-
-## The Data Cleaning Journey
-
-Let's learn DataFrame transformations by solving a real problem: cleaning messy sales data. We'll encounter common data quality issues and fix them step-by-step, introducing DataFrame operations as we need them.
-
-> **Inspired by**: [PySpark DataFrame API] data preparation patterns
-
-### Meet Your Data: The Challenge
-
-You've received a sales dataset exported from a legacy system. It has all the problems you'd expect from real-world data:
+**DataFrame approach** — type-safe, composable:
 
 ```rust
-use datafusion::prelude::*;
-use datafusion::functions_aggregate::expr_fn::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    // Our messy sales data - note the quality issues!
-    let sales = dataframe!(
-        "order_id" => [1, 2, 2, 3, 4, 4, None],
-        "customer" => ["Alice", "bob", "BOB", " Charlie ", "Dave", "Dave", "Eve"],
-        "amount" => [100.0, -50.0, 200.0, 150.0, f64::NAN, 300.0, 99999.0],
-        "status" => ["complete", "pending", "PENDING", "complete", None, "complete", "pending"],
-        "date" => ["2024-01-01", "2024-01-02", "2024-01-02", "invalid", "2024-01-04", "2024-01-04", "2024-01-05"]
-    )?;
-
-    sales.show().await?;
-    Ok(())
+let mut result = employees_df;
+if let Some(dept) = filter_department {
+    result = result.filter(col("department").eq(lit(dept)))?;
 }
 ```
 
-**Output:**
+Values pass through [`lit()`], never interpolated into strings — injection-proof by design. The optimizer automatically combines multiple [`.filter()`] calls into a single predicate.
 
-```
-+----------+----------+--------+----------+------------+
-| order_id | customer | amount | status   | date       |
-+----------+----------+--------+----------+------------+
-| 1        | Alice    | 100.0  | complete | 2024-01-01 |
-| 2        | bob      | -50.0  | pending  | 2024-01-02 |
-| 2        | BOB      | 200.0  | PENDING  | 2024-01-02 |
-| 3        | Charlie  | 150.0  | complete | invalid    |
-| 4        | Dave     | NaN    | NULL     | 2024-01-04 |
-| 4        | Dave     | 300.0  | complete | 2024-01-04 |
-| NULL     | Eve      | 99999.0| pending  | 2024-01-05 |
-+----------+----------+--------+----------+------------+
-```
+### Finding Balance: When to Use Which
 
-**Problems we can see:**
+**Both APIs share far more than they differ.** They use the same expressions ([`col()`], [`lit()`], [`sum()`]), the same optimizer, and produce identical execution plans. The choice isn't "DataFrame vs SQL" — it's about picking the right tool for each situation.
 
-- **Duplicates**: order_id 2 and 4 appear twice
-- **Inconsistent casing**: "bob" vs "BOB", "pending" vs "PENDING"
-- **Extra whitespace**: " Charlie " has leading/trailing spaces
-- **Invalid data**: negative amounts, NaN values, invalid dates
-- **Outliers**: 99999.0 is suspiciously high
-- **Nulls**: Missing order_id and status values
+#### DataFrame API Strengths
 
-**Our goal**: Transform this into clean, analyzable data. By the end, we'll have total sales by customer with all issues resolved.
+| Strength                     | What it means                                                                |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| **Type safety**              | Rust's type system catches errors before runtime                             |
+| **Compile-time validation**  | No runtime "column not found" surprises — the compiler checks your code      |
+| **No SQL injection risk**    | Values pass through [`lit()`], never string-interpolated — secure by design  |
+| **IDE support**              | Full autocomplete, refactoring, go-to-definition for methods and expressions |
+| **Programmatic composition** | Build queries with loops, conditionals, and reusable functions               |
 
-### Step 1: Understanding What We Have
+#### Where SQL Shines
 
-Before cleaning, let's inspect the data structure:
+The DataFrame API isn't always the best choice. Be honest about trade-offs:
+
+| Feature              | SQL API Strength                           | DataFrame Consideration             |
+| -------------------- | ------------------------------------------ | ----------------------------------- |
+| **Window Functions** | Concise `OVER (PARTITION BY ... ORDER BY)` | More verbose builder pattern        |
+| **Complex Logic**    | Readable `CASE WHEN`, `GROUPING SETS`      | Deeply nested function calls        |
+| **Prototyping**      | Instant feedback via REPL/CLI              | Requires Rust compilation cycle     |
+| **Tool Integration** | Works with BI tools, JDBC/ODBC             | Requires custom integration         |
+| **Team Familiarity** | Universal SQL knowledge                    | Rust + DataFrame API learning curve |
+
+#### The Bigger Picture: DataFusion's Architecture
+
+DataFusion is a **columnar query engine** optimized for analytical workloads. But not every operation suits columnar processing — some queries perform better on row-based systems like PostgreSQL or Oracle.
+
+This is where DataFusion's [`TableProvider`] abstraction shines: you can **connect diverse data sources** and let each system do what it does best. Query your PostgreSQL tables alongside Parquet files, and DataFusion orchestrates the execution. The DataFrame API and SQL API are just two ways to express queries over this unified architecture.
+
+> **Think outside the box:** If a particular query pattern is awkward in DataFrames _and_ slow in DataFusion's columnar engine, consider whether a row-based system or specialized database might be the right tool — and use DataFusion to connect them.
+
+#### Use Case Recommendations
+
+| Use Case                                   | Recommended API | Why                                      |
+| ------------------------------------------ | :-------------: | ---------------------------------------- |
+| Ad-hoc exploration, quick queries          |     SQL-API     | Familiar syntax, zero boilerplate        |
+| Dynamic filters, user-driven queries       |  DataFrame-API  | Type-safe composition, no injection risk |
+| Complex business logic, reusable pipelines |  DataFrame-API  | Composable functions, testable units     |
+| Migrating existing SQL queries             |     SQL-API     | Copy-paste, immediate results            |
+| IDE-heavy development                      |  DataFrame-API  | Autocomplete, refactoring support        |
+| Complex window functions                   |     SQL-API     | More concise, readable syntax            |
+| Rapid prototyping                          |     SQL-API     | No compilation required                  |
+
+The true power emerges when you **mix both APIs**: use SQL for complex joins or window functions where declarative syntax shines, then switch to DataFrames for dynamic filtering or pipeline composition. DataFusion makes this seamless — a SQL query returns a DataFrame you can continue transforming.
+
+### What's Ahead
+
+This guide walks through DataFrame transformations with a practical lens:
+
+1. **[Shared Transformations](#shared-transformations-a-data-cleaning-journey)** — A narrative data-cleaning journey showing transformations in context, not isolation.
+2. **[Deep Dive: Transformation Reference](#deep-dive-transformation-reference)** — The shared expression vocabulary: filtering, selection, aggregation, joins — concepts that apply to both SQL and DataFrames.
+3. **[Advanced DataFrame Patterns](#advanced-dataframe-patterns)** — Unique DataFrame capabilities: `.with_column()`, `.union_by_name()`, window functions, and more.
+4. **[Mixing SQL and DataFrames](#mixing-sql-and-dataframes)** — Hybrid workflows that leverage the strengths of both APIs.
+
+---
+
+## Shared Transformations: A Data Cleaning Journey
+
+**These are the core operations that exist in both SQL and the DataFrame API — same logic, different syntax.**
+
+If you know SQL, you already know _what_ these operations do. The difference is _how_ you express them. The naming conventions come from different traditions: SQL follows the ANSI standard, while DataFrame methods inherit from [Apache Spark] and [pandas] — hence `ORDER BY` becomes `.sort()`, and `WHERE` becomes `.filter()`.
+
+| SQL Clause                         | DataFrame Method                             | Origin / Note                              |
+| ---------------------------------- | -------------------------------------------- | ------------------------------------------ |
+| [`WHERE condition`][`WHERE`]       | [`.filter(expr)`][`.filter()`]               | Functional programming tradition           |
+| [`SELECT columns`][`SELECT`]       | [`.select(exprs)`][`.select()`]              | Same concept, expression-based             |
+| [`SELECT col AS name`][`AS`]       | [`.alias("name")`][`.alias()`]               | Rename via expression                      |
+| [`GROUP BY ... AGG()`][`GROUP BY`] | [`.aggregate(groups, aggs)`][`.aggregate()`] | Explicit grouping + aggregation separation |
+| [`ORDER BY col`][`ORDER BY`]       | [`.sort(exprs)`][`.sort()`]                  | Spark naming convention                    |
+| `ORDER BY col DESC`                | `.sort(col.sort(false, true))`               | `(ascending, nulls_first)` parameters      |
+| `LIMIT n OFFSET m`                 | [`.limit(skip, Some(fetch))`][`.limit()`]    | Combined into single method                |
+| `DISTINCT`                         | [`.distinct()`]                              | Same concept                               |
+| `UNION ALL`                        | [`.union()`]                                 | Keeps duplicates                           |
+| `UNION`                            | [`.union_distinct()`]                        | Removes duplicates                         |
+
+<!--TODO: References !-->
+
+> **Going deeper:** For comprehensive method documentation, see [docs.rs]. For SQL semantics, refer to [PostgreSQL docs] or [Spark SQL documentation][spark docs].
+
+Rather than covering each operation in isolation, we'll demonstrate them together in a realistic **data cleaning workflow** — the kind of pipeline you'd actually build. This approach shows how DataFrame **ergonomics** shine: operations like [`.describe()`] give you summary statistics in one line, while SQL would require multiple aggregations (see below) and many more.
+
+Along the way, you'll see **method chaining** in action — more on that pattern in [Advanced DataFrame Patterns](#advanced-dataframe-patterns). For a full comparison of when to use DataFrames vs SQL, see [Finding Balance](#finding-balance-when-to-use-which) above.
+
+### Meet Your Data
+
+**Real-world data is messy — we create a DataFrame with common data quality problems to clean throughout the following sections.**
+
+Duplicates, inconsistent casing, nulls, missing values in essential columns, invalid formats, and outliers are everyday challenges. To highlight the benefits of the DataFrame API, the following sections form a narrative tutorial — we create our own dataset using the [`dataframe!`] macro with all these common problems baked in (see [Creating DataFrames](creating-dataframes.md#5-from-inline-data-using-the-dataframe-macro) for details):
 
 ```rust
-// Check the schema
-println!("Schema: {:?}", sales.schema());
+use datafusion::prelude::*;
 
-// Count total rows
-let count = sales.clone().count().await?;
-println!("Total rows: {}", count);
+// Create sample data (see Creating DataFrames for the dataframe! macro)
+// This represents ORDER LINE ITEMS — multiple items can share the same order_id
+let sales = dataframe!(
+    "order_id" => [1, 1, 1, 2, 3, 4, 5, 6, 7, None::<i64>],
+    "customer" => ["Alice", "Alice", "Alice", "Alice", "bob", "BOB", " Charlie ", "Dave", "Dave", "Eve"],
+    "amount" => [100.0, 100.0, 10.0, 150.0, -50.0, 200.0, 180.0, 180.0, 300.0, 99999.0],
+    "status" => ["complete", "complete", "complete", "pending", "pending", "PENDING", "complete", None, "complete", "pending"],
+    "date" => ["2026-01-01", "2026-01-01", "2026-01-01", "2026-01-15", "2026-01-02", "2026-01-03", "invalid", "2026-01-04", "2026-01-20", "2026-01-06"]
+)?;
 
-// Preview first few rows
-sales.clone().limit(0, Some(3))?.show().await?;
+sales.clone().show().await?;  // SQL: SELECT * FROM sales
 ```
 
-_Quick Debug_: Always start with `show()` and `schema()` to understand your data before transforming it. Use `limit()` to preview large datasets without loading everything.
+> **Note:** All code snippets in this section continue from this setup — the [`prelude`] import and `sales` DataFrame are assumed available throughout.
 
-### Step 2: Filtering Out Invalid Records
+The dataframe! macro results in the following DataFrame:
 
-First, let's remove rows with critical missing data or obvious errors:
+```text
++----------+------------+---------+----------+------------+
+| order_id | customer   | amount  | status   | date       |
++----------+------------+---------+----------+------------+
+| 1        | Alice      | 100.0   | complete | 2026-01-01 |
+| 1        | Alice      | 100.0   | complete | 2026-01-01 |
+| 1        | Alice      | 10.0    | complete | 2026-01-01 |
+| 2        | Alice      | 150.0   | pending  | 2026-01-15 |
+| 3        | bob        | -50.0   | pending  | 2026-01-02 |
+| 4        | BOB        | 200.0   | PENDING  | 2026-01-03 |
+| 5        |  Charlie   | 180.0   | complete | invalid    |
+| 6        | Dave       | 180.0   |          | 2026-01-04 |
+| 7        | Dave       | 300.0   | complete | 2026-01-20 |
+|          | Eve        | 99999.0 | pending  | 2026-01-06 |
++----------+------------+---------+----------+------------+
+```
+
+> **Best Practice:** In production, define an explicit schema where `order_id` is non-nullable — the database would reject that last row at insert time. See [Schema Management](./schema-management.md) for how to enforce constraints upfront rather than cleaning them later.
+
+### Exploring the Data: Cheap to Expensive
+
+**Start with cheap operations, then sample, then analyze the full dataset.**
+
+DataFusion DataFrames are **immutable** — every transformation (`.filter()`, `.select()`, `.with_column()`) creates a new DataFrame, leaving the original unchanged. Combined with **lazy execution**, transformations build a logical plan without touching data until you call a terminal action (`.show()`, `.collect()`, `.count()`). This means `.schema()` is free (reads plan metadata), while `.describe()` triggers a full scan. Use this to your advantage: the original data is always safe, and you can validate your approach on cheap operations before running expensive ones.
+For more information, see the [DataFrame Execution part](./writing-dataframes.md#dataframe-execution)
+
+| Operation         | Cost      | What it does                          |
+| ----------------- | --------- | ------------------------------------- |
+| [`.schema()`]     | Free      | Reads metadata only — no data scanned |
+| [`.show_limit()`] | Cheap     | Preview first N rows                  |
+| [`.show()`]       | Expensive | Shows all data                        |
+| [`.count()`]      | Expensive | Scans all rows to count them          |
+| [`.describe()`]   | Expensive | Multiple aggregations on all rows     |
+
+#### 1. Check the schema (free) — understand types before touching data:
+
+With the [`.schema()`] method, DataFusion only reads the metadata. For further reading, see the DataFusion DataFrame API documentation on [schema management](./schema-management.md).
 
 ```rust
-// Remove rows where order_id is null or amount is negative/NaN/outlier
+println!("{}", sales.schema());
+```
+
+This results in the following schema:
+
+```text
+Schema {
+    fields: [
+        Field { name: "order_id", data_type: Int64, nullable: true },
+        Field { name: "customer", data_type: Utf8, nullable: true },
+        Field { name: "amount", data_type: Float64, nullable: true },
+        Field { name: "status", data_type: Utf8, nullable: true },
+        Field { name: "date", data_type: Utf8, nullable: true },
+    ]
+}
+```
+
+**Red flags from schema alone:**
+
+- `date` is `Utf8` (string), not a proper date type — we'll need to convert it
+- `order_id` is `nullable: true` — a primary key should never be null, yet our data has one
+
+#### 2. Check the size (expensive, but necessary) — decide your strategy:
+
+**[`.count()`]** returns the total number of rows. Knowing the dataset size helps you decide whether to run expensive operations directly or sample first — a 1,000-row dataset can be analyzed in full, but a 100-million-row dataset needs a different strategy:
+
+```rust
+let row_count = sales.clone().count().await?;  // Returns: 10 (usize)
+```
+
+With 10 rows, we can safely use [`.show()`] and [`.describe()`] on the full dataset. For larger datasets, you'd sample first, clean your data and then execute on the full dataset, to keep the iteration loop tight.
+
+#### 3. Preview the data — spot obvious issues:
+
+**Visual inspection catches problems that statistics miss — casing inconsistencies, whitespace, obviously wrong values.** Choose your preview method based on dataset size:
+
+| Method                              | Executes                   | Use case                                      |
+| ----------------------------------- | -------------------------- | --------------------------------------------- |
+| [`.show_limit(n)`][`.show_limit()`] | Stops after first `n` rows | Large datasets, quick sanity checks           |
+| [`.show()`]                         | Full plan, collects all    | Small datasets, complete view of data quality |
+
+For large datasets, use [`.show_limit(n)`][`.show_limit()`] to peek at the first `n` rows without loading everything into memory:
+
+```rust
+df.show_limit(3).await?;  // Quick peek at first 3 rows
+```
+
+Results in our case for the first 3 rows (you will usually use 100 or 1000 rows):
+
+```text
++----------+------------+---------+----------+------------+
+| order_id | customer   | amount  | status   | date       |
++----------+------------+---------+----------+------------+
+| 1        | Alice      | 100.0   | complete | 2026-01-01 |
+| 2        | bob        | -50.0   | pending  | 2026-01-02 |
+| 2        | BOB        | 200.0   | PENDING  | 2026-01-02 |
++----------+------------+---------+----------+------------+
+```
+
+Since our dataset is small (10 rows), we'll use [`.show()`] to see everything:
+
+```rust
+sales.clone().show().await?;
+```
+
+```text
++----------+------------+---------+----------+------------+
+| order_id | customer   | amount  | status   | date       |
++----------+------------+---------+----------+------------+
+| 1        | Alice      | 100.0   | complete | 2026-01-01 |
+| 1        | Alice      | 100.0   | complete | 2026-01-01 |
+| 1        | Alice      | 10.0    | complete | 2026-01-01 |
+| 2        | Alice      | 150.0   | pending  | 2026-01-15 |
+| 3        | bob        | -50.0   | pending  | 2026-01-02 |
+| 4        | BOB        | 200.0   | PENDING  | 2026-01-03 |
+| 5        |  Charlie   | 180.0   | complete | invalid    |
+| 6        | Dave       | 180.0   |          | 2026-01-04 |
+| 7        | Dave       | 300.0   | complete | 2026-01-20 |
+|          | Eve        | 99999.0 | pending  | 2026-01-06 |
++----------+------------+---------+----------+------------+
+```
+
+**Issues visible in the full output:**
+
+- Exact duplicate row (order_id=1, amount=100.0 appears twice)
+- Multiple line items per order (order_id=1 has 3 items total — 2 duplicates + 1 different)
+- Inconsistent casing (`bob` vs `BOB`, `pending` vs `PENDING`)
+- Whitespace in names (`Charlie` has leading/trailing space)
+- Negative amount (-50.0)
+- Missing values (null `order_id`, null `status`)
+- Invalid date format ("invalid")
+- Suspicious outlier (99999.0)
+
+> **Warning:** [`.show()`] collects _all_ results into memory — use [`.show_limit(n)`][`.show_limit()`] for large datasets. To explore different parts, use [`.limit(offset, count)`][`.limit()`] to skip and sample (e.g., `.limit(1000, Some(100))` skips first 1000, shows next 100). For complete large-dataset workflows, see [Advanced DataFrame Topics](./dataframes-advance.md).
+
+#### 4. Analyze statistics (expensive) — reveal hidden issues:
+
+**[`.describe()`]** creates a new Dataframe containing a summary statistics (count, null_count, mean, std, min, max, median) across all columns — revealing issues that visual inspection misses: outliers, skewed distributions, and null patterns hidden deep in your data.
+
+For large datasets, start with a sample for fast iteration, then verify on the full dataset once your approach is validated:
+
+```rust
+// Step A: Analyze a sample first (fast feedback loop)
+let sample = sales.clone().limit(0, Some(10_000))?;
+sample.describe().await?.show().await?;
+
+// Step B: Once satisfied, verify on the full dataset
+sales.clone().describe().await?.show().await?;
+```
+
+This results in this new DataFrame and is represented as:
+
+```text
++------------+----------+----------+-------------------+----------+------------+
+| describe   | order_id | customer | amount            | status   | date       |
++------------+----------+----------+-------------------+----------+------------+
+| count      | 9.0      | 10       | 10.0              | 9        | 10         |
+| null_count | 1.0      | 0        | 0.0               | 1        | 0          |
+| mean       | 3.33     | null     | 10116.9           | null     | null       |
+| std        | 2.12     | null     | 31574.8           | null     | null       |
+| min        | 1.0      | null     | -50.0             | null     | null       |
+| max        | 7.0      | null     | 99999.0           | null     | null       |
+| median     | 3.0      | null     | 165.0             | null     | null       |
++------------+----------+----------+-------------------+----------+------------+
+```
+
+**What [`.describe()`] reveals in our dataset:**
+
+- **Null count**: 1 missing `order_id`, 1 missing `status` — need to filter or impute
+- **Min amount**: -50.0 — negatives shouldn't exist in sales data
+- **Max amount**: 99999.0 — suspicious outlier (data entry error?)
+- **Mean vs median**: 14385 vs 175 — huge gap indicates outlier is skewing the mean
+
+> **Note:** The output types differ by column type:
+>
+> | Column type | Output  | Supported stats                                | Example |
+> | ----------- | ------- | ---------------------------------------------- | ------- |
+> | Numeric     | Float64 | count, null_count, mean, std, min, max, median | `6.0`   |
+> | String      | Utf8    | count, null_count, min, max                    | `7`     |
+>
+> String columns show `null` for mean, std, and median since those don't apply to text.
+
+### Conclusion of the Happy little accidents in our dataset to fix:
+
+This table provides a conclusive description of the common issues in our dataset and offers solutions or fixes for solving them, which should be discussed in the later subsections
+
+| Issue               | Example                    | Fix                                    |
+| ------------------- | -------------------------- | -------------------------------------- |
+| Duplicates          | order_id 2, 4 appear twice | [`.distinct_on()`]                     |
+| Inconsistent casing | "bob" vs "BOB"             | [`lower()`] or [`upper()`]             |
+| Extra whitespace    | " Charlie "                | [`trim()`]                             |
+| Invalid values      | negative amounts, NaN      | [`.filter()`]                          |
+| Outliers            | 99999.0                    | [`.filter()`]                          |
+| Nulls               | missing order_id, status   | [`.filter()`] or [`coalesce()`]        |
+| Wrong type          | date as string, "invalid"  | [`to_date()`] with fail-safe filtering |
+
+**Our goal**: Clean this into analyzable data with total sales by customer.
+
+### Step 1: Filtering Out Invalid Records
+
+**Filtering removes rows that would corrupt downstream analysis — nulls in primary keys, negative amounts, obvious outliers.**
+
+In SQL, this would be a [`WHERE`] clause with multiple conditions joined by [`AND`]. With the DataFrame API, you have two equivalent options:
+
+```rust
+// Option 1: Chain multiple .filter() calls (readable, optimizer combines them)
 let step1 = sales
     .filter(col("order_id").is_not_null())?
-    .filter(col("amount").gt(lit(0)))?         // Remove negatives
-    .filter(col("amount").lt(lit(10000)))?;    // Remove outliers
+    .filter(col("amount").gt(lit(0)))?
+    .filter(col("amount").lt(lit(10000)))?;
 
+// Option 2: Combine predicates with .and() in a single filter
+let step1 = sales.filter(
+    col("order_id").is_not_null()
+        .and(col("amount").gt(lit(0)))
+        .and(col("amount").lt(lit(10000)))
+)?;
+```
+
+Both produce the same execution plan. Use [`or()`] for [`OR`] logic. The chaining approach shines when filters are conditional — you can add or skip filters based on runtime logic without string concatenation.
+
+```rust
 step1.show().await?;
 ```
 
-**Output after Step 1:**
+**Output after Step 1** (10 → 8 rows: removed null order_id, negative amount, outlier):
 
 ```
-+----------+----------+--------+----------+------------+
-| order_id | customer | amount | status   | date       |
-+----------+----------+--------+----------+------------+
-| 1        | Alice    | 100.0  | complete | 2024-01-01 |
-| 2        | BOB      | 200.0  | PENDING  | 2024-01-02 |
-| 3        | Charlie  | 150.0  | complete | invalid    |
-| 4        | Dave     | 300.0  | complete | 2024-01-04 |
-+----------+----------+--------+----------+------------+
++----------+------------+--------+----------+------------+
+| order_id | customer   | amount | status   | date       |
++----------+------------+--------+----------+------------+
+| 1        | Alice      | 100.0  | complete | 2026-01-01 |
+| 1        | Alice      | 100.0  | complete | 2026-01-01 |
+| 1        | Alice      | 10.0   | complete | 2026-01-01 |
+| 2        | Alice      | 150.0  | pending  | 2026-01-15 |
+| 4        | BOB        | 200.0  | PENDING  | 2026-01-03 |
+| 5        |  Charlie   | 180.0  | complete | invalid    |
+| 6        | Dave       | 180.0  |          | 2026-01-04 |
+| 7        | Dave       | 300.0  | complete | 2026-01-20 |
++----------+------------+--------+----------+------------+
 ```
 
-_Quick Debug_: If `filter()` returns no rows, check for nulls with `col("column").is_not_null()` first. DataFusion's null handling follows [Three-valued logic] (SQL standard).
+> **Tip:** Notice we filter nulls first with [`.is_not_null()`]. If [`.filter()`] returns fewer rows than expected, nulls are often the culprit — comparisons with `NULL` return `NULL` (not `false`), so rows silently drop out. This is SQL's [three-valued logic] in action.
 
-### Step 3: Cleaning Text Data
+> **Best Practice:** Don't discard rejected rows silently! Capture them for review:
+>
+> ```rust
+> let rejected = sales.filter(col("order_id").is_null()
+>     .or(col("amount").lt_eq(lit(0)))
+>     .or(col("amount").gt_eq(lit(10000))))?;
+> rejected.write_parquet("rejected_rows.parquet", ...).await?;
+> ```
+>
+> This creates an audit trail and helps identify upstream data quality issues.
 
-Now let's normalize the text columns—lowercase everything and remove extra spaces:
+> **Learn More:** For complex predicates and filter pushdown optimization, see [Filtering Rows](#filtering-rows-with-filter) in the Deep Dive section.
+
+### Step 2: Cleaning Text Data
+
+**Text normalization ensures consistent matching for a robust data pipeline.**
+
+Text data requires special care: tabs and spaces cause invisible mismatches (`" Charlie"` ≠ `"Charlie"`), mixed casing breaks groupings (`"Bob"` ≠ `"bob"`), and encoding differences (UTF-8 vs ISO-8859) can corrupt comparisons entirely. DataFusion uses UTF-8 internally — if your source data uses a different encoding, convert it during ingestion before these cleaning steps. Use [`trim()`] for whitespace, [`lower()`] or [`upper()`] for casing.
+
+In SQL, you'd write:
+
+```sql
+SELECT
+order_id,
+LOWER(TRIM(customer)) AS customer,
+amount,
+LOWER(status) AS status,
+date
+FROM step1
+```
+
+The goal: transform `customer` and `status` while keeping everything else unchanged. In SQL, you must explicitly list every column. The DataFrame API's [`.with_column()`] handles this automatically — it transforms the specified column, passes through all other columns AND all rows unchanged:
 
 ```rust
-use datafusion::functions::string::expr_fn::*;
+use datafusion::functions::string::expr_fn::{lower, trim};
 
 let step2 = step1
     .with_column("customer", trim(vec![lower(col("customer"))]))?
@@ -271,130 +532,560 @@ let step2 = step1
 step2.show().await?;
 ```
 
-**Output after Step 2:**
+**Output after Step 2** (8 → 8 rows: [`.with_column()`] transforms values, no rows lost):
 
 ```
 +----------+----------+--------+----------+------------+
 | order_id | customer | amount | status   | date       |
 +----------+----------+--------+----------+------------+
-| 1        | alice    | 100.0  | complete | 2024-01-01 |
-| 2        | bob      | 200.0  | pending  | 2024-01-02 |
-| 3        | charlie  | 150.0  | complete | invalid    |
-| 4        | dave     | 300.0  | complete | 2024-01-04 |
+| 1        | alice    | 100.0  | complete | 2026-01-01 |
+| 1        | alice    | 100.0  | complete | 2026-01-01 |
+| 1        | alice    | 10.0   | complete | 2026-01-01 |
+| 2        | alice    | 150.0  | pending  | 2026-01-15 |
+| 4        | bob      | 200.0  | pending  | 2026-01-03 |
+| 5        | charlie  | 180.0  | complete | invalid    |
+| 6        | dave     | 180.0  |          | 2026-01-04 |
+| 7        | dave     | 300.0  | complete | 2026-01-20 |
 +----------+----------+--------+----------+------------+
 ```
 
-_Quick Debug_: Join failing unexpectedly? Check for trailing spaces with `trim()`. Case mismatches are another common culprit—use `lower()` or `upper()` to normalize.
+> **Tip:** Joins failing unexpectedly? Two common culprits: trailing spaces (`" Alice"` ≠ `"Alice"`) and case mismatches (`"Bob"` ≠ `"bob"`). Normalize with [`trim()`] and [`lower()`] or [`upper()`] before joining.
 
-### Step 4: Removing Duplicates
+> **Learn More:** For the full range of string functions including [`substring()`], `replace()`, and regex operations, see [String Functions](#string-operations) in the Deep Dive section.
 
-We still have duplicate order_ids. Let's use `distinct()` based on order_id to keep only unique records:
+### Step 3: Type Conversion with Fail-Safe Handling
+
+**Type conversion transforms string data into proper types — enabling date arithmetic, correct sorting, and type-safe operations.**
+
+Our schema inspection revealed `date` is `Utf8` (string), not a proper date type. This matters: string sorting puts "2024-12-01" before "2024-2-01" (lexicographic), while date sorting handles them correctly. Date arithmetic (`date + interval '1 day'`) only works on date types. Type conversion is where many pipelines silently fail — a single malformed value like "invalid" or "2024/01/01" (wrong separator) can crash the entire query.
+
+> Recap from the [schema inspection](#1-check-the-schema-free--understand-types-before-touching-data:):
+>
+> ```text
+> Field { name: "date", data_type: Utf8, nullable: true },
+> ```
+
+In SQL, you'd use `CAST` or [`TO_DATE`]:
+
+```sql
+SELECT *,
+TO_DATE(date, '%Y-%m-%d') AS parsed_date
+FROM step2
+-- But what happens when date = 'invalid'? The query fails!
+```
+
+The problem: [`TO_DATE('invalid')`][`TO_DATE`] crashes the entire query. In production data, you'll encounter malformed dates, typos, legacy formats, and edge cases. The DataFrame API lets us handle this gracefully with two strategies:
+
+#### Strategy 1: Filter first, then convert
+
+Use [`.like()`] for pattern matching to keep only valid rows, then [`to_date()`] to parse. In SQL, you'd need a subquery or CTE to filter first, then convert. The DataFrame chain reads linearly and lets you debug each step independently — add [`.show()`] between filter and conversion to verify you're keeping the right rows:
 
 ```rust
-// For more control, use distinct_on to specify which columns define uniqueness
-let step3 = step2.distinct_on(
-    vec![col("order_id")],
-    vec![col("amount").sort(false, true)],  // Keep the row with highest amount
-    None
+use datafusion::functions::datetime::expr_fn::to_date;
+
+let step3 = step2
+    .filter(col("date").like(lit("____-__-__")))?  // Pattern: 4 chars, dash, 2, dash, 2
+    // step2_filtered.show().await?;  // Debug: verify filter worked before conversion
+    .with_column("parsed_date", to_date(vec![col("date")]))?;
+```
+
+#### Strategy 2: Conditional conversion
+
+Use [`when()`] with [`.otherwise()`] to convert valid dates and set invalid ones to `NULL`, keeping all rows. This is equivalent to SQL's `CASE WHEN`:
+
+```rust
+let step3 = step2.with_column(
+    "parsed_date",
+    when(col("date").like(lit("____-__-__")), to_date(vec![col("date")]))
+        .otherwise(lit::<&str>(None))?  // Invalid dates become NULL instead of causing errors
+)?;
+```
+
+Strategy 2 preserves all rows — useful when you need to track _which_ records had invalid data, or when nulls are acceptable downstream. Strategy 1 is cleaner when invalid records should be excluded entirely.
+
+For our cleaning journey, we'll use Strategy 1 — filter out invalid dates, then convert:
+
+```rust
+let step3 = step2
+    .filter(col("date").like(lit("____-__-__")))?
+    .with_column("parsed_date", to_date(vec![col("date")]))?;
+
+step3.clone().show().await?;
+```
+
+**Output after Step 3** (8 → 7 rows: filtered invalid date format, added `parsed_date` column):
+
+```
++----------+----------+--------+----------+------------+-------------+
+| order_id | customer | amount | status   | date       | parsed_date |
++----------+----------+--------+----------+------------+-------------+
+| 1        | alice    | 100.0  | complete | 2026-01-01 | 2026-01-01  |
+| 1        | alice    | 100.0  | complete | 2026-01-01 | 2026-01-01  |
+| 1        | alice    | 10.0   | complete | 2026-01-01 | 2026-01-01  |
+| 2        | alice    | 150.0  | pending  | 2026-01-15 | 2026-01-15  |
+| 4        | bob      | 200.0  | pending  | 2026-01-03 | 2026-01-03  |
+| 6        | dave     | 180.0  |          | 2026-01-04 | 2026-01-04  |
+| 7        | dave     | 300.0  | complete | 2026-01-20 | 2026-01-20  |
++----------+----------+--------+----------+------------+-------------+
+```
+
+Row 5 (Charlie with "invalid" date) is filtered out by Strategy 1. The `parsed_date` column is now `Date32`, enabling date arithmetic and proper sorting.
+
+```
++----------+----------+--------+----------+------------+
+| order_id | customer | amount | status   | date       |
++----------+----------+--------+----------+------------+
+| 5        | charlie  | 180.0  | complete | invalid    |
++----------+----------+--------+----------+------------+
+```
+
+> **Tip:** Type conversion errors often surface late in pipelines. Validate early with [`.filter()`] or use [`when()`] with [`.otherwise()`] to make failures explicit rather than silent.
+
+### Step 4: Handling Remaining Nulls
+
+**Null handling fills missing values with sensible defaults — preserving rows that would otherwise break aggregations.**
+
+After aggressive filtering and type conversion, you'll often have sparse columns where nulls are acceptable but inconvenient downstream. Aggregations like `SUM()` and `AVG()` skip nulls, which may be fine — but `COUNT(column)` vs `COUNT(*)` behaves differently, and joins on nullable columns can produce unexpected results. Decide per-column: filter nulls that indicate bad data, fill nulls that represent "unknown but acceptable."
+
+In SQL, you'd use [`COALESCE`]:
+
+```sql
+SELECT
+order_id,
+customer,
+amount,
+COALESCE(status, 'unknown') AS status,
+ date,
+ parsed_date
+ FROM step3
+```
+
+Again, SQL requires listing every column. The DataFrame API's [`.with_column()`] combined with [`coalesce()`] is more concise:
+
+```rust
+use datafusion::functions::core::expr_fn::coalesce;
+
+let step4 = step3.with_column(
+    "status",
+    coalesce(vec![col("status"), lit("unknown")])  // First non-null wins
 )?;
 
-step3.show().await?;
+step4.clone().show().await?;
 ```
 
-**Output after Step 3:**
+**Output after Step 4** (7 → 7 rows: no rows lost, null `status` filled with "unknown"):
 
 ```
-+----------+----------+--------+----------+------------+
-| order_id | customer | amount | status   | date       |
-+----------+----------+--------+----------+------------+
-| 1        | alice    | 100.0  | complete | 2024-01-01 |
-| 2        | bob      | 200.0  | pending  | 2024-01-02 |
-| 3        | charlie  | 150.0  | complete | invalid    |
-| 4        | dave     | 300.0  | complete | 2024-01-04 |
-+----------+----------+--------+----------+------------+
++----------+----------+--------+----------+------------+-------------+
+| order_id | customer | amount | status   | date       | parsed_date |
++----------+----------+--------+----------+------------+-------------+
+| 1        | alice    | 100.0  | complete | 2026-01-01 | 2026-01-01  |
+| 1        | alice    | 100.0  | complete | 2026-01-01 | 2026-01-01  |
+| 1        | alice    | 10.0   | complete | 2026-01-01 | 2026-01-01  |
+| 2        | alice    | 150.0  | pending  | 2026-01-15 | 2026-01-15  |
+| 4        | bob      | 200.0  | pending  | 2026-01-03 | 2026-01-03  |
+| 6        | dave     | 180.0  | unknown  | 2026-01-04 | 2026-01-04  |
+| 7        | dave     | 300.0  | complete | 2026-01-20 | 2026-01-20  |
++----------+----------+--------+----------+------------+-------------+
 ```
 
-_Quick Debug_: Still seeing duplicates after `distinct()`? Make sure you're checking all the columns that define uniqueness. Use `distinct_on()` for more control.
+Order #6 had a null `status` — now filled with "unknown". This pattern is essential for real-world pipelines where nulls appear in optional columns.
 
-### Step 5: Computing Derived Columns
+**When to filter vs fill:**
 
-Let's add some useful computed columns:
+| Scenario                  | Approach          | Why                                         |
+| ------------------------- | ----------------- | ------------------------------------------- |
+| Null in primary key       | Filter out        | Can't meaningfully process without identity |
+| Null in optional field    | Fill with default | Preserve row, use sensible fallback         |
+| Null indicates data issue | Filter out        | Bad data shouldn't propagate                |
+| Null is valid state       | Keep as-is        | `NULL` has meaning in your domain           |
+
+> **Tip:** [`coalesce()`] returns the first non-null value from a list. For two-argument cases, [`nvl()`] is a shorthand: `nvl(col("status"), lit("unknown"))`.
+
+> **Learn More:** See [Null Handling Patterns](#null-handling-patterns) in the Deep Dive section.
+
+### Step 5: Removing Duplicates
+
+**Deduplication resolves conflicting rows when the same logical entity appears multiple times — choosing which row "wins."**
+
+Duplicates arise from retries, data merges, CDC (Change Data Capture) streams, or upstream bugs. Your strategy depends on your data semantics: keep the latest? The highest value? The first arrival? DataFusion's [`.distinct_on()`] lets you specify both the uniqueness key and the sort order that determines the survivor — more powerful than SQL's `DISTINCT` which only removes exact duplicates.
+
+In SQL, you'd use [`DISTINCT`] or [`DISTINCT ON`] (DataFusion supports basic `DISTINCT ON`, but not combined with GROUP BY or aggregations):
+
+```sql
+-- Remove fully duplicate rows (exact matches on all columns)
+SELECT DISTINCT * FROM step4
+
+-- PostgreSQL/DataFusion: keep first row per key (when you DO want to collapse)
+SELECT DISTINCT ON (order_id) *
+FROM step4
+ORDER BY order_id, amount DESC
+```
+
+For **line item data**, use [`.distinct()`] to remove exact duplicate rows while preserving intentionally different items within the same order:
 
 ```rust
-let step4 = step3
-    .with_column("total_value", col("amount"))?  // Could add quantity here
-    .with_column("year", lit(2024))?;             // Extract from date in real scenario
+// Remove exact duplicate rows only — preserves multiple items per order
+let step5 = step4.distinct()?;
 
-step4.show().await?;
+step5.clone().show().await?;
 ```
 
-### Step 6: Aggregating for Insights
+**Output after Step 5** (7 → 6 rows: removed 1 exact duplicate):
 
-Finally, let's aggregate by customer to see total sales:
+```
++----------+----------+--------+----------+------------+-------------+
+| order_id | customer | amount | status   | date       | parsed_date |
++----------+----------+--------+----------+------------+-------------+
+| 1        | alice    | 100.0  | complete | 2026-01-01 | 2026-01-01  |
+| 1        | alice    | 10.0   | complete | 2026-01-01 | 2026-01-01  |
+| 2        | alice    | 150.0  | pending  | 2026-01-15 | 2026-01-15  |
+| 4        | bob      | 200.0  | pending  | 2026-01-03 | 2026-01-03  |
+| 6        | dave     | 180.0  | unknown  | 2026-01-04 | 2026-01-04  |
+| 7        | dave     | 300.0  | complete | 2026-01-20 | 2026-01-20  |
++----------+----------+--------+----------+------------+-------------+
+```
+
+The duplicate row (order_id=1, amount=100.0) that appeared twice is now collapsed to one. The 10.0 item remains because it's a different line item, not a duplicate.
+
+> **Caution:** Using [`.distinct_on(order_id)`] here would collapse order #1's two items into one row, losing data! Use `.distinct_on()` only when you intentionally want to pick "one winner" per key (e.g., keeping the latest status update per order).
+
+> **Tip:** Still seeing duplicates after [`.distinct()`]? It deduplicates on _all_ columns — rows that look identical but differ in one column aren't duplicates. Use [`.distinct_on()`] to specify exactly which columns define uniqueness.
+
+> **Learn More:** See [Deduplication Strategies](#deduplication-strategies) in the Deep Dive section.
+
+### Step 6: Computing Derived Columns
+
+**Derived columns transform raw data into business logic — fiscal quarters, customer tiers, time-based flags — without modifying source data.**
+
+Computing derived values at query time keeps your source data clean while enabling flexible analysis.
+
+- Need year-over-year comparisons?
+- Extract the year. Customer segmentation?
+- Compute tiers from amounts?
+
+The DataFrame API's chained [`.with_column()`] calls read like a recipe, each step building on the last — no need to re-list all columns like in SQL's `SELECT`.
+
+In SQL, you'd use [`EXTRACT`] or [`DATE_PART`]:
+
+```sql
+SELECT *,
+EXTRACT(YEAR FROM parsed_date) AS year,
+EXTRACT(MONTH FROM parsed_date) AS month
+FROM step5
+```
+
+With `parsed_date` as a proper `Date32`, we can use [`date_part()`] to extract meaningful components:
 
 ```rust
-let final_result = step4
+use datafusion::functions::datetime::expr_fn::date_part;
+
+let step6 = step5
+    .with_column("year", date_part(lit("year"), col("parsed_date")))?
+    .with_column("month", date_part(lit("month"), col("parsed_date")))?
+    .with_column("day_of_week", date_part(lit("dow"), col("parsed_date")))?;
+
+step6.clone().show().await?;
+```
+
+**Output after Step 6** (6 → 6 rows, +3 columns: `year`, `month`, `day_of_week`):
+
+```
++----------+-----+-------------+--------+-------+-------------+
+| order_id | ... | parsed_date | year   | month | day_of_week |
++----------+-----+-------------+--------+-------+-------------+
+| 1        | ... | 2026-01-01  | 2026.0 | 1.0   | 1.0         |
+| 1        | ... | 2026-01-01  | 2026.0 | 1.0   | 1.0         |
+| 2        | ... | 2026-01-15  | 2026.0 | 1.0   | 1.0         |
+| 4        | ... | 2026-01-03  | 2026.0 | 1.0   | 3.0         |
+| 6        | ... | 2026-01-04  | 2026.0 | 1.0   | 4.0         |
+| 7        | ... | 2026-01-20  | 2026.0 | 1.0   | 6.0         |
++----------+-----+-------------+--------+-------+-------------+
+```
+
+> **Note:** Output truncated for readability. Full DataFrame includes all columns from previous steps.
+
+> **Note:** [`date_part()`] returns `Float64` for consistency across date components. Common parts: `year`, `month`, `day`, `hour`, `minute`, `second`, `dow` (day of week), `doy` (day of year).
+
+> **Learn More:** See [Date and Time Operations](#date-and-time-operations) in the Deep Dive section.
+
+### Step 7: Aggregating for Insights
+
+**Aggregation is where all the cleaning pays off — collapsing rows into reliable totals, accurate counts, and trustworthy averages.**
+
+This final step transforms cleaned detail rows into summary statistics grouped by business dimensions. Without the earlier cleaning, you'd have:
+
+- Wrong totals (duplicates counted twice)
+- Split groups ("bob" vs "BOB" as separate customers)
+- Skewed averages (outliers like 99999.0 distorting means)
+
+Since our data represents **line items**, we aggregate to **order level** — summing amounts per order while preserving the `order_id` for downstream joins with products, payments, or shipping tables.
+
+In SQL:
+
+```sql
+SELECT order_id, customer, parsed_date AS order_date,
+       SUM(amount) AS total_amount, COUNT(*) AS item_count
+FROM step6
+GROUP BY order_id, customer, parsed_date
+ORDER BY order_id
+```
+
+The DataFrame API's [`.aggregate()`] separates grouping columns from aggregate expressions, making the structure explicit:
+
+```rust
+use datafusion::functions_aggregate::expr_fn::{sum, count};
+
+let final_result = step6
     .aggregate(
-        vec![col("customer")],
+        vec![col("order_id"), col("customer"), col("parsed_date")],  // GROUP BY order
         vec![
-            sum(col("amount")).alias("total_sales"),
-            count(col("order_id")).alias("order_count"),
-            avg(col("amount")).alias("avg_order_value")
+            sum(col("amount")).alias("total_amount"),
+            count(lit(1)).alias("item_count")
         ]
     )?
-    .sort(vec![col("total_sales").sort(false, true)])?;  // Highest sales first
+    .with_column_renamed("parsed_date", "order_date")?
+    .sort(vec![col("order_id").sort(true, true)])?;
 
 final_result.show().await?;
 ```
 
-**Final Output:**
+**Final Output** (6 line items → 5 orders):
 
 ```
-+----------+-------------+-------------+-----------------+
-| customer | total_sales | order_count | avg_order_value |
-+----------+-------------+-------------+-----------------+
-| dave     | 300.0       | 1           | 300.0           |
-| bob      | 200.0       | 1           | 200.0           |
-| charlie  | 150.0       | 1           | 150.0           |
-| alice    | 100.0       | 1           | 100.0           |
-+----------+-------------+-------------+-----------------+
++----------+----------+------------+--------------+------------+
+| order_id | customer | order_date | total_amount | item_count |
++----------+----------+------------+--------------+------------+
+| 1        | alice    | 2026-01-01 | 110.0        | 2          |
+| 2        | alice    | 2026-01-15 | 150.0        | 1          |
+| 4        | bob      | 2026-01-03 | 200.0        | 1          |
+| 6        | dave     | 2026-01-04 | 180.0        | 1          |
+| 7        | dave     | 2026-01-20 | 300.0        | 1          |
++----------+----------+------------+--------------+------------+
 ```
 
-_Quick Debug_: Wrong totals? Verify your grouping keys with a quick `step4.select(vec![col("customer")]).distinct()?.show().await?` before aggregating.
+Now we see **meaningful aggregation**: Order #1 has 2 line items totaling $110 (100 + 10). The `order_id` primary key is preserved for joins — this table can link to products, payments, or shipping data.
+
+**What happened to the rejected data?**
+
+These 3 rows were filtered out. Here's the **summary of rejections**:
+
+| order_id | rejection_reason              |
+| -------- | ----------------------------- |
+| 3        | negative_amount               |
+| (null)   | null_order_id, outlier_amount |
+| 5        | invalid_date                  |
+
+The actual rejected DataFrame (from `rejected_step1.union(rejected_step3)?.show()`) contains all original columns plus the `rejection_reason`:
+
+```text
++----------+-----+-------------------------------+
+| order_id | ... | rejection_reason              |
++----------+-----+-------------------------------+
+| 3        | ... | negative_amount               |
+|          | ... | null_order_id, outlier_amount |
+| 5        | ... | invalid_date                  |
++----------+-----+-------------------------------+
+```
+
+This audit trail helps identify upstream data quality issues — if 30% of rows are rejected, you have a data source problem to fix!
+
+> **Note:** The 4th "missing" row (Order #1 duplicate with amount=100.0) wasn't rejected as bad data — it was successfully handled by the deduplication step. Only 3 rows were truly rejected.
+
+> **Tip:** Wrong totals? Verify your grouping keys first: `step6.select(vec![col("customer")]).distinct()?.show().await?` — hidden whitespace or case differences can split groups unexpectedly.
+
+> **Learn More:** See [Aggregation Patterns](#aggregation-patterns) in the Deep Dive section.
 
 ### What We Learned
 
-Through this cleaning journey, we used:
+Through this cleaning journey, we transformed **10 line items** into **5 clean orders**:
 
-- **Filtering**: `filter()` with predicates to remove invalid data
-- **Text operations**: `lower()`, `trim()` for normalization
-- **Deduplication**: `distinct_on()` for controlled duplicate removal
-- **Computed columns**: `with_column()` for derived values
-- **Aggregation**: `aggregate()` with multiple aggregate functions
-- **Sorting**: `sort()` to order results
+| Step | Operation            | Method/Function                     | Rows   | Purpose                                               |
+| ---- | -------------------- | ----------------------------------- | ------ | ----------------------------------------------------- |
+| 1    | **Filtering**        | [`.filter()`]                       | 10 → 8 | Remove invalid data with predicates                   |
+| 2    | **Text cleaning**    | [`lower()`], [`trim()`]             | 8 → 8  | Normalize strings for consistency                     |
+| 3    | **Type conversion**  | [`to_date()`], [`.like()`]          | 8 → 7  | Parse strings to proper types with fail-safe handling |
+| 4    | **Null handling**    | [`coalesce()`]                      | 7 → 7  | Fill nulls with sensible defaults                     |
+| 5    | **Deduplication**    | [`.distinct()`]                     | 7 → 6  | Remove exact duplicate rows                           |
+| 6    | **Computed columns** | [`.with_column()`], [`date_part()`] | 6 → 6  | Add derived values from existing data                 |
+| 7    | **Aggregation**      | [`.aggregate()`]                    | 6 → 5  | Roll up line items to order totals                    |
+
+All these operations produce the same result whether expressed as DataFrame methods or SQL—they're just different interfaces to the same underlying expressions. The DataFrame API adds **fail-safe patterns** (like conditional type conversion) that make production pipelines more robust.
 
 **The complete pipeline** (all steps chained):
 
 ```rust
-let clean_result = sales
-    .filter(col("order_id").is_not_null())?
-    .filter(col("amount").gt(lit(0)).and(col("amount").lt(lit(10000))))?
+use datafusion::prelude::*;
+use datafusion::functions::datetime::expr_fn::{to_date, date_part};
+use datafusion::functions::core::expr_fn::{coalesce, concat_ws};
+use datafusion::functions::string::expr_fn::{lower, trim};
+use datafusion::functions_aggregate::expr_fn::{sum, count};
+
+// Define rejection criteria
+let null_order_id = col("order_id").is_null();
+let invalid_amount = col("amount").lt_eq(lit(0)).or(col("amount").gt_eq(lit(10000)));
+let invalid_date = col("date").not_like(lit("____-__-__"));
+
+// Build rejection reason (concatenate all matching reasons)
+let rejection_reason = concat_ws(
+    lit(", "),
+    vec![
+        when(null_order_id.clone(), lit("null_order_id")).otherwise(lit(""))?,
+        when(col("amount").lt_eq(lit(0)), lit("negative_amount")).otherwise(lit(""))?,
+        when(col("amount").is_nan(), lit("nan_amount")).otherwise(lit(""))?,
+        when(col("amount").gt_eq(lit(10000)), lit("outlier_amount")).otherwise(lit(""))?,
+        when(invalid_date.clone(), lit("invalid_date")).otherwise(lit(""))?,
+    ]
+);
+
+// Capture rejected rows WITH reason flag
+let step1_reject = null_order_id.or(invalid_amount);
+let rejected_step1 = sales.clone()
+    .filter(step1_reject.clone())?
+    .with_column("rejection_reason", rejection_reason.clone())?;
+
+let after_step1 = sales.filter(step1_reject.not())?;
+
+let rejected_step3 = after_step1.clone()
+    .filter(invalid_date.clone())?
+    .with_column("rejection_reason", lit("invalid_date"))?;
+
+// Combine all rejected rows into one DataFrame for unified audit trail
+// let all_rejected = rejected_step1.union(rejected_step3)?;
+
+// Write rejected rows to parquet for review
+// all_rejected.write_parquet("rejected_rows.parquet", ...).await?;
+
+// Main pipeline: clean and aggregate
+let clean_orders = after_step1
+    // Step 2: Clean text data
     .with_column("customer", trim(vec![lower(col("customer"))]))?
     .with_column("status", lower(col("status")))?
-    .distinct_on(vec![col("order_id")], vec![col("order_date").sort(true, true)], None)?
+    // Step 3: Type conversion (filter invalid dates, then parse)
+    .filter(invalid_date.not())?
+    .with_column("parsed_date", to_date(vec![col("date")]))?
+    // Step 4: Handle remaining nulls
+    .with_column("status", coalesce(vec![col("status"), lit("unknown")]))?
+    // Step 5: Remove exact duplicate rows (preserves multiple items per order)
+    .distinct()?
+    // Step 6: Compute derived columns
+    .with_column("year", date_part(lit("year"), col("parsed_date")))?
+    // Step 7: Aggregate line items to order totals
     .aggregate(
-        vec![col("customer")],
+        vec![col("order_id"), col("customer"), col("parsed_date")],
         vec![
-            sum(col("amount")).alias("total_sales"),
-            count(col("order_id")).alias("order_count")
+            sum(col("amount")).alias("total_amount"),
+            count(lit(1)).alias("item_count")
         ]
     )?
-    .sort(vec![col("total_sales").sort(false, true)])?;
+    .with_column_renamed("parsed_date", "order_date")?
+    .sort(vec![col("order_id").sort(true, true)])?;
 ```
 
-Notice how **method chaining** creates a readable pipeline, and DataFusion **optimizes the entire query** before execution!
+Notice how **method chaining** creates a readable, linear pipeline — each step flows naturally into the next. This is the DataFrame methodology in action: you can pause at any step with `.show()`, debug intermediate results, and DataFusion **optimizes the entire query** before execution.
 
-Now that you've seen the concepts in action, let's explore each transformation in depth.
+### What We Covered: Shared Operations
+
+Every operation in this data cleaning journey has a direct SQL equivalent — `.filter()` is `WHERE`, `.aggregate()` is `GROUP BY`, `.sort()` is `ORDER BY`. **The logic is identical; only the syntax differs.** But the DataFrame API adds something SQL strings cannot: **composable, fail-safe patterns**. The type conversion step showed how to gracefully handle parse failures instead of crashing — a pattern that's awkward to express in SQL but natural in DataFrames.
+
+Choose based on your context: SQL for ad-hoc queries and complex window functions, DataFrames for type-safe pipelines and dynamic composition. The next section, [Deep Dive: Transformation Reference](#deep-dive-transformation-reference), provides detailed coverage of each operation with more examples and edge cases.
+
+After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores methods that have **no SQL equivalent** — like [`.with_column()`] for adding columns without re-selecting everything, [`.union_by_name()`] for schema-flexible unions, and [`.describe()`] for instant summary statistics.
+
+---
+
+<!--SQL Statements-->
+
+[`SELECT`]: ../../user-guide/sql/select.md
+[`WHERE`]: ../../user-guide/sql/select.md#where
+[`AND`]: ../../user-guide/sql/operators.md#logical-operators#and
+[`OR`]: ../../user-guide/sql/operators.md#logical-operators#or
+[`AS`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/ast/struct.ExprWithAlias.html
+[`GROUP BY`]: ../../user-guide/sql/select.md#group-by-clause
+[`JOIN`]: ../../user-guide/sql/select.md#join-clause
+[`ORDER BY`]: ../../user-guide/sql/select.md#order-by-clause
+[`LIMIT`]: ../../user-guide/sql/select.md#limit-clause
+[`OFFSET`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.OFFSET.html
+[`UNION`]: ../../user-guide/sql/select.md#union-clause
+[`DISTINCT`]: ../../user-guide/sql/select.md#select-clause
+[`DISTINCT ON`]: https://github.com/apache/datafusion/issues/7827
+[`TO_DATE`]: ../../user-guide/sql/scalar_functions.md#to_date
+
+<!-- Dataframe Statements -->
+
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.describe()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.describe
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Expr.html#method.is_not_null
+[`.like()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Expr.html#method.like
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.select_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
+[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
+[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_distinct
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
+[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
+[`.distinct_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct_on
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
+[`.window()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.window
+[`.unnest_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns
+[`.unnest_columns_with_options()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns_with_options
+[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.show_limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show_limit
+[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`.describe()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.describe
+[`upper()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.upper.html
+[`or()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.or
+[`.like()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.like
+
+<!--Datafusion Core types -->
+
+[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`LogicalPlan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`prelude`]: https://docs.rs/datafusion/latest/datafusion/prelude/index.html
+
+<!--  standalone functions-->
+
+[`lit()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.lit.html
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`lower()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.lower.html
+[`trim()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.trim.html
+[`to_date()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.to_date.html
+[`TO_DATE`]: ../../user-guide/sql/scalar_functions.md#to_date
+[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.coalesce.html
+[`COALESCE`]: ../../user-guide/sql/scalar_functions.md#coalesce
+[`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.nvl.html
+[`date_part()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_part.html
+[`DATE_PART`]: ../../user-guide/sql/scalar_functions.md#date_part
+[`EXTRACT`]: ../../user-guide/sql/scalar_functions.md#date_part
+[`when()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.when.html
+[`.otherwise()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.CaseBuilder.html#method.otherwise
+[`substring()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.substring.html
+[`replace()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.replace.html
+[`date_part()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/compute/fn.date_part.html
+
+<!-- External resources-->
+
+[datafusion paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
+[docs.rs]: https://docs.rs/datafusion/latest/datafusion/#architecture
+[pandas]: https://pandas.pydata.org/docs/user_guide/dsintro.html#dataframe
+[Apache Spark]: https://people.csail.mit.edu/matei/papers/2015/sigmod_spark_sql.pdf
+[dataframe algebra]: https://arxiv.org/pdf/2001.00888
+[postgres docs]: https://www.postgresql.org/docs/
+[spark docs]: https://spark.apache.org/docs/latest/
+[three-valued logic]: https://modern-sql.com/concept/three-valued-logic
 
 ## Deep Dive: Transformation Reference
 
@@ -1005,7 +1696,7 @@ let combined_distinct = sales_q1.union_by_name_distinct(sales_q2)?;
 // PostgreSQL-specific feature - see: https://www.postgresql.org/docs/current/sql-select.html#SQL-DISTINCT
 let df = dataframe!(
     "customer" => ["Alice", "Alice", "Bob", "Bob"],
-    "order_date" => ["2024-01-01", "2024-01-05", "2024-01-02", "2024-01-03"],
+    "order_date" => ["2026-01-01", "2026-01-05", "2026-01-02", "2026-01-03"],
     "amount" => [100, 200, 150, 175]
 )?;
 
