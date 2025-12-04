@@ -193,6 +193,8 @@ This guide walks through DataFrame transformations with a practical lens:
 
 ---
 
+<!-- TODO: Place in the Dataframe user guide -->
+
 ## Shared Transformations: A Data Cleaning Journey
 
 **These are the core operations that exist in both SQL and the DataFrame API — same logic, different syntax.**
@@ -655,9 +657,9 @@ order_id,
 customer,
 amount,
 COALESCE(status, 'unknown') AS status,
- date,
- parsed_date
- FROM step3
+date,
+parsed_date
+FROM step3
 ```
 
 Again, SQL requires listing every column. The DataFrame API's [`.with_column()`] combined with [`coalesce()`] is more concise:
@@ -689,7 +691,7 @@ step4.clone().show().await?;
 +----------+----------+--------+----------+------------+-------------+
 ```
 
-Order #6 had a null `status` — now filled with "unknown". This pattern is essential for real-world pipelines where nulls appear in optional columns.
+Order _#6_ had a null `status` — now filled with "unknown". This pattern is essential for real-world pipelines where nulls appear in optional columns.
 
 **When to filter vs fill:**
 
@@ -864,7 +866,11 @@ final_result.show().await?;
 +----------+----------+------------+--------------+------------+
 ```
 
-Now we see **meaningful aggregation**: Order #1 has 2 line items totaling $110 (100 + 10). The `order_id` primary key is preserved for joins — this table can link to products, payments, or shipping data.
+Now we see **meaningful aggregation**:
+
+- Order #1 has 2 line items totaling $110 (100 + 10).
+- The `order_id` primary key is preserved for joins
+- this table can link to products, payments, or shipping data.
 
 **What happened to the rejected data?**
 
@@ -883,7 +889,7 @@ The actual rejected DataFrame (from `rejected_step1.union(rejected_step3)?.show(
 | order_id | ... | rejection_reason              |
 +----------+-----+-------------------------------+
 | 3        | ... | negative_amount               |
-|          | ... | null_order_id, outlier_amount |
+| (NUll)   | ... | null_order_id, outlier_amount |
 | 5        | ... | invalid_date                  |
 +----------+-----+-------------------------------+
 ```
@@ -986,18 +992,1623 @@ Notice how **method chaining** creates a readable, linear pipeline — each step
 
 ### What We Covered: Shared Operations
 
-Every operation in this data cleaning journey has a direct SQL equivalent — `.filter()` is `WHERE`, `.aggregate()` is `GROUP BY`, `.sort()` is `ORDER BY`. **The logic is identical; only the syntax differs.** But the DataFrame API adds something SQL strings cannot: **composable, fail-safe patterns**. The type conversion step showed how to gracefully handle parse failures instead of crashing — a pattern that's awkward to express in SQL but natural in DataFrames.
+- Every operation in this data cleaning journey has a direct SQL equivalent — [`.filter()`] is [`WHERE`], [`.aggregate()`] is [`GROUP BY`], [`.sort()`] is [`ORDER BY`].<br>
+  **The logic is identical; only the syntax differs.** <br>
 
-Choose based on your context: SQL for ad-hoc queries and complex window functions, DataFrames for type-safe pipelines and dynamic composition. The next section, [Deep Dive: Transformation Reference](#deep-dive-transformation-reference), provides detailed coverage of each operation with more examples and edge cases.
+- But the DataFrame API adds something SQL strings cannot: <br>
+  **composable, fail-safe patterns**. <br>
+
+- The type conversion step showed how to gracefully handle parse failures instead of crashing — a pattern that's awkward to express in SQL but natural in DataFrames.
+
+- Choose based on your context: SQL for ad-hoc queries and complex window functions, DataFrames for type-safe pipelines and dynamic composition. The next section, [Deep Dive: Transformation Reference](#deep-dive-transformation-reference), provides detailed coverage of each operation with more examples and edge cases.
 
 After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores methods that have **no SQL equivalent** — like [`.with_column()`] for adding columns without re-selecting everything, [`.union_by_name()`] for schema-flexible unions, and [`.describe()`] for instant summary statistics.
 
 ---
 
+<!-- TODO moeve to the user guide Dataframes.md -->
+
+## Deep Dive: Transformation Reference
+
+**Every DataFrame transformation has a SQL equivalent—but the experience of writing them differs fundamentally.**
+
+This reference covers operations that exist in _both_ the DataFrame API and SQL. For each operation, you'll find:
+
+- **SQL equivalent** — The familiar SQL syntax as an anchor point
+- **DataFrame implementation** — How to express it using method chaining
+- **Trade-off analysis** — Where DataFrame shines vs where SQL shines
+- **Quick Debug tips** — Common pitfalls and how to diagnose them
+
+Use this section when you know _what_ operation you need but want to understand _how_ to express it idiomatically in DataFusion—and when to prefer one API over the other.
+
+_For operations unique to DataFrames (no SQL equivalent), see [DataFrame-Unique Methods](#dataframe-unique-methods)._
+
+**Jump to:**
+
+| Data Shaping                                                  | Filtering & Combining                               | Advanced                              |
+| ------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------- |
+| [Selection and Projection](#selection-and-projection-mastery) | [Filtering](#filtering-excellence)                  | [Window Functions](#window-functions) |
+| [Aggregation](#aggregation-patterns)                          | [Joins](#when-dataframes-collide-join-patterns)     | [Subqueries](#subqueries)             |
+| [Sorting and Limiting](#sorting-and-limiting)                 | [Set Operations](#set-operations-and-deduplication) | [Reshaping Data](#reshaping-data)     |
+
+### Selection and Projection Mastery
+
+**Projection controls the shape of your output—choosing which columns to keep, computing derived values, and reducing memory footprint by discarding what you don't need.**
+
+DataFusions DataFrame-API provides methods for every projection need: simple name-based selection via [`.select_columns()`], expression-based computation with [`.select()`], adding columns with [`.with_column()`], renaming via [`.with_column_renamed()`], and removal with [`.drop_columns()`]. Projection pushdown ensures only requested columns are read from the data source.
+
+[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
+
+**SQL equivalent:**
+
+```sql
+SELECT
+col_a,
+col_b AS col_b_renamed,
+col_a + col_b AS col_sum
+FROM table
+```
+
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Type-safe column references catch typos at compile time; programmatic column selection from schema; projection pushdown happens automatically
+> - **SQL shines:** Familiar [`SELECT`] syntax; more readable for simple projections; [`SELECT *`][`SELECT`] for quick exploration
+
+#### Basic Selection
+
+**Which method to use:**
+
+- **[`.select_columns()`]** — Pass column names as strings: `select_columns(&["a", "b"])`
+- **[`.select()`]** — Pass expressions for computation: `select(vec![col("a"), (col("b") * lit(2)).alias("b_doubled")])`
+
+Use `select_columns()` when you just need existing columns by name. Use [`.select()`] when you need to compute new values, rename with [`.alias()`], or apply functions.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::assert_batches_eq;
+
+// Creating the dataframe with the dataframe! macro
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let sample_df = dataframe!(
+        "product" => ["Laptop", "Mouse", "Keyboard"],
+        "price" => [1200, 25, 75],
+        "quantity" => [5, 50, 30],
+        "category" => ["Electronics", "Accessories", "Accessories"]
+    )?;
+
+    // select_columns(): simple name-based selection
+    let result = sample_df.select_columns(&["product", "price"])?.collect().await?;
+
+    assert_batches_eq!(
+        &[
+            "+----------+-------+",
+            "| product  | price |",
+            "+----------+-------+",
+            "| Laptop   | 1200  |",
+            "| Mouse    | 25    |",
+            "| Keyboard | 75    |",
+            "+----------+-------+",
+        ],
+        &result
+    );
+
+    Ok(())
+}
+```
+
+#### Intermediate: Expressions and Computed Columns
+
+[`.select()`] accepts any expression—arithmetic, conditionals, function calls—letting you compute new columns inline. Use [`.alias()`] to name computed results, [`.with_column()`] to add columns while keeping existing ones, and [`.with_column_renamed()`] to rename without recomputing.
+
+```rust
+// Using df from Basic Selection above
+
+// select() with computed columns — replaces schema, only keeps what you list
+let df = sample_df.select(vec![
+    col("product"),
+    (col("price") * col("quantity")).alias("revenue"),
+])?;
+assert_batches_eq!(&[
+    "+----------+---------+",
+    "| product  | revenue |",
+    "+----------+---------+",
+    "| Laptop   | 6000    |",
+    "| Mouse    | 1250    |",
+    "| Keyboard | 2250    |",
+    "+----------+---------+",
+], &df.clone().collect().await?);
+
+// with_column() adds column while keeping all existing
+let df = sample_df.with_column("tag", lit("2026"))?;
+assert_batches_eq!(&[
+    "+----------+---------+------+",
+    "| product  | revenue | tag  |",
+    "+----------+---------+------+",
+    "| Laptop   | 6000    | 2026 |",
+    "| Mouse    | 1250    | 2026 |",
+    "| Keyboard | 2250    | 2026 |",
+    "+----------+---------+------+",
+], &df.clone().collect().await?);
+
+// with_column_renamed() renames without recomputing
+let df = sample_df.with_column_renamed("revenue", "total")?;
+assert_batches_eq!(&[
+    "+----------+-------+------+",
+    "| product  | total | tag  |",
+    "+----------+-------+------+",
+    "| Laptop   | 6000  | 2026 |",
+    "| Mouse    | 1250  | 2026 |",
+    "| Keyboard | 2250  | 2026 |",
+    "+----------+-------+------+",
+], &df.clone().collect().await?);
+
+// drop_columns() removes specific columns
+let df = sample_df.drop_columns(&["tag"])?;
+assert_batches_eq!(&[
+    "+----------+-------+",
+    "| product  | total |",
+    "+----------+-------+",
+    "| Laptop   | 6000  |",
+    "| Mouse    | 1250  |",
+    "| Keyboard | 2250  |",
+    "+----------+-------+",
+], &df.collect().await?);
+```
+
+> _Quick Debug_: **Columns missing after [`.select()`]?** <br>
+> Unlike [`.with_column()`], [`.select()`] only keeps columns you explicitly list.
+
+> **Ugly column names?** Without [`.alias()`], column names are the expression's string representation: `col("a") * col("b")` becomes `"a * b"`, `col("x").gt(lit(5))` becomes `"x > Int32(5)"` see [**g**rater **t**hen => `.gt()`][`.gt()`]. Always alias computed columns for readable output.
+
+#### Advanced: Dynamic Column Selection
+
+When column names aren't known until runtime—or you want to select by type—use [`.schema()`] to inspect the DataFrame's structure, then build expressions programmatically. This is where DataFrames shine over SQL: Rust's type system and iterators let you construct queries that would require dynamic SQL generation otherwise.
+
+```rust
+// Using sample_df: [product (Utf8), price (Int32), quantity (Int32), category (Utf8)]
+
+// Get schema and filter to numeric columns only
+let numeric_cols: Vec<_> = sample_df
+    .schema()
+    .fields()
+    .iter()
+    .filter(|f| f.data_type().is_numeric())
+    .map(|f| col(f.name()))
+    .collect();
+
+let result = sample_df.clone().select(numeric_cols)?.collect().await?;
+assert_batches_eq!(&[
+    "+-------+----------+",
+    "| price | quantity |",
+    "+-------+----------+",
+    "| 1200  | 5        |",
+    "| 25    | 50       |",
+    "| 75    | 30       |",
+    "+-------+----------+",
+], &result);
+```
+
+#### Anti-Pattern: Over-Selection
+
+Selecting all columns with [`col("*")`][`col()`] defeats **projection pushdown**—an optimization where DataFusion tells the data source to only read requested columns. With Parquet files, this can mean reading 2 columns instead of 200, dramatically reducing I/O. Common SQL-Rule of not using [`SELECT *  FROM big_table`][`SELECT`]
+
+```rust
+// Using sample_df: [product, price, quantity, category]
+
+// ❌ DON'T: Select all columns then filter
+let bad = sample_df.clone()
+    .select(vec![col("*")])?      // Reads ALL columns from source
+    .filter(col("price").gt(lit(100)))?;
+
+// ✅ DO: Select only what you need
+let good = sample_df.clone()
+    .select(vec![col("product"), col("price")])?  // Projection pushdown!
+    .filter(col("price").gt(lit(100)))?;
+
+// Both return same logical result, but 'good' reads less data
+let result = good.collect().await?;
+assert_batches_eq!(&[
+    "+----------+-------+",
+    "| product  | price |",
+    "+----------+-------+",
+    "| Laptop   | 1200  |",
+    "+----------+-------+",
+], &result);
+```
+
+_Quick Debug_: **Column not found error?** DataFusion is case-sensitive. Use [`sample_df.schema().field_names()`][`.schema()`] to list available columns.
+
+#### Escape Hatch: SQL Syntax in Rust
+
+Sometimes SQL syntax is just cleaner—especially for complex [`CASE`] expressions or nested functions. [`.select_exprs()`] parses SQL strings into expressions, giving you SQL's brevity with DataFrame's composability.
+
+```rust
+// Using sample_df: [product, price, quantity, category]
+
+// SQL syntax inside Rust — parsed at runtime
+let result = sample_df.clone()
+    .select_exprs(&[
+        "product",
+        "price * 1.1 AS taxed_price",
+        "CASE WHEN price > 100 THEN 'Premium' ELSE 'Standard' END AS tier"
+    ])?
+    .collect().await?;
+
+assert_batches_eq!(&[
+    "+----------+-------------+----------+",
+    "| product  | taxed_price | tier     |",
+    "+----------+-------------+----------+",
+    "| Laptop   | 1320.0      | Premium  |",
+    "| Mouse    | 27.5        | Standard |",
+    "| Keyboard | 82.5        | Standard |",
+    "+----------+-------------+----------+",
+], &result);
+```
+
+> **Warning:** This loses compile-time safety. A typo like `"prodict"` compiles fine but fails at runtime. Use when SQL is genuinely clearer, not as a shortcut to avoid learning the expression API.
+
+> **Going deeper:** See [`expr_api`] for complex expression patterns combining both approaches.
+
+---
+
+**Best Practice: Pick a Lane (or Document the Bridge)**
+
+Mixing method chains with embedded SQL strings violates the [Single Level of Abstraction Principle][SLAP]—readers must context-switch constantly between abstraction levels. Choose _one_ approach:
+
+| Approach                                                | Best For                               | Trade-off                            |
+| :------------------------------------------------------ | :------------------------------------- | :----------------------------------- |
+| **Full DataFrame**                                      | App logic, refactoring, IDE support    | Type-safe, but more verbose          |
+| **Full SQL** via [`ctx.sql()`][`SessionContext::sql()`] | Ad-hoc queries, portability            | Familiar, but no compile-time checks |
+| **Documented Constants**                                | Complex expressions reused across code | Traceable, but requires discipline   |
+
+If you choose the third approach, extract SQL strings into named constants with doc comments:
+
+```rust
+/// Pricing tier based on unit price.
+/// Business rule: ACME-1234
+const TIER_EXPR: &str = "\
+    CASE WHEN price > 100 \
+         THEN 'Premium' \
+         ELSE 'Standard' \
+    END AS tier";
+
+let df = sample_df.select_exprs(&["product", "price", TIER_EXPR])?;
+```
+
+This makes SQL expressions discoverable, testable, and traceable—rather than buried inline where they drift and multiply.
+
+### Filtering Excellence
+
+**Filtering controls which rows survive—applying predicates to discard irrelevant data early, before expensive joins or aggregations consume resources.**
+
+Where [projection](#selection-and-projection-mastery) shapes columns, filtering shapes rows. The [`.filter()`] method accepts any boolean expression built from these building blocks:
+
+| Predicate Type   | Methods                           | Example                                   |
+| :--------------- | :-------------------------------- | :---------------------------------------- |
+| Comparisons      | [`.gt()`], [`.lt()`], [`.eq()`]   | `col("price").gt(lit(100))`               |
+| Logical          | [`.and()`], [`.or()`], [`.not()`] | `condition_a.and(condition_b)`            |
+| Set membership   | [`in_list()`]                     | `col("status").in_list(vec![...], false)` |
+| Pattern matching | [`.like()`], [`.ilike()`]         | `col("name").like(lit("A%"))`             |
+| Range            | [`.between()`]                    | `col("age").between(lit(18), lit(65))`    |
+
+Predicate pushdown ensures filters reach the data source, letting formats like Parquet skip entire row groups.
+
+**SQL equivalent:** [`WHERE condition`][`WHERE`]
+
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Composable predicates built programmatically, Rust control flow for conditional logic, compile-time column checking, dynamic filters from runtime values
+> - **SQL shines:** Familiar `WHERE` syntax, more readable for simple static conditions, clearer `AND`/`OR` precedence
+
+#### Basic Filtering
+
+**Start simple:** most filters are single-column comparisons. <br>
+Build the predicate with [`col()`] for the column, a comparison method like [`.gt()`], and [`lit()`] for the literal value. The pattern reads naturally: `col("price").gt(lit(100))` means "price greater than 100".
+
+```rust
+// Using sample_df: [product, price, quantity, category]
+
+// Filter: keep only rows where price > 100
+let result = sample_df.clone()
+    .filter(col("price").gt(lit(100)))?
+    .collect().await?;
+
+// Only Laptop (1200) survives — Mouse (25) and Keyboard (75) are filtered out
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Laptop   | 1200  | 5        | Electronics |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+```
+
+#### Intermediate: Complex Predicates
+
+**Real-world filters combine multiple conditions.** <br>
+Chain predicates with [`.and()`] and [`.or()`], check set membership with [`in_list()`], match patterns with [`.like()`] (case-sensitive) or [`.ilike()`] (case-insensitive), and validate ranges with [`.between()`].
+
+```rust
+// Using sample_df: [product, price, quantity, category]
+
+// AND/OR: (price > 50 AND quantity < 40) OR product = "Laptop"
+let result = sample_df.clone()
+    .filter(
+        col("price").gt(lit(50))
+            .and(col("quantity").lt(lit(40)))
+            .or(col("product").eq(lit("Laptop")))
+    )?
+    .collect().await?;
+
+// Keyboard matches (price=75 > 50, quantity=30 < 40)
+// Laptop matches via OR clause
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Laptop   | 1200  | 5        | Electronics |",
+        "| Keyboard | 75    | 30       | Accessories |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+```
+
+**More examples for predicate patterns:**
+
+```rust
+// Using sample_df: [product, price, quantity, category]
+
+// IN list: product IN ("Laptop", "Mouse")
+let result = sample_df.clone()
+    .filter(in_list(col("product"), vec![lit("Laptop"), lit("Mouse")], false))?
+    .collect().await?;
+
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Laptop   | 1200  | 5        | Electronics |",
+        "| Mouse    | 25    | 50       | Accessories |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+
+// Pattern matching: product LIKE '%board%' (contains "board")
+let result = sample_df.clone()
+    .filter(col("product").like(lit("%board%")))?
+    .collect().await?;
+
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Keyboard | 75    | 30       | Accessories |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+
+// Case-insensitive matching: ILIKE or lower()
+// Method 1: .ilike() — SQL's ILIKE equivalent
+let result = sample_df.clone()
+    .filter(col("product").ilike(lit("%BOARD%")))?  // Matches "Keyboard"
+    .collect().await?;
+assert_eq!(result[0].num_rows(), 1);
+
+// Method 2: Normalize both sides with lower()
+let result = sample_df.clone()
+    .filter(lower(col("product")).eq(lit("keyboard")))?
+    .collect().await?;
+assert_eq!(result[0].num_rows(), 1);
+
+// Range: price BETWEEN 50 AND 500
+let result = sample_df.clone()
+    .filter(col("price").between(lit(50), lit(500)))?
+    .collect().await?;
+
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Keyboard | 75    | 30       | Accessories |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+
+// Null safety: price IS NOT NULL (all rows pass — no nulls in sample_df)
+let result = sample_df.clone()
+    .filter(col("price").is_not_null())?
+    .collect().await?;
+
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Laptop   | 1200  | 5        | Electronics |",
+        "| Mouse    | 25    | 50       | Accessories |",
+        "| Keyboard | 75    | 30       | Accessories |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+```
+
+> **Operator precedence:** [`.and()`] binds tighter than [`.or()`], just like SQL. Use parentheses (method chaining order) to make intent explicit: `a.and(b).or(c)` means `(a AND b) OR c`.
+
+#### Advanced: Dynamic Filter Building
+
+**This is where DataFrames truly outshine SQL.** When filter criteria come from user input, configuration, or runtime logic, building queries dynamically showcases two critical safety advantages:
+
+1. **Rust's type system catches errors at compile time.** <br> _Misspell a column name?_ <br>
+   The compiler tells you. Pass a string where a number is expected? Caught before your code ever runs. With dynamic SQL, these errors surface at runtime—often in production.
+
+2. **SQL injection becomes impossible by design.** <br> Values flow through [`lit()`] as typed data, not string fragments. There's no way for user input like [`"; DROP TABLE users;--"`](https://xkcd.com/327/) to escape into query structure. You don't need to remember to sanitize—the API makes unsafe patterns unrepresentable.
+
+```rust
+// Using sample_df: [product, price, quantity, category]
+
+/// Builds a filter expression from optional criteria.
+/// Returns `lit(true)` if no criteria provided (matches all rows).
+fn build_filter(min_price: Option<i32>, max_quantity: Option<i32>) -> Expr {
+    let mut conditions: Vec<Expr> = Vec::new();
+
+    if let Some(price) = min_price {
+        conditions.push(col("price").gt_eq(lit(price)));
+    }
+
+    if let Some(qty) = max_quantity {
+        conditions.push(col("quantity").lt_eq(lit(qty)));
+    }
+
+    // Fold conditions with AND; default to lit(true) if empty
+    conditions
+        .into_iter()
+        .reduce(|acc, cond| acc.and(cond))
+        .unwrap_or_else(|| lit(true))
+}
+
+// Example: min_price=50, no max_quantity constraint
+let filter_expr = build_filter(Some(50), None);
+let result = sample_df.clone().filter(filter_expr)?.collect().await?;
+
+// Only Laptop (1200) and Keyboard (75) have price >= 50
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Laptop   | 1200  | 5        | Electronics |",
+        "| Keyboard | 75    | 30       | Accessories |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+
+// Example: both constraints — price >= 50 AND quantity <= 10
+let filter_expr = build_filter(Some(50), Some(10));
+let result = sample_df.clone().filter(filter_expr)?.collect().await?;
+
+// Only Laptop matches (price=1200 >= 50, quantity=5 <= 10)
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Laptop   | 1200  | 5        | Electronics |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+```
+
+> **Why [`unwrap_or_else`] instead of [`unwrap()`]?** <br>
+> Calling [`unwrap()`] on `None` panics—crashing your program. Here, [`reduce()`] returns `None` when the conditions vector is empty (no filters provided). Instead of panicking, [`unwrap_or_else`] lets us provide a fallback: [`lit(true)`][`lit()`] matches all rows. This is a common Rust pattern for gracefully handling "no input" cases.
+
+#### Anti-Pattern: Multiple Sequential Filters
+
+**Each [`.filter()`] call creates a separate node in the logical plan.** While DataFusion's optimizer _can_ merge adjacent filters, combining them yourself is clearer, guarantees a single predicate evaluation, and makes your intent explicit.
+
+```rust
+// Using sample_df: [product, price, quantity, category]
+
+// ❌ DON'T: Chain multiple filter calls
+let fragmented = sample_df.clone()
+    .filter(col("price").gt(lit(50)))?
+    .filter(col("quantity").lt(lit(100)))?
+    .filter(col("product").is_not_null())?;
+
+// ✅ DO: Combine into single filter
+let combined = sample_df.clone()
+    .filter(
+        col("price").gt(lit(50))
+            .and(col("quantity").lt(lit(100)))
+            .and(col("product").is_not_null())
+    )?;
+
+// Both return the same result — Keyboard (price=75, quantity=30)
+let result = combined.collect().await?;
+assert_batches_eq!(
+    &[
+        "+----------+-------+----------+-------------+",
+        "| product  | price | quantity | category    |",
+        "+----------+-------+----------+-------------+",
+        "| Keyboard | 75    | 30       | Accessories |",
+        "+----------+-------+----------+-------------+",
+    ],
+    &result
+);
+```
+
+> **Why it matters:** The fragmented version creates 3 filter nodes; the combined version creates 1. In complex queries, this compounds—affecting plan readability and optimization opportunities.
+
+#### Filter Troubleshooting
+
+| Symptom          | Cause                                                                  | Fix                                                 |
+| :--------------- | :--------------------------------------------------------------------- | :-------------------------------------------------- |
+| No rows returned | [three-valued logic]: `NULL > 5` → `NULL` (filtered out)               | Use [`.is_not_null()`] or [`coalesce()`]            |
+| Nulls vanishing  | `col("x").eq(lit(false))` removes `NULL` too (`NULL = false` → `NULL`) | Add `.or(col("x").is_null())`                       |
+| Slow filter      | Predicate not pushed to data source                                    | Check [`.explain()`]—filter should be _inside_ scan |
+
+---
+
+---
+
+### Aggregation Patterns
+
+**Aggregation collapses rows into summary statistics—transforming thousands of individual records into meaningful totals, averages, and counts that reveal patterns in your data.**
+
+Aggregate functions like [`sum()`], [`avg()`], [`count()`], [`min()`], and [`max()`] reduce multiple values to a single result. The [`.aggregate()`] method takes two arguments:
+
+1. **Grouping columns** — partition rows into groups (like SQL's `GROUP BY`)
+2. **Aggregate expressions** — compute summaries per group
+
+Without grouping columns (empty `vec![]`), aggregations summarize the entire DataFrame.
+
+**SQL equivalent:** `SELECT dept, SUM(salary) FROM employees GROUP BY dept`
+
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Programmatic grouping keys, conditional aggregations via [`when()`], multiple aggregations in one call
+> - **SQL shines:** Declarative [`GROUP BY`] syntax, [`HAVING`] clause more intuitive than chained [`.filter()`]
+
+#### Basic Aggregation
+
+Group rows by one or more columns, then compute summary statistics for each group. Import aggregate functions from `datafusion::functions_aggregate::expr_fn` and use [`.alias()`] to name the output columns.
+
+This example establishes `employees_df`—used throughout this section.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::functions_aggregate::expr_fn::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Sample data: employees_df [department, employee, salary]
+    let employees_df = dataframe!(
+        "department" => ["Sales", "Sales", "Engineering", "Engineering"],
+        "employee" => ["Alice", "Bob", "Carol", "Dave"],
+        "salary" => [50000, 55000, 80000, 85000]
+    )?;
+
+    // Group by department, compute multiple aggregations
+    let result = employees_df.clone().aggregate(
+        vec![col("department")],
+        vec![
+            sum(col("salary")).alias("total_salary"),
+            avg(col("salary")).alias("avg_salary"),
+            count(col("employee")).alias("employee_count")
+        ]
+    )?;
+
+    result.show().await?;
+    // +-------------+--------------+------------+----------------+
+    // | department  | total_salary | avg_salary | employee_count |
+    // +-------------+--------------+------------+----------------+
+    // | Engineering | 165000       | 82500.0    | 2              |
+    // | Sales       | 105000       | 52500.0    | 2              |
+    // +-------------+--------------+------------+----------------+
+
+    Ok(())
+}
+```
+
+> **Limitation:** The _result_ of [`.aggregate()`] contains only grouping columns and aggregated expressions—the `employee` column is gone. If you need it, include it in the group-by or aggregate it (e.g., `array_agg(col("employee"))`). The original DataFrame is immutable; `employees_df` still has all columns.
+
+#### Intermediate: Multi-Level Grouping and HAVING-Style Filtering
+
+To replicate SQL's [`HAVING`] clause, chain [`.filter()`] _after_ [`.aggregate()`]—the filter sees the aggregated column names.
+
+```rust
+// Using employees_df: [department, employee, salary]
+
+// HAVING equivalent: filter on aggregated values
+let high_budget_depts = employees_df.clone()
+    .aggregate(
+        vec![col("department")],
+        vec![sum(col("salary")).alias("total_salary")]
+    )?
+    .filter(col("total_salary").gt(lit(100000)))?;  // HAVING total_salary > 100000
+
+high_budget_depts.show().await?;
+// +-------------+--------------+
+// | department  | total_salary |
+// +-------------+--------------+
+// | Engineering | 165000       |
+// +-------------+--------------+
+// Sales (105000) filtered out — doesn't meet HAVING condition
+```
+
+> **Key insight:** In SQL, [`HAVING`] filters _after_ grouping while [`WHERE`] filters _before_ ([SQL clause order]). In DataFrames, method order achieves the same: `.filter().aggregate()` = WHERE, `.aggregate().filter()` = HAVING.
+
+#### Advanced: All Aggregate Functions
+
+DataFusion provides a comprehensive set of aggregate functions beyond the basics. Import them from [`datafusion::functions_aggregate::expr_fn`][expr_fn] and combine multiple aggregations in a single [`.aggregate()`] call for efficiency.
+
+| Category    | Functions                                                                          |
+| :---------- | :--------------------------------------------------------------------------------- |
+| Basic       | [`count()`], [`sum()`], [`avg()`], [`min()`], [`max()`]                            |
+| Statistical | [`stddev()`], [`var_sample()`], [`var_pop()`], [`median()`], [`approx_median()`]\* |
+| Distinct    | [`count_distinct()`], [`approx_distinct()`]\*                                      |
+| Conditional | `sum(when(...).otherwise(...))` — aggregate only matching rows                     |
+| Collection  | [`array_agg()`], [`string_agg()`]                                                  |
+
+_\*Approximate functions_ use probabilistic algorithms (e.g., [HyperLogLog] for [`approx_distinct()`]) that trade exactness for speed and memory. Use them on large datasets where exact results would be too expensive—typical error is <2%.
+
+The following example demonstrates several aggregate functions in a single call:
+
+```rust
+// Using employees_df: [department, employee, salary]
+use datafusion::functions_aggregate::expr_fn::*;
+
+let stats = employees_df.clone().aggregate(
+    vec![col("department")],
+    vec![
+        count(col("employee")).alias("count"),
+        sum(col("salary")).alias("sum"),
+        avg(col("salary")).alias("avg"),
+        min(col("salary")).alias("min"),
+        max(col("salary")).alias("max"),
+        stddev(col("salary")).alias("stddev"),
+        // Conditional: count employees earning > 70k
+        sum(when(col("salary").gt(lit(70000)), lit(1))
+            .otherwise(lit(0))?).alias("high_earners")
+    ]
+)?;
+
+stats.show().await?;
+// +-------------+-------+--------+---------+-------+-------+---------+--------------+
+// | department  | count | sum    | avg     | min   | max   | stddev  | high_earners |
+// +-------------+-------+--------+---------+-------+-------+---------+--------------+
+// | Engineering | 2     | 165000 | 82500.0 | 80000 | 85000 | 3535.53 | 2            |
+// | Sales       | 2     | 105000 | 52500.0 | 50000 | 55000 | 3535.53 | 0            |
+// +-------------+-------+--------+---------+-------+-------+---------+--------------+
+```
+
+> **Tip:** See the full list of aggregate functions in the [Aggregate Functions Reference](../../user-guide/sql/aggregate_functions.md).
+
+#### Advanced: Aggregation Without Grouping
+
+Pass an empty `vec![]` as the grouping columns to aggregate the entire DataFrame into a single row—equivalent to SQL without a `GROUP BY` clause.
+
+```rust
+// Using employees_df: [department, employee, salary]
+
+// Aggregate entire DataFrame (no GROUP BY) — summarize all rows
+let company_totals = employees_df.clone().aggregate(
+    vec![],  // Empty group by = entire DataFrame
+    vec![
+        sum(col("salary")).alias("company_total"),
+        avg(col("salary")).alias("company_avg")
+    ]
+)?;
+
+company_totals.show().await?;
+// +---------------+-------------+
+// | company_total | company_avg |
+// +---------------+-------------+
+// | 270000        | 67500.0     |
+// +---------------+-------------+
+```
+
+#### Aggregation Troubleshooting
+
+| Symptom          | Cause                                        | Fix                                                                           |
+| :--------------- | :------------------------------------------- | :---------------------------------------------------------------------------- |
+| Wrong results    | Unexpected grouping keys                     | Verify with `df.select(vec![col("key")]).distinct()?.show().await?`           |
+| Column not found | Non-aggregated columns disappear             | Include in group-by or aggregate (e.g., [`array_agg()`])                      |
+| Nulls skipped    | Aggregate functions ignore `NULL` by default | Use [`count(*)`][`count()`] for row count, or [`coalesce()`] to replace nulls |
+
+#### Further Reading
+
+**DataFusion Resources:**
+
+- [Aggregate Functions Reference (SQL)](../../user-guide/sql/aggregate_functions.md) — Complete list of built-in aggregate functions with SQL examples
+- [`datafusion-functions-aggregate` crate](https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/) — Rust API docs for all aggregate function implementations
+
+**Concepts & Theory:**
+
+- [SQL GROUP BY (PostgreSQL docs)](https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-GROUP) — Canonical reference for grouping semantics
+- [HyperLogLog Algorithm](https://en.wikipedia.org/wiki/HyperLogLog) — How `approx_distinct()` achieves O(1) memory
+
+---
+
+---
+
+### When DataFrames Collide: Join Patterns
+
+**Joins are the backbone of relational data processing—the operation that links separate tables into unified, queryable datasets by matching rows on shared keys.**
+
+A join takes two DataFrames (or SQL tables) and produces a new one by comparing values in designated **key columns**—when values match (e.g., `customer.id = 1` on the left finds `order.customer_id = 1` on the right), the corresponding rows are stitched together. The result is a wider table combining columns from both sides, where related data now sits in the same row. Think of it as a lookup: for each row on the left, scan the right table for rows with matching key values, then concatenate them.
+
+Whether you're enriching customer records with their orders, filtering products by inventory status, or reconciling data across systems, joins are the workhorse behind nearly every real-world data pipeline.
+
+Master joins, and you unlock the full power of relational data processing.
+
+#### Why Joins Matter
+
+Real-world data rarely lives in a single table. Customers are in one file, orders in another, products in a third. Joins let you:
+
+- **Enrich** records by attaching related data (customer name → their orders)
+- **Filter** by relationships (only customers _with_ orders, or _without_)
+- **Reconcile** datasets (find what's in A but not B, or in both)
+- **Validate** data quality—anti-joins reveal orphaned records (orders referencing non-existent customers), broken foreign keys, or rows dropped during ETL
+
+Without joins, you'd be stuck writing nested loops or manual lookups. DataFusion's join engine handles the matching efficiently—you describe _what_ to combine, not _how_.
+
+#### How Joins Work
+
+Every join has three ingredients:
+
+1. **Two tables** — left (your starting DataFrame) and right (the one you're joining)
+2. **Join keys** — which columns to match (`customers.id = orders.customer_id`)
+3. **Join type** — what to do with matches and non-matches
+
+A very basic example is shown as the following as common in SQL :
+
+```sql
+-- SQL equivalent
+SELECT *
+FROM customers           -- left table
+JOIN orders              -- right table
+  ON customers.id = orders.customer_id   -- join keys
+```
+
+#### DataFrame API vs SQL
+
+Both SQL and the DataFrame API support the standard join families:
+
+| Family      | SQL syntax                       | DataFrame [`JoinType`]  | Purpose                                     |
+| ----------- | -------------------------------- | ----------------------- | ------------------------------------------- |
+| **Inner**   | `INNER JOIN`                     | `Inner`                 | Only matching rows                          |
+| **Outer**   | `LEFT / RIGHT / FULL OUTER JOIN` | `Left`, `Right`, `Full` | Keep non-matches from one or both sides     |
+| **Semi**    | `LEFT / RIGHT SEMI JOIN`         | `LeftSemi`, `RightSemi` | Filter by existence (no columns from right) |
+| **Anti**    | `LEFT / RIGHT ANTI JOIN`         | `LeftAnti`, `RightAnti` | Filter by non-existence                     |
+| **Cross**   | `CROSS JOIN`                     | _(none)_                | Cartesian product (use empty keys)          |
+| **Natural** | `NATURAL JOIN`                   | _(none)_                | Auto-match same-named columns               |
+| **Mark**    | _(internal)_                     | `LeftMark`, `RightMark` | Adds boolean column for `EXISTS` subqueries |
+
+> **SQL-only joins:** `NATURAL JOIN` and `CROSS JOIN` have no direct `JoinType` variant.
+> Use `ctx.sql()` for natural joins; for cross joins, call `.join()` with empty key lists (see Anti-Pattern section).
+
+The [`.join()`] method signature:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::common::JoinType;
+
+df.join(
+    right_df,                    // 1. Right DataFrame
+    JoinType::Inner,             // 2. Join type
+    &["id"],                     // 3. Left key columns
+    &["customer_id"],            // 4. Right key columns
+    None,                        // 5. Optional filter expression
+)?
+```
+
+**Two ways to specify joins:**
+
+- [`.join()`] — Pass column names (`&[&str]`) for each side plus an optional `filter: Option<Expr>`. DataFusion builds equality predicates from the columns.
+- [`.join_on()`] — Pass the full join condition as `Expr`s. Internally this wraps [`.join()`] with empty key lists and a combined filter expression (`expr_1 AND expr_2 ...`). Optimizer passes then extract equality predicates and treat them as equi-join keys.
+
+After optimization there should be **no meaningful performance difference**; pick whichever reads better for your use case. Note: `on_exprs` are combined with logical AND; if you need `OR`, build a single boolean expression manually:
+
+```rust
+// OR condition: pass as single expression
+let df = left.join_on(right, JoinType::Inner,
+    [col("a").eq(col("a2")).or(col("b").eq(col("b2")))]  // single OR expr
+)?;
+```
+
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Chain multiple joins fluently, [`.join_on()`] for complex conditions, Semi/Anti joins as first-class operations
+> - **SQL shines:** Visual clarity for multi-table joins, familiar `ON` clause syntax
+
+#### How Joins Execute
+
+Under the hood, DataFusion selects from [several join algorithms] based on your data:
+
+| Algorithm                  | When Used                                                                                      |
+| :------------------------- | :--------------------------------------------------------------------------------------------- |
+| [**Hash Join**]            | Default for equi-joins (`=`). Builds a hash table on the smaller side, probes with the larger. |
+| [**Sort-Merge Join**]      | Pre-sorted inputs; can spill to disk for huge datasets.                                        |
+| [**Symmetric Hash Join**]  | Streaming/unbounded data—both sides build hash tables, rows pruned via sliding windows.        |
+| [**Nested Loop Join**]     | General non-equi conditions where hash-based algorithms don't apply.                           |
+| [**Piecewise Merge Join**] | Single range filter (`<`, `>`, `<=`, `>=`)—much faster than nested loop for these cases.       |
+| [**Cross Join**]           | Cartesian product—used for SQL `CROSS JOIN` and `.join()` with empty key lists.                |
+
+The optimizer _can_ (based on configuration and statistics):
+
+- **Swap sides** to put the smaller table on the build side
+- **Choose partition mode**—broadcast small tables or hash-partition both sides
+- **Push dynamic filters**—min/max bounds from the build side skip irrelevant probe data (e.g., Parquet row groups)
+
+These behaviors are tunable via `datafusion.optimizer.*` settings.
+
+All join algorithms leverage [Arrow]'s columnar format: instead of copying rows, DataFusion computes index arrays and uses vectorized [`take()`] operations to assemble results efficiently.
+
+#### Join Types at a Glance
+
+Joins control how rows from two tables are matched and combined. The key decisions are:
+
+1.  what happens to rows that _don't_ match
+2.  which columns appear in the result.
+
+Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and Anti joins answer existence questions without adding columns from the right table.
+
+| Join Type          | Returns                   | Use Case                                    |
+| :----------------- | :------------------------ | :------------------------------------------ |
+| [`Inner`]          | Matches from both sides   | Standard join—only matching rows            |
+| [`Left`]           | All left + matching right | Keep all left rows (NULL if no match)       |
+| [`Right`]          | All right + matching left | Keep all right rows (NULL if no match)      |
+| [`Full`]           | Everything from both      | See all data, matched or not                |
+| [`LeftSemi`]       | Left rows WITH matches    | "Which left rows have a match?"             |
+| [`LeftAnti`]       | Left rows WITHOUT matches | "Which left rows have NO match?"            |
+| _Cross_ (SQL only) | Cartesian product         | All combinations (see Anti-Pattern section) |
+
+> **Note:** The DataFrame API has no `JoinType::Cross`. Cartesian products are represented as `Inner` joins with empty key lists or as `CROSS JOIN` in SQL.
+
+> **Learn more:** You may want to check out this source [Join tutorial] or [Semi and Anti joins explained].
+
+#### Basic: Inner Join
+
+This example establishes `customers_df` and `orders_df`—used throughout this section. Note: Carol has no orders, and order 104 has no matching customer (orphan).
+
+```rust
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Sample data: customers_df [id, name] — Carol has no orders
+    let customers_df = dataframe!(
+        "id" => [1, 2, 3],
+        "name" => ["Alice", "Bob", "Carol"]
+    )?;
+
+    // Sample data: orders_df [order_id, customer_id, amount] — order 104 is orphaned
+    let orders_df = dataframe!(
+        "order_id" => [101, 102, 103, 104],
+        "customer_id" => [1, 1, 2, 99],
+        "amount" => [100, 200, 150, 300]
+    )?;
+
+    // Inner join: only matching rows (Carol excluded, order 104 excluded)
+    let result = customers_df.clone().join(
+        orders_df.clone(),
+        JoinType::Inner,
+        &["id"],
+        &["customer_id"],
+        None
+    )?;
+
+    result.show().await?;
+    // +----+-------+----------+-------------+--------+
+    // | id | name  | order_id | customer_id | amount |
+    // +----+-------+----------+-------------+--------+
+    // | 1  | Alice | 101      | 1           | 100    |
+    // | 1  | Alice | 102      | 1           | 200    |
+    // | 2  | Bob   | 103      | 2           | 150    |
+    // +----+-------+----------+-------------+--------+
+
+    Ok(())
+}
+```
+
+> **Joins as Efficient Filters**
+>
+> Beyond combining data, joins are powerful filtering tools—**Inner Join is arguably the most common filter pattern**:
+>
+> ```rust
+> // Pattern: Pre-filter with intermediate DataFrames, then Inner Join as secondary filter
+> let active_customers = customers_df.filter(col("status").eq(lit("active")))?;  // First filter
+> let result = active_customers.join(
+>     orders_df,
+>     JoinType::Inner,
+>     &["id"],
+>     &["customer_id"],
+>     None
+> )?;  // Second filter: must have orders
+> ```
+>
+> - **Inner Join** = "keep only rows that exist in BOTH tables" — a natural composition of filters
+> - **Left Join + `IS NULL`** = find unmatched rows (orphan detection)
+> - **Semi/Anti Joins** (next section) = filter without adding columns—often faster than `IN` subqueries
+>
+> The query optimizer pushes predicates into scans, making join-based filtering highly efficient.
+
+#### Intermediate: Multi-Key Joins
+
+Join on multiple columns when a single key isn't enough to uniquely identify matches—common with composite keys or when adding temporal constraints.
+
+```rust
+// Regional sales: same product_id can exist in different regions
+let inventory_df = dataframe!(
+    "product_id" => [1, 1, 2, 2],
+    "region" => ["East", "West", "East", "West"],
+    "stock" => [100, 50, 200, 75]
+)?;
+
+let sales_df = dataframe!(
+    "product_id" => [1, 1, 2],
+    "region" => ["East", "West", "East"],
+    "sold" => [30, 20, 80]
+)?;
+
+// Multi-key join: match on BOTH product_id AND region
+let result = inventory_df.join(
+    sales_df,
+    JoinType::Left,  // Keep all inventory, even unsold
+    &["product_id", "region"],  // Multiple left keys
+    &["product_id", "region"],  // Multiple right keys
+    None
+)?;
+
+result.show().await?;
+// +------------+--------+-------+------------+--------+------+
+// | product_id | region | stock | product_id | region | sold |
+// +------------+--------+-------+------------+--------+------+
+// | 1          | East   | 100   | 1          | East   | 30   |
+// | 1          | West   | 50    | 1          | West   | 20   |
+// | 2          | East   | 200   | 2          | East   | 80   |
+// | 2          | West   | 75    |            |        |      |
+// +------------+--------+-------+------------+--------+------+
+
+//  product_id 2, region West has no sales!
+```
+
+> **Pro tip for time-dependent data:** Multi-key joins on temporal columns work well when truncated to appropriate granularity using [`date_trunc()`]. Joining on `DATE` (day) has minimal edge cases (~0.004% at midnight); joining on raw `TIMESTAMP` (milliseconds) risks silent mismatches.
+
+Notice the output above: `product_id` and `region` appear **twice** (once from each table). Unlike Spark, DataFusion doesn't auto-rename duplicates (`_1`, `_2`). Rename or alias columns before joining to avoid ambiguity when referencing them later.
+
+> **⚠️ Critical: Handling Same-Named Columns**
+>
+> Unlike Spark (which auto-deduplicates), DataFusion preserves **both** columns after a join. Joining on `id = id` gives you _two_ `id` columns. Referencing `col("id")` without a qualifier may become ambiguous.
+>
+> **Three solutions:**
+>
+> 1. **Select only what you need** (preferred) — Inspect `.schema()` after joining and explicitly select:
+>
+>    ```rust
+>    let joined = customers.join(orders, JoinType::Inner, &["id"], &["customer_id"], None)?;
+>    // Explicit projection: only keep the columns you need
+>    let cleaned = joined.select(vec![
+>        col("id"),           // from customers (left)
+>        col("name"),
+>        col("order_id"),     // from orders (right)
+>        col("amount"),
+>    ])?;
+>    ```
+>
+> 2. **Alias before joining** — Use [`.alias()`] to qualify all columns:
+>
+>    ```rust
+>    let customers = customers_df.alias("c")?;
+>    let orders = orders_df.alias("o")?;
+>    // After join: col("c.id") vs col("o.customer_id")
+>    ```
+>
+> 3. **Rename before joining** — Use [`.with_column_renamed()`]:
+>
+>    ```rust
+>    let orders = orders_df.with_column_renamed("status", "order_status")?;
+>    ```
+>
+> **Practical rule:** Use explicit `.select()` for simple joins; alias for complex multi-way joins. Check `.schema()` to see actual column names after joining.
+
+#### Intermediate: Left/Right/Full Joins
+
+**What:** Outer joins preserve non-matching rows by filling missing columns with NULL—unlike Inner Join which discards them.
+
+**Why three types?** <br>
+Each answers a different question:
+
+| Join Type | Question It Answers                                            | Use Case                                                  |
+| :-------- | :------------------------------------------------------------- | :-------------------------------------------------------- |
+| **Left**  | "Give me all left rows, enriched with right data if available" | Customer reports (keep all customers, show orders if any) |
+| **Right** | "Give me all right rows, enriched with left data if available" | Orphan detection (find orders without valid customers)    |
+| **Full**  | "Show me everything—matched and unmatched from both sides"     | Data reconciliation, finding ALL discrepancies            |
+
+**How to choose:** <br>
+Left Join is most common (~90% of outer joins). Right Join can usually be rewritten as Left Join by swapping tables. Full Join is for reconciliation scenarios where you need the complete picture.
+
+##### Left Join — Enrich Your Primary Data
+
+Keep **all rows from the left table**, enrich with matching data from the right table. No match? Right-side columns become `NULL`.
+
+```rust
+// Using customers_df and orders_df from Basic example
+
+// "All customers with their orders (if any)"
+let left_result = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::Left,
+    &["id"],
+    &["customer_id"],
+    None
+)?;
+
+left_result.show().await?;
+// +----+-------+----------+-------------+--------+
+// | id | name  | order_id | customer_id | amount |
+// +----+-------+----------+-------------+--------+
+// | 1  | Alice | 101      | 1           | 100    |
+// | 1  | Alice | 102      | 1           | 200    |
+// | 2  | Bob   | 103      | 2           | 150    |
+// | 3  | Carol |          |             |        |
+// +----+-------+----------+-------------+--------+
+
+// id 3,  Carol has no orders
+```
+
+##### Right Join — Find Orphaned Records
+
+Keep all rows from the right table, useful for finding records that reference non-existent parents.
+
+```rust
+// "All orders, showing customer info (if customer exists)"
+let right_result = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::Right,
+    &["id"],
+    &["customer_id"],
+    None
+)?;
+
+right_result.show().await?;
+// +----+-------+----------+-------------+--------+
+// | id | name  | order_id | customer_id | amount |
+// +----+-------+----------+-------------+--------+
+// | 1  | Alice | 101      | 1           | 100    |
+// | 1  | Alice | 102      | 1           | 200    |
+// | 2  | Bob   | 103      | 2           | 150    |
+// |    |       | 104      | 99          | 300    |
+// +----+-------+----------+-------------+--------+
+
+// Order 104 has invalid customer_id!
+```
+
+> **Why not just use Left Join?** Right Join keeps all _right_ rows, but you can get the same result by swapping the table order and using Left Join:
+>
+> ```rust
+> // These produce identical results:
+> customers_df.join(orders_df, JoinType::Right, ...)  // Right Join
+> orders_df.join(customers_df, JoinType::Left, ...)   // Left Join (tables swapped)
+> ```
+>
+> Left Join reads more naturally because your "main" table (the one you want ALL rows from) comes first. Most codebases use Left Join exclusively and avoid Right Join for consistency.
+
+##### Full Join — Complete Reconciliation
+
+Keep **all rows from both tables**. Where there's no match, fill the "other side" with NULLs. This is the only join that guarantees you see _everything_—matched, unmatched left, AND unmatched right.
+
+**When to use Full Join:**
+
+- **Data reconciliation** — Comparing two data sources to find ALL discrepancies
+- **Migration validation** — Ensuring old and new systems have the same records
+- **Audit trails** — "Show me what's in A but not B, what's in B but not A, and what's in both"
+
+```rust
+// "Show me everything: matched, unmatched left, AND unmatched right"
+let full_result = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::Full,
+    &["id"],
+    &["customer_id"],
+    None
+)?;
+
+full_result.show().await?;
+// +----+-------+----------+-------------+--------+
+// | id | name  | order_id | customer_id | amount |
+// +----+-------+----------+-------------+--------+
+// | 1  | Alice | 101      | 1           | 100    |  ← Matched
+// | 1  | Alice | 102      | 1           | 200    |  ← Matched
+// | 2  | Bob   | 103      | 2           | 150    |  ← Matched
+// | 3  | Carol |          |             |        |  ← Left only (no orders)
+// |    |       | 104      | 99          | 300    |  ← Right only (orphan)
+// +----+-------+----------+-------------+--------+
+```
+
+> **Data Quality Pattern:** Full Join + NULL filters = powerful reconciliation tool:
+>
+> ```rust
+> // Find customers WITHOUT orders (left-only)
+> let inactive = full_result.clone().filter(col("order_id").is_null())?;
+>
+> // Find orphaned orders (right-only, invalid customer_id)
+> let orphans = full_result.clone().filter(col("id").is_null())?;
+>
+> // Find matched records (both sides present)
+> let matched = full_result.filter(
+>     col("id").is_not_null().and(col("order_id").is_not_null())
+> )?;
+> ```
+>
+> This pattern is invaluable for ETL pipelines, data migration validation, and debugging referential integrity issues.
+
+#### Intermediate: Semi and Anti Joins
+
+**What makes them special?** Semi and Anti joins are **filtering joins**—they filter the left table based on existence in the right table, but **never add columns** from the right table. This is fundamentally different from Inner/Left/Right/Full joins which combine data.
+
+| Join Type    | Question                         | Returns                           | SQL Equivalent                               |
+| :----------- | :------------------------------- | :-------------------------------- | :------------------------------------------- |
+| **LeftSemi** | "Which left rows HAVE a match?"  | Left columns only, matched rows   | `WHERE EXISTS (SELECT 1 FROM right ...)`     |
+| **LeftAnti** | "Which left rows have NO match?" | Left columns only, unmatched rows | `WHERE NOT EXISTS (SELECT 1 FROM right ...)` |
+
+**Why use them instead of alternatives?**
+
+| Alternative                | Problem                                                             | Semi/Anti Advantage                                              |
+| :------------------------- | :------------------------------------------------------------------ | :--------------------------------------------------------------- |
+| Inner Join + Distinct      | Creates duplicates if right has multiple matches, then removes them | Semi join handles this automatically—one output row per left row |
+| Left Join + WHERE NULL     | Joins everything first, then filters                                | Anti join filters during join—more efficient                     |
+| `IN (SELECT ...)` subquery | Can be slower, harder to optimize                                   | Semi join is the optimized physical plan for `IN`                |
+
+##### LeftSemi — "Which Rows Have Matches?"
+
+Returns left rows that have **at least one match** in the right table. Even if a customer has 10 orders, they appear only once.
+
+```rust
+// Using customers_df and orders_df from Basic example
+
+// "Which customers have placed at least one order?"
+let active_customers = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::LeftSemi,
+    &["id"],
+    &["customer_id"],
+    None
+)?;
+
+active_customers.show().await?;
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 1  | Alice |  ← Has 2 orders, appears once
+// | 2  | Bob   |  ← Has 1 order
+// +----+-------+
+// Note: Carol (id=3) excluded—no orders
+// Note: No order columns! Just filtered customers.
+```
+
+> **Use cases for LeftSemi:**
+>
+> - Find active customers (have placed orders)
+> - Find products that have been sold (exist in order_items)
+> - Filter to "things that are referenced somewhere"
+
+##### LeftAnti — "Which Rows Have No Matches?"
+
+Returns left rows that have **zero matches** in the right table. The inverse of Semi join.
+
+```rust
+// "Which customers have NEVER placed an order?"
+let inactive_customers = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::LeftAnti,
+    &["id"],
+    &["customer_id"],
+    None
+)?;
+
+inactive_customers.show().await?;
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 3  | Carol |  ← No orders found
+// +----+-------+
+// Alice and Bob excluded—they have orders
+```
+
+> **Use cases for LeftAnti:**
+>
+> - Find inactive customers (never ordered)
+> - Find dead inventory (products never sold)
+> - Data cleanup: "Find records missing required relationships"
+> - Complement of Semi: `Semi ∪ Anti = Full Left Table`
+
+##### Why Not Just Use Left Join + Filter?
+
+A common question: "Can't I just do Left Join and filter for NULLs?"
+
+```rust
+// ❌ Less efficient: Join everything, then filter
+let inactive = customers_df.clone()
+    .join(orders_df.clone(), JoinType::Left, &["id"], &["customer_id"], None)?
+    .filter(col("order_id").is_null())?;
+
+// ✅ More efficient: Anti join filters during the join
+let inactive = customers_df.clone()
+    .join(orders_df.clone(), JoinType::LeftAnti, &["id"], &["customer_id"], None)?;
+```
+
+Both produce the same result, but Anti join:
+
+- Doesn't create intermediate joined rows
+- Doesn't add (and then ignore) right-side columns
+- Optimizer can use more efficient algorithms (e.g., hash-based existence check)
+
+> **Learn more:** See [Semi and Anti joins explained] for why these deserve first-class syntax in SQL.
+
+> **Other variants:** DataFusion's [`JoinType`] also includes `RightSemi`, `RightAnti`, and mark variants for advanced use cases. For most DataFrame work, stick to left variants and swap input tables if needed.
+
+> **Mark joins:** [`LeftMark`]/[`RightMark`] are used internally to decorrelate `EXISTS` subqueries. They return all rows from one side plus an extra boolean "mark" column indicating whether any match exists on the other side. Most DataFrame code won't use them directly, but you may see them in `EXPLAIN` plans for complex SQL with `EXISTS` predicates.
+
+#### Advanced: Multi-Way Joins
+
+**Chain [`.join()`] calls to combine 3+ tables—each join produces a new DataFrame that feeds into the next.**
+
+Real-world data is often normalized across multiple tables. A business question like "which customers have paid orders?" requires combining customers → orders → payments. Each chained Inner Join acts as a filter—only rows matching _all_ join conditions survive.
+
+```rust
+// Using customers_df and orders_df from Basic example
+
+// Introduce a payments table: only orders 101 and 103 have payment records
+let payments_df = dataframe!(
+    "payment_order_id" => [101, 103],
+    "status" => ["paid", "pending"]
+)?;
+
+// 3-way join: customers → orders → payments
+let result = customers_df.clone()
+    .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
+    .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?;
+
+result.show().await?;
+// +----+-------+----------+-------------+--------+------------------+---------+
+// | id | name  | order_id | customer_id | amount | payment_order_id | status  |
+// +----+-------+----------+-------------+--------+------------------+---------+
+// | 1  | Alice | 101      | 1           | 100    | 101              | paid    |
+// | 2  | Bob   | 103      | 2           | 150    | 103              | pending |
+// +----+-------+----------+-------------+--------+------------------+---------+
+// Alice's order 102: excluded—no payment record
+// Carol: excluded—no orders
+// Order 104: excluded—no matching customer (orphan)
+```
+
+> **Tip:** Use Left Joins at intermediate steps if you need to preserve unmatched rows (e.g., customers without payments).
+
+##### Join Order Matters
+
+The order you chain joins affects both **readability** and **performance**:
+
+```rust
+// Using customers_df, orders_df, payments_df from above
+
+// ✅ Good: Start with the table you're "asking about"
+// "Which customers have payments?"
+let result = customers_df.clone()
+    .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
+    .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?;
+
+// ✅ Also good: Start with filtered data to reduce intermediate size
+let high_value_orders = orders_df.clone().filter(col("amount").gt(lit(100)))?;
+let result = high_value_orders
+    .join(customers_df.clone(), JoinType::Inner, &["customer_id"], &["id"], None)?
+    .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?;
+```
+
+> **Performance tip:** The optimizer reorders joins when possible, but starting with filtered/smaller tables helps. Use [`.explain()`] to see the actual execution plan.
+
+##### Managing Column Proliferation
+
+Multi-way joins accumulate columns from every table. Clean up with [`.select()`]:
+
+```rust
+// Using customers_df, orders_df, payments_df from above
+
+let clean_result = customers_df.clone()
+    .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
+    .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?
+    .select(vec![
+        col("name").alias("customer"),
+        col("order_id"),
+        col("amount"),
+        col("status").alias("payment_status"),
+    ])?;
+
+clean_result.show().await?;
+// +----------+----------+--------+----------------+
+// | customer | order_id | amount | payment_status |
+// +----------+----------+--------+----------------+
+// | Alice    | 101      | 100    | paid           |
+// | Bob      | 103      | 150    | pending        |
+// +----------+----------+--------+----------------+
+```
+
+> **When SQL might be clearer:** Multi-way joins with 4+ tables can become hard to read as chained method calls. Consider [`SessionContext::sql()`] for complex star-schema queries where SQL's visual structure helps.
+
+#### Advanced: Join with Complex Conditions
+
+Use [`.join_on()`] when join conditions go beyond simple column equality—range joins, inequality predicates, or compound logic. The standard [`.join()`] only supports equi-joins (column A = column B). For anything else, [`.join_on()`] accepts arbitrary boolean expressions.
+
+```rust
+// Using customers_df and orders_df from Basic example
+
+// Give DataFrames aliases so we can qualify column references
+let customers = customers_df.clone().alias("customers")?;
+let orders = orders_df.clone().alias("orders")?;
+
+// Join with compound condition: match on id AND filter amount > 100
+let high_value = customers.join_on(
+    orders,
+    JoinType::Inner,
+    [col("customers.id").eq(col("orders.customer_id"))
+        .and(col("orders.amount").gt(lit(100)))]
+)?;
+
+high_value.show().await?;
+// +----+-------+----------+-------------+--------+
+// | id | name  | order_id | customer_id | amount |
+// +----+-------+----------+-------------+--------+
+// | 1  | Alice | 102      | 1           | 200    |
+// | 2  | Bob   | 103      | 2           | 150    |
+// +----+-------+----------+-------------+--------+
+// Alice's order 101 (100) excluded—doesn't meet amount > 100
+```
+
+> **Tip:** When using [`.join_on()`], column names may clash between tables. Use [`.alias()`] to qualify references: `col("customers.id")` vs `col("orders.id")`.
+
+##### The `filter` Argument on Outer Joins
+
+The [`.join()`] method accepts an optional `filter: Option<Expr>` argument. For outer joins, this filter has subtle semantics: it applies only to _matched_ rows, not to preserved unmatched rows.
+
+```rust
+// Using customers_df and orders_df from Basic example
+
+// Left join with filter: Carol still appears, but only orders > 100 attach
+let result = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::Left,
+    &["id"],
+    &["customer_id"],
+    Some(col("amount").gt(lit(100))),  // Applied only to matched rows
+)?;
+
+result.show().await?;
+// +----+-------+----------+-------------+--------+
+// | id | name  | order_id | customer_id | amount |
+// +----+-------+----------+-------------+--------+
+// | 1  | Alice | 102      | 1           | 200    |  ← Only order > 100 attached
+// | 2  | Bob   | 103      | 2           | 150    |
+// | 3  | Carol |          |             |        |  ← Preserved (left join), no matching order
+// +----+-------+----------+-------------+--------+
+// Alice's order 101 (100) excluded by filter, but Alice still appears via order 102
+```
+
+> **Note:** Think of `filter` as part of the _join condition_, not a `WHERE` after the join. It controls which matches are considered valid during the join itself.
+
+> This applies equally to [`.join_on()`], which is implemented as `.join()` with empty key lists and the combined `on_exprs` as `filter`. The same "filter applies only to matched rows" semantics apply.
+
+#### Advanced: **Self-Joins**
+
+A self-join joins a table to itself—essential for hierarchical data (employees/managers), sequential comparisons (year-over-year), or finding relationships within the same dataset. **Aliasing is mandatory** to distinguish the two "copies" of the table.
+
+```rust
+// Employee hierarchy: find each employee's manager name
+let employees_df = dataframe!(
+    "emp_id" => [1, 2, 3, 4],
+    "name" => ["Alice", "Bob", "Carol", "Dave"],
+    "manager_id" => [None::<i64>, Some(1), Some(1), Some(2)]  // Alice has no manager
+)?;
+
+// Self-join: alias the same DataFrame twice
+let emp = employees_df.clone().alias("emp")?;
+let mgr = employees_df.clone().alias("mgr")?;
+
+// Join employees to their managers
+let with_managers = emp.join(
+    mgr,
+    JoinType::Left,  // Keep employees without managers (Alice)
+    &["manager_id"],
+    &["emp_id"],
+    None
+)?
+.select(vec![
+    col("emp.name").alias("employee"),
+    col("mgr.name").alias("manager"),
+])?;
+
+with_managers.show().await?;
+// +----------+---------+
+// | employee | manager |
+// +----------+---------+
+// | Alice    |         |  ← No manager (NULL)
+// | Bob      | Alice   |
+// | Carol    | Alice   |
+// | Dave     | Bob     |
+// +----------+---------+
+```
+
+> **Common self-join patterns:**
+>
+> - **Hierarchy traversal:** employees → managers, categories → parent categories
+> - **Sequential comparison:** this_year.sales vs last_year.sales (join on product_id)
+> - **Finding pairs:** "Which products are often bought together?" (order_items self-join)
+
+#### Anti-Pattern: Accidental Cartesian Product
+
+Empty join keys produce a Cartesian product—every left row paired with every right row. With 3 customers × 4 orders = 12 rows. With 1M × 1M = 1 trillion rows. This is almost never intentional and will crash your query or exhaust memory.
+
+```rust
+// Using customers_df and orders_df from Basic example
+
+// ❌ DANGEROUS: Empty keys = Cartesian product (3 × 4 = 12 rows!)
+let cartesian = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::Inner,
+    &[],  // No join keys!
+    &[],
+    None
+)?;
+
+println!("Row count: {}", cartesian.clone().count().await?);
+// Row count: 12  ← Every customer paired with every order!
+
+// ✅ CORRECT: Always specify join keys
+let correct = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::Inner,
+    &["id"],
+    &["customer_id"],
+    None
+)?;
+
+println!("Row count: {}", correct.clone().count().await?);
+// Row count: 3  ← Only matching rows
+```
+
+> **Warning:** If a join returns unexpectedly many rows, check your keys. An empty or mismatched key array silently produces a Cartesian product.
+
+> **If you need a Cartesian product:** Use SQL via `ctx.sql("SELECT ... FROM a CROSS JOIN b")`. The DataFrame API has no dedicated `JoinType::Cross` variant—using `.join()` with empty keys and `JoinType::Inner` produces the same result but is almost always a bug.
+
+#### Join Troubleshooting
+
+**Common join issues and how to diagnose them:**
+
+| Symptom              | Common Causes                                                  | Fix                                                              |
+| :------------------- | :------------------------------------------------------------- | :--------------------------------------------------------------- |
+| **Empty result**     | Key mismatch, trailing spaces, case sensitivity, NULLs in keys | Use [`.show()`] on both sides before joining                     |
+| **Too many rows**    | Duplicate keys create row explosion                            | Check with `.select(vec![col("key")]).distinct().count().await?` |
+| **Schema confusion** | Same column names in both tables                               | Qualify: `col("alias.column")` after using [`.alias()`]          |
+
+> **Quick Debug:** Run [`.show()`] on each DataFrame _before_ joining to verify key values match.
+
+> **Rows missing? Check for NULLs.** In SQL semantics, `NULL = NULL` returns `UNKNOWN` (not `TRUE`), so NULL keys _never_ match. If you need to match nulls, replace them with a placeholder before joining:
+>
+> ```rust
+> // Replace NULLs with sentinel value before joining
+> let df = df.with_column("key", coalesce(vec![col("key"), lit(-1)]))?;
+> ```
+>
+> DataFusion has `datafusion.optimizer.filter_null_join_keys` to automatically filter NULL keys on nullable sides.
+
+> **Debug join algorithms:** Run `.explain(true, false)?` on your DataFrame to see which join algorithm was selected (`HashJoinExec`, `SortMergeJoinExec`, `NestedLoopJoinExec`) and verify predicates were pushed down.
+
+#### Join Cheat Sheet
+
+Quick reference for choosing the right join pattern:
+
+| Goal                        | Method                  | JoinType         |
+| :-------------------------- | :---------------------- | :--------------- |
+| Standard lookup             | `.join()`               | `Inner`          |
+| Keep all primary records    | `.join()`               | `Left`           |
+| Filter by existence         | `.join()`               | `LeftSemi`       |
+| Filter by non-existence     | `.join()`               | `LeftAnti`       |
+| See all data (reconcile)    | `.join()`               | `Full`           |
+| Range/inequality conditions | `.join_on()`            | `Inner`          |
+| Self-join (hierarchies)     | `.alias()` + `.join()`  | `Inner/Left`     |
+| Cartesian product           | Prefer SQL `CROSS JOIN` | Empty keys = bug |
+
+#### Further Reading
+
+Joins are fundamental yet often misunderstood. These resources provide deeper understanding:
+
+**DataFrame APIs** — Similar concepts in other libraries:
+
+| Resource                 | Focus                                                        |
+| :----------------------- | :----------------------------------------------------------- |
+| [Spark Join Guide]       | Conceptually similar API with extensive examples             |
+| [Polars Join Operations] | Rust-native DataFrame library, closest to DataFusion's model |
+| [DataFusion `.join()`]   | Official Rust API documentation                              |
+
+**Join Algorithms & Optimization** — How joins execute under the hood:
+
+| Resource                           | Focus                                                                                    |
+| :--------------------------------- | :--------------------------------------------------------------------------------------- |
+| [Optimizing SQL & DataFrames Pt 1] | Andrew Lamb on DataFusion's optimizer—why SQL and DataFrames compile to the same plan    |
+| [Optimizing SQL & DataFrames Pt 2] | Deep dive: predicate pushdown, projection pushdown, join ordering in DataFusion          |
+| [DataFusion Join Optimization]     | How DataFusion uses table statistics to choose build/probe sides—**16x faster** on TPC-H |
+| [CMU Join Algorithms]              | Andy Pavlo's database course—excellent video lectures on hash/sort-merge joins           |
+| [Hash Join (Wikipedia)]            | How hash tables enable O(n+m) equi-joins                                                 |
+| [Sort-Merge Join]                  | Why pre-sorted data enables efficient streaming joins                                    |
+| [Join optimization strategies]     | How databases choose algorithms and what you can control                                 |
+
+**SQL Semantics** — Conceptual foundations:
+
+| Resource                        | Focus                                                              |
+| :------------------------------ | :----------------------------------------------------------------- |
+| [Visual JOIN guide]             | Interactive visualization of all join types with animated examples |
+| [Join tutorial]                 | Why Venn diagrams are misleading for understanding joins           |
+| [Semi and Anti joins explained] | First-class existence checks that SQL forgot                       |
+| [PostgreSQL JOIN docs]          | Authoritative reference—DataFusion follows PostgreSQL semantics    |
+| [NULL handling in joins]        | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
+
+---
+
+[`RightSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightSemi
+[`RightAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightAnti
+[`array_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/array_agg/index.html
+[HyperLogLog]: https://en.wikipedia.org/wiki/HyperLogLog "HyperLogLog: probabilistic cardinality estimation"
+[expr_fn]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/index.html
+[`HAVING`]: ../../user-guide/sql/select.md#having_clause
+[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.coalesce.html
+[`reduce()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.reduce
+[`unwrap()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.unwrap
+[`unwrap_or_else`]: https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap_or_else
+[`.not()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.not
+[SQL clause order]: https://www.postgresql.org/docs/current/sql-select.html#SQL-HAVING "PostgreSQL: The optional HAVING clause filters groups after GROUP BY"
+[anti_semi_joins]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/
+
+<!-- Selection & Projection references -->
+
+[`.gt()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.gt
+[`CASE`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.when.html
+[`expr_api`]: docs/source/library-user-guide/working-with-exprs.md
+[`.select_exprs()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_exprs
+[`SessionContext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+
+<!-- Filtering references -->
+
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.lt()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.lt
+[`.eq()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.eq
+[`.and()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.and
+[`.or()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.or
+[`in_list()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.in_list.html
+[`.like()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.like
+[`.ilike()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.ilike
+[`lower()`]: https://docs.rs/datafusion/latest/datafusion/functions/unicode/fn.lower.html
+[`.between()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.between
+[`.is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.is_not_null
+[`.is_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.is_null
+
 <!--SQL Statements-->
 
 [`SELECT`]: ../../user-guide/sql/select.md
 [`WHERE`]: ../../user-guide/sql/select.md#where
+[PostgreSQL]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "PostgreSQL: The de facto standard for DataFusion SQL behavior"
 [`AND`]: ../../user-guide/sql/operators.md#logical-operators#and
 [`OR`]: ../../user-guide/sql/operators.md#logical-operators#or
 [`AS`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/ast/struct.ExprWithAlias.html
@@ -1026,8 +2637,55 @@ After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores
 [`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
 [`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
 [`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`sum()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.sum.html
+[`avg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.avg.html
+[`count()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.count.html
+[`min()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.min.html
+[`max()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.max.html
+[`stddev()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.stddev.html
+[`var_sample()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.var_sample.html
+[`var_pop()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.var_pop.html
+[`median()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.median.html
+[`approx_median()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_median.html
+[`count_distinct()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.count_distinct.html
+[`approx_distinct()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_distinct.html
+[`array_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.array_agg.html
+[`string_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.string_agg.html
 [`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
 [`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
+[`JoinType`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
+[`Inner`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Inner "Only rows with matches in both tables"
+[`Left`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Left "All left rows + matching right rows (NULL if no match)"
+[`Right`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Right "All right rows + matching left rows (NULL if no match)"
+[`Full`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Full "All rows from both tables (NULL where no match)"
+[`LeftSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
+[`LeftAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
+[`LeftMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
+[`RightMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
+[Join tutorial]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/ "Why Venn diagrams mislead when explaining joins"
+[Semi and Anti joins explained]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/ "Why Semi/Anti joins deserve first-class syntax"
+[several join algorithms]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/index.html "DataFusion join implementations"
+[Visual JOIN guide]: https://joins.spathon.com/ "Interactive visual guide to SQL joins"
+[PostgreSQL JOIN docs]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "Authoritative reference for join semantics"
+[NULL handling in joins]: https://modern-sql.com/concept/null "Why NULL comparisons return UNKNOWN, not TRUE/FALSE"
+[Join optimization strategies]: https://use-the-index-luke.com/sql/join "How databases optimize joins and what you can control"
+[Spark Join Guide]: https://spark.apache.org/docs/latest/sql-ref-syntax-qry-select-join.html "Apache Spark SQL join syntax and examples"
+[Polars Join Operations]: https://docs.pola.rs/user-guide/transformations/joins/ "Polars DataFrame join operations"
+[DataFusion `.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join "DataFusion join API"
+[Optimizing SQL & DataFrames Pt 1]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-one/ "Optimizing SQL (and DataFrames) in DataFusion: Part 1"
+[Optimizing SQL & DataFrames Pt 2]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-two/ "Optimizing SQL (and DataFrames) in DataFusion: Part 2"
+[DataFusion Join Optimization]: https://xebia.com/blog/making-joins-faster-in-datafusion-based-on-table-statistics/ "Making Joins Faster in DataFusion Based on Table Statistics"
+[CMU Join Algorithms]: https://www.youtube.com/watch?v=YIdIaPopfpk&list=PLSE8ODhjZXjYMAgsGH-GtY5rJYZ6zjsd5&index=12 "CMU 15-445 Lecture 11: Join Algorithms (Andy Pavlo)"
+[Hash Join (Wikipedia)]: https://en.wikipedia.org/wiki/Hash_join "Hash join algorithm explanation"
+[Sort-Merge Join]: https://en.wikipedia.org/wiki/Sort-merge_join "Sort-merge join algorithm"
+[**Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html "Equi-join using hash table on build side"
+[**Sort-Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html "Join pre-sorted inputs with optional spilling"
+[**Symmetric Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html "Streaming join for unbounded data"
+[**Nested Loop Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html "General non-equi join conditions"
+[**Piecewise Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.PiecewiseMergeJoinExec.html "Optimized for single range conditions"
+[**Cross Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.CrossJoinExec.html "Cartesian product of two tables"
+[Arrow]: https://arrow.apache.org/ "Apache Arrow: columnar in-memory format"
+[`take()`]: https://docs.rs/arrow/latest/arrow/compute/kernels/take/fn.take.html "Arrow kernel: select elements by index"
 [`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
 [`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
 [`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
@@ -1048,6 +2706,7 @@ After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores
 [`upper()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.upper.html
 [`or()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.or
 [`.like()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.like
+[`.explain()`]: ../../user-guide/explain-usage.md
 
 <!--Datafusion Core types -->
 
@@ -1059,6 +2718,7 @@ After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores
 <!--  standalone functions-->
 
 [`lit()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.lit.html
+[`col()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.col.html
 [`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
 [`lower()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.lower.html
 [`trim()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.trim.html
@@ -1068,6 +2728,7 @@ After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores
 [`COALESCE`]: ../../user-guide/sql/scalar_functions.md#coalesce
 [`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.nvl.html
 [`date_part()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_part.html
+[`date_trunc()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_trunc.html
 [`DATE_PART`]: ../../user-guide/sql/scalar_functions.md#date_part
 [`EXTRACT`]: ../../user-guide/sql/scalar_functions.md#date_part
 [`when()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.when.html
@@ -1086,503 +2747,20 @@ After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores
 [postgres docs]: https://www.postgresql.org/docs/
 [spark docs]: https://spark.apache.org/docs/latest/
 [three-valued logic]: https://modern-sql.com/concept/three-valued-logic
-
-## Deep Dive: Transformation Reference
-
-This section provides comprehensive coverage of each DataFrame operation. Use it as a reference when you need detailed information about specific transformations.
-
-### Selection and Projection Mastery
-
-Select specific columns, add computed columns, or rename columns using [`select()`], [`select_columns()`], [`with_column()`], [`with_column_renamed()`], and [`drop_columns()`].
-
-**SQL equivalent:** `SELECT a, b AS b_renamed, a + b AS sum FROM table`
-
-#### Basic Selection
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard"],
-        "price" => [1200, 25, 75],
-        "quantity" => [5, 50, 30],
-        "category" => ["Electronics", "Accessories", "Accessories"]
-    )?;
-
-    // Select specific columns by name
-    let df = df.select_columns(&["product", "price"])?;
-    df.show().await?;
-
-    Ok(())
-}
-```
-
-#### Intermediate: Expressions and Computed Columns
-
-```rust
-// Select with expressions (computed columns)
-let df = df.select(vec![
-    col("product"),
-    col("price"),
-    (col("price") * col("quantity")).alias("total_value"),
-    when(col("price").gt(lit(100)), lit("Premium"))
-        .otherwise(lit("Standard"))?
-        .alias("tier")
-])?;
-
-// Add a new column (or replace existing)
-let df = df.with_column("discounted_price", col("price") * lit(0.9))?;
-
-// Rename a column
-let df = df.with_column_renamed("total_value", "revenue")?;
-
-// Drop specific columns
-let df = df.drop_columns(&["category"])?;
-```
-
-#### Advanced: Dynamic Column Selection
-
-```rust
-// Programmatically select columns based on conditions
-let schema = df.schema();
-let numeric_cols: Vec<_> = schema
-    .fields()
-    .iter()
-    .filter(|f| matches!(f.data_type(), DataType::Int32 | DataType::Float64))
-    .map(|f| col(f.name()))
-    .collect();
-
-let numeric_df = df.select(numeric_cols)?;
-```
-
-#### Anti-Pattern: Over-Selection
-
-```rust
-// DON'T: Select all columns when you only need a few
-let bad = df.select(vec![col("*")])?  // Reads everything
-    .filter(col("price").gt(lit(100)))?;
-
-// DO: Select only what you need (projection pushdown optimization)
-let good = df
-    .select(vec![col("product"), col("price")])?
-    .filter(col("price").gt(lit(100)))?;
-```
-
-_Quick Debug_: **Column not found error?** Check column names with `df.schema()`. DataFusion is case-sensitive. Use `df.schema().field_names()` to list all available columns.
-
-> **Going deeper:**
->
-> - **Advanced:** [`select_exprs()`] for SQL-like string expressions
-> - **Examples:** See `datafusion-examples/examples/expr_api.rs` for complex expression patterns
-> - **Performance:** Projection pushdown automatically optimizes column reads
-
-### Filtering Excellence
-
-Filter rows based on conditions using [`filter()`]. Predicates can be simple or arbitrarily complex.
-
-**SQL equivalent:** `WHERE condition`
-
-#### Basic Filtering
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard", "Monitor"],
-        "price" => [1200, 25, 75, 300],
-        "quantity" => [5, 50, 30, 10]
-    )?;
-
-    // Simple filter
-    let df = df.filter(col("price").gt(lit(100)))?;
-    df.show().await?;
-
-    Ok(())
-}
-```
-
-#### Intermediate: Complex Predicates
-
-```rust
-// Multiple conditions with AND/OR
-let df = df.filter(
-    col("price").gt(lit(50))
-        .and(col("quantity").lt(lit(40)))
-        .or(col("product").eq(lit("Laptop")))
-)?;
-
-// Null handling
-let df = df.filter(col("price").is_not_null())?;
-
-// IN list
-let df = df.filter(in_list(
-    col("product"),
-    vec![lit("Laptop"), lit("Monitor")],
-    false  // negated
-)?)?;
-
-// String matching
-let df = df.filter(col("product").like(lit("%top%")))?;  // Contains "top"
-
-// Range checks
-let df = df.filter(col("price").between(lit(50), lit(500)))?;
-```
-
-#### Advanced: Dynamic Filter Building
-
-```rust
-// Build filters programmatically based on runtime conditions
-fn build_filter(min_price: Option<i32>, max_quantity: Option<i32>) -> Expr {
-    let mut conditions = vec![lit(true)];  // Start with always-true
-
-    if let Some(price) = min_price {
-        conditions.push(col("price").gt_eq(lit(price)));
-    }
-
-    if let Some(qty) = max_quantity {
-        conditions.push(col("quantity").lt_eq(lit(qty)));
-    }
-
-    // Combine all conditions with AND
-    conditions.into_iter().reduce(|acc, cond| acc.and(cond)).unwrap()
-}
-
-let filter = build_filter(Some(100), None);
-let df = df.filter(filter)?;
-```
-
-#### Anti-Pattern: Multiple Sequential Filters
-
-```rust
-// DON'T: Chain multiple filter calls (creates separate plan nodes)
-let bad = df
-    .filter(col("price").gt(lit(50)))?
-    .filter(col("quantity").lt(lit(100)))?
-    .filter(col("product").is_not_null())?;
-
-// DO: Combine into single filter (more efficient)
-let good = df.filter(
-    col("price").gt(lit(50))
-        .and(col("quantity").lt(lit(100)))
-        .and(col("product").is_not_null())
-)?;
-```
-
-_Quick Debug_: **Filter returning no rows?** Check for nulls—[Three-valued logic] means `NULL > 5` is `NULL` (not true or false). Always handle nulls explicitly with `.is_not_null()` when needed.
-
-_Quick Debug_: **Filter too slow?** Ensure filter columns are in your data source's partition scheme for predicate pushdown. Check the optimized plan with `df.explain(false, false)?` to verify pushdown happened.
-
-### Aggregation Patterns
-
-Use [`aggregate()`] for GROUP BY operations with aggregate functions to summarize data.
-
-**SQL equivalent:** `SELECT dept, SUM(salary) FROM table GROUP BY dept`
-
-#### Basic Aggregation
-
-```rust
-use datafusion::prelude::*;
-use datafusion::functions_aggregate::expr_fn::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "department" => ["Sales", "Sales", "Engineering", "Engineering"],
-        "employee" => ["Alice", "Bob", "Carol", "Dave"],
-        "salary" => [50000, 55000, 80000, 85000]
-    )?;
-
-    // Group by with multiple aggregations
-    let result = df.aggregate(
-        vec![col("department")],
-        vec![
-            sum(col("salary")).alias("total_salary"),
-            avg(col("salary")).alias("avg_salary"),
-            count(col("employee")).alias("employee_count")
-        ]
-    )?;
-
-    result.show().await?;
-    // +-------------+--------------+------------+----------------+
-    // | department  | total_salary | avg_salary | employee_count |
-    // +-------------+--------------+------------+----------------+
-    // | Engineering | 165000       | 82500      | 2              |
-    // | Sales       | 105000       | 52500      | 2              |
-    // +-------------+--------------+------------+----------------+
-
-    Ok(())
-}
-```
-
-#### Intermediate: Multi-Level Grouping and HAVING-Style Filtering
-
-```rust
-// Multi-column grouping
-let df = df.aggregate(
-    vec![col("department"), col("location")],  // GROUP BY dept, location
-    vec![sum(col("salary")).alias("total")]
-)?;
-
-// HAVING clause equivalent: filter after aggregation
-let result = df
-    .aggregate(vec![col("department")], vec![sum(col("salary")).alias("total")])?
-    .filter(col("total").gt(lit(100000)))?;  // HAVING total > 100000
-```
-
-#### Advanced: All Aggregate Functions
-
-```rust
-use datafusion::functions_aggregate::expr_fn::*;
-
-let stats = df.aggregate(
-    vec![col("department")],
-    vec![
-        count(col("employee")).alias("count"),
-        sum(col("salary")).alias("sum"),
-        avg(col("salary")).alias("avg"),
-        min(col("salary")).alias("min"),
-        max(col("salary")).alias("max"),
-        stddev(col("salary")).alias("stddev"),
-        variance(col("salary")).alias("variance"),
-        // Count distinct
-        count_distinct(col("employee")).alias("unique_employees"),
-        // Conditional aggregation
-        sum(when(col("salary").gt(lit(70000)), lit(1))
-            .otherwise(lit(0))?).alias("high_earners")
-    ]
-)?;
-```
-
-#### Advanced: Aggregation Without Grouping
-
-```rust
-// Aggregate entire DataFrame (no GROUP BY)
-let total = df.aggregate(
-    vec![],  // Empty group by
-    vec![
-        sum(col("salary")).alias("company_total"),
-        avg(col("salary")).alias("company_avg")
-    ]
-)?;
-```
-
-_Quick Debug_: **Wrong aggregation results?** Verify grouping keys before aggregating: `df.select(vec![col("dept")]).distinct()?.show().await?` to see unique values.
-
-_Quick Debug_: **Column not found in aggregation?** After `aggregate()`, only the grouping columns and aggregated expressions are available. If you need other columns, include them in the group by or aggregate them.
-
-### When DataFrames Collide: Join Patterns
-
-DataFusion supports all standard [SQL-99 Standard] join types plus powerful Semi and Anti joins.
-
-**SQL equivalent:** `SELECT * FROM left JOIN right ON left.id = right.user_id`
-
-#### Understanding Join Types: Visual Guide
-
-Given two tables:
-
-**customers** (left):
-
-```
-+----+-------+
-| id | name  |
-+----+-------+
-| 1  | Alice |
-| 2  | Bob   |
-| 3  | Carol |
-+----+-------+
-```
-
-**orders** (right):
-
-```
-+----------+-------------+--------+
-| order_id | customer_id | amount |
-+----------+-------------+--------+
-| 101      | 1           | 100    |
-| 102      | 1           | 200    |
-| 103      | 2           | 150    |
-| 104      | 99          | 300    |
-+----------+-------------+--------+
-```
-
-**Join Results:**
-
-| Join Type    | Returns                       | Use Case                                       | Result Rows                        |
-| ------------ | ----------------------------- | ---------------------------------------------- | ---------------------------------- |
-| **Inner**    | Matches from both sides       | Standard join, only matching records           | 3 (Alice×2, Bob×1)                 |
-| **Left**     | All left + matches from right | Keep all customers, show their orders (if any) | 4 (Alice×2, Bob×1, Carol×0)        |
-| **Right**    | All right + matches from left | Keep all orders, show customer (if exists)     | 4 (orders 101,102,103,104)         |
-| **Full**     | Everything from both sides    | Union of Left and Right                        | 5 (all customers + orphaned order) |
-| **LeftSemi** | Left rows that have matches   | "Which customers have orders?"                 | 2 (Alice, Bob)                     |
-| **LeftAnti** | Left rows with no matches     | "Which customers have NO orders?"              | 1 (Carol)                          |
-| **Cross**    | Cartesian product             | All combinations (use carefully!)              | 12 (3×4)                           |
-
-#### Basic: Inner Join
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let customers = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
-
-    let orders = dataframe!(
-        "order_id" => [101, 102, 103],
-        "customer_id" => [1, 1, 2],
-        "amount" => [100, 200, 150]
-    )?;
-
-    // Inner join: only customers with orders
-    let df = customers.join(
-        orders,
-        JoinType::Inner,
-        &["id"],
-        &["customer_id"],
-        None
-    )?;
-
-    df.show().await?;
-    // +----+-------+----------+-------------+--------+
-    // | id | name  | order_id | customer_id | amount |
-    // +----+-------+----------+-------------+--------+
-    // | 1  | Alice | 101      | 1           | 100    |
-    // | 1  | Alice | 102      | 1           | 200    |
-    // | 2  | Bob   | 103      | 2           | 150    |
-    // +----+-------+----------+-------------+--------+
-
-    Ok(())
-}
-```
-
-#### Intermediate: Left/Right/Full Joins
-
-```rust
-// Left join: all customers, even without orders
-let left_df = customers.join(
-    orders.clone(),
-    JoinType::Left,
-    &["id"],
-    &["customer_id"],
-    None
-)?;
-// Result includes Carol with NULL order values
-
-// Right join: all orders, even orphaned ones
-let right_df = customers.join(
-    orders.clone(),
-    JoinType::Right,
-    &["id"],
-    &["customer_id"],
-    None
-)?;
-// Result includes order 104 with NULL customer
-
-// Full outer join: everything
-let full_df = customers.join(
-    orders,
-    JoinType::Full,
-    &["id"],
-    &["customer_id"],
-    None
-)?;
-```
-
-#### Intermediate: Semi and Anti Joins
-
-```rust
-// LeftSemi: customers who HAVE orders (like EXISTS in SQL)
-let with_orders = customers.clone().join(
-    orders.clone(),
-    JoinType::LeftSemi,
-    &["id"],
-    &["customer_id"],
-    None
-)?;
-// Returns: Alice, Bob (only customer columns, no order data)
-
-// LeftAnti: customers with NO orders (like NOT EXISTS)
-let without_orders = customers.join(
-    orders.clone(),
-    JoinType::LeftAnti,
-    &["id"],
-    &["customer_id"],
-    None
-)?;
-// Returns: Carol
-```
-
-#### Advanced: Multi-Way Joins
-
-```rust
-let products = dataframe!(
-    "product_id" => [1, 2],
-    "product_name" => ["Widget", "Gadget"]
-)?;
-
-let order_items = dataframe!(
-    "order_id" => [101, 102],
-    "product_id" => [1, 2]
-)?;
-
-// Join three tables
-let result = orders
-    .join(customers, JoinType::Inner, &["customer_id"], &["id"], None)?
-    .join(order_items, JoinType::Inner, &["order_id"], &["order_id"], None)?
-    .join(products, JoinType::Inner, &["product_id"], &["product_id"], None)?;
-```
-
-#### Advanced: Join with Complex Conditions
-
-```rust
-// Join with additional filter (not just equality)
-let df = customers.join_on(
-    orders,
-    JoinType::Inner,
-    col("customers.id").eq(col("orders.customer_id"))
-        .and(col("orders.amount").gt(lit(100)))
-)?;
-```
-
-#### Anti-Pattern: Accidental Cartesian Product
-
-```rust
-// DANGEROUS: Cross join without filter (3 × 4 = 12 rows)
-let bad = customers.join(
-    orders,
-    JoinType::Inner,
-    &[],  // Empty keys = Cartesian product!
-    &[],
-    None
-)?;
-
-// DO: Always specify join keys
-let good = customers.join(
-    orders,
-    JoinType::Inner,
-    &["id"],
-    &["customer_id"],
-    None
-)?;
-```
-
-_Quick Debug_: **Join returns empty?** Check for: (1) key column name mismatches, (2) trailing spaces in data (`trim()` both sides), (3) case sensitivity, (4) null values in keys. Use `show()` on both DataFrames before joining to inspect keys.
-
-_Quick Debug_: **Too many rows after join?** You might have duplicates in the join keys. Check with `df.select(vec![col("key")]).distinct().count()` on both sides. Consider using `distinct_on()` before joining if needed.
-
-_Quick Debug_: **Schema confusion?** After a join, both tables' columns are available, but if they have the same name, you need to qualify them: `col("customers.id")` vs `col("orders.id")`.
+[predicate pushdown]: https://docs.rs/datafusion/latest/datafusion/physical_plan/filter_pushdown/struct.PushedDownPredicate.html
+[SLAP]: https://www.jameshw.dev/blog/2022-02-05/principles-from-clean-code#d69d60c9b3054d47816551afafcfa847 "Functions should SLAP! — from Clean Code principles"
+[Apache Spark DataFrames]: https://spark.apache.org/docs/latest/sql-programming-guide.html#datasets-and-dataframes
 
 ### Sorting and Limiting
 
 Order results and implement pagination with [`sort()`] and [`limit()`].
 
 **SQL equivalent:** `ORDER BY score DESC LIMIT 10 OFFSET 5`
+
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Explicit null placement control (`.sort(asc, nulls_last)`); combined skip+fetch in single `.limit()` call
+> - **SQL shines:** Familiar `ORDER BY ... DESC` syntax; `NULLS FIRST/LAST` in modern SQL
 
 #### Basic Sorting
 
@@ -1641,6 +2819,11 @@ Combine DataFrames or remove duplicates using union, intersection, and distinct 
 
 **SQL equivalent:** `SELECT * FROM df1 UNION SELECT * FROM df2`
 
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Schema validation at build time; DataFrame-unique methods like `.union_by_name()` and `.distinct_on()` (see below)
+> - **SQL shines:** Standard `UNION`, `INTERSECT`, `EXCEPT` syntax; portable across databases
+
 #### Basic Set Operations
 
 ```rust
@@ -1683,7 +2866,7 @@ let sales_q2 = dataframe!(
 
 // Regular union would fail - different column order
 // union_by_name works!
-let combined = sales_q1.union_by_name(sales_q2)?;
+let combined = sales_q1.clone().union_by_name(sales_q2.clone())?;
 
 // With deduplication
 let combined_distinct = sales_q1.union_by_name_distinct(sales_q2)?;
@@ -1729,7 +2912,12 @@ Apply calculations across rows related to the current row, like running totals, 
 
 **SQL equivalent:** `SELECT name, salary, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) FROM employees`
 
-> **Note:** Window functions follow the [SQL-99 Standard] specification. See also: [Window Functions](../user-guide/sql/window_functions.md) for all available window functions.
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Builder pattern (`.partition_by().order_by().build()`) is composable and reusable; multiple windows in one `.window()` call
+> - **SQL shines:** Declarative `OVER` clause is more readable for simple cases; frame specifications (`ROWS BETWEEN`) more intuitive
+
+> **Note:** Window functions follow the [SQL-99 Standard] specification. See also: [Window Functions](../../user-guide/sql/window_functions.md) for all available window functions.
 
 #### Basic: Ranking
 
@@ -1773,11 +2961,18 @@ let df = df.window(vec![
         .alias("running_total")
 ])?;
 
-// Moving average (last 3 rows)
+// Custom window frame: moving average over last 3 rows (current + 2 preceding)
+use datafusion::logical_expr::{WindowFrame, WindowFrameBound, WindowFrameUnits};
+use datafusion::common::ScalarValue;
+
 let df = df.window(vec![
     avg(col("amount"))
         .order_by(vec![col("date").sort(true, true)])
-        .window_frame(WindowFrame::new(Some(false)))  // Customize frame
+        .window_frame(WindowFrame::new_bounds(
+            WindowFrameUnits::Rows,
+            WindowFrameBound::Preceding(ScalarValue::UInt64(Some(2))),  // 2 rows before
+            WindowFrameBound::CurrentRow,
+        ))
         .build()?
         .alias("moving_avg_3")
 ])?;
@@ -1805,32 +3000,320 @@ _Quick Debug_: **Window function not partitioning correctly?** Ensure your `part
 
 ### Reshaping Data
 
+> **Note:** `.unnest_columns()` is a DataFrame-unique method with limited SQL equivalent (`UNNEST` varies by database). See also the DataFrame-Unique Methods section.
+
 #### Unnesting / Exploding Arrays
 
 ```rust
-// Expand array column into multiple rows (like SQL UNNEST or Spark explode)
-// See also: PySpark explode - https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.explode.html
-let df = dataframe!(
-    "customer" => ["Alice", "Bob"],
-    "orders" => [vec![1, 2, 3], vec![4, 5]]
-)?;
+use datafusion::prelude::*;
 
-// Unnest the orders array
-let expanded = df.unnest_columns(&["orders"])?;
-// Result:
-// customer | orders
-// Alice    | 1
-// Alice    | 2
-// Alice    | 3
-// Bob      | 4
-// Bob      | 5
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Create sample data with array columns using SQL ARRAY syntax
+    let df = ctx.sql("SELECT * FROM (VALUES
+        ('Alice', ARRAY[1, 2, 3]),
+        ('Bob', ARRAY[4, 5])
+    ) AS t(customer, orders)").await?;
+
+    // Unnest expands array elements into separate rows
+    // Similar to PySpark explode: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.explode.html
+    let expanded = df.unnest_columns(&["orders"])?;
+    expanded.show().await?;
+    // +----------+--------+
+    // | customer | orders |
+    // +----------+--------+
+    // | Alice    | 1      |
+    // | Alice    | 2      |
+    // | Alice    | 3      |
+    // | Bob      | 4      |
+    // | Bob      | 5      |
+    // +----------+--------+
+
+    Ok(())
+}
 ```
 
-## Advanced DataFrame Patterns
+### Subqueries
 
-### Dynamic DataFrame Construction
+Subqueries allow you to use the result of one query within another query. DataFusion supports scalar subqueries (returning a single value), IN subqueries (checking membership), and EXISTS subqueries (checking existence).
 
-Build DataFrames and queries programmatically at runtime based on schema discovery and conditional logic.
+**SQL equivalent:** `WHERE amount > (SELECT AVG(amount) FROM orders)` or `WHERE id IN (SELECT customer_id FROM premium)`
+
+> **Trade-off: DataFrame vs SQL**
+>
+> - **DataFrame shines:** Type-safe subquery construction; reusable subquery plans as variables
+> - **SQL shines:** More intuitive nested syntax; familiar to SQL users
+
+#### Scalar Subqueries
+
+```rust
+use datafusion::prelude::*;
+use datafusion::functions_aggregate::expr_fn::avg;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Register tables
+    let orders = dataframe!(
+        "order_id" => [1, 2, 3, 4],
+        "amount" => [100, 200, 150, 300]
+    )?;
+    ctx.register_table("orders", orders.clone().into_view())?;
+
+    // Find orders above average
+    let avg_subquery = ctx.table("orders").await?
+        .aggregate(vec![], vec![avg(col("amount"))])?
+        .select(vec![avg(col("amount"))])?
+        .into_unoptimized_plan();
+
+    let result = ctx.table("orders").await?
+        .filter(col("amount").gt(scalar_subquery(Arc::new(avg_subquery))))?;
+
+    result.show().await?;
+    Ok(())
+}
+```
+
+#### IN Subqueries
+
+```rust
+use datafusion::prelude::*;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    let customers = dataframe!(
+        "id" => [1, 2, 3],
+        "name" => ["Alice", "Bob", "Carol"]
+    )?;
+
+    let premium_customers = dataframe!(
+        "customer_id" => [1, 3]
+    )?;
+
+    ctx.register_table("customers", customers.into_view())?;
+    ctx.register_table("premium", premium_customers.into_view())?;
+
+    // Find customers who are premium
+    let premium_ids = ctx.table("premium").await?
+        .select(vec![col("customer_id")])?
+        .into_unoptimized_plan();
+
+    let result = ctx.table("customers").await?
+        .filter(in_subquery(col("id"), Arc::new(premium_ids)))?;
+
+    result.show().await?;
+    Ok(())
+}
+```
+
+---
+
+## DataFrame-Unique Methods
+
+**Some DataFrame methods have no SQL equivalent—these are the programmatic superpowers that justify using the DataFrame API.**
+
+While the previous section covered operations available in _both_ APIs, this section highlights methods unique to DataFrames. These exist because SQL's declarative grammar cannot express certain programmatic patterns that Rust handles naturally.
+
+| Method                                            | Purpose                                 | Why SQL Can't Express It                  |
+| ------------------------------------------------- | --------------------------------------- | ----------------------------------------- |
+| [`.with_column()`](#adding-and-replacing-columns) | Add/replace a column keeping all others | SQL `SELECT` requires listing all columns |
+| [`.with_column_renamed()`](#renaming-columns)     | Rename without expression               | SQL uses `AS` inside `SELECT`             |
+| [`.drop_columns()`](#dropping-columns)            | Remove columns by name                  | SQL has no direct equivalent              |
+| [`.union_by_name()`](#union-by-column-name)       | Union aligned by name, not position     | SQL `UNION` is positional                 |
+| [`.distinct_on()`](#distinct-on-postgresql-style) | Keep first row per group                | PostgreSQL-specific, not standard SQL     |
+| [`.unnest_columns()`](#unnesting-arrays)          | Explode arrays into rows                | SQL `UNNEST` varies by database           |
+| [`.into_view()`](#bridging-to-sql)                | Register DataFrame as SQL table         | Enables hybrid SQL/DataFrame workflows    |
+
+> **Gap Note:** `unpivot`/`melt` (wide-to-long reshaping) is not yet available in DataFusion. Workaround: manual `UNION ALL` of columns.
+
+### Adding and Replacing Columns
+
+`.with_column()` adds a new column or replaces an existing one _while keeping all other columns intact_. In SQL, you'd need to explicitly list every column in your `SELECT`.
+
+```rust
+use datafusion::prelude::*;
+
+let df = dataframe!(
+    "product" => ["Laptop", "Mouse"],
+    "price" => [1200, 25]
+)?;
+
+// Add a computed column - all existing columns are preserved
+let df = df.with_column("discounted", col("price") * lit(0.9))?;
+// Result: product, price, discounted
+
+// Replace an existing column
+let df = df.with_column("price", col("price") * lit(1.1))?;
+// Result: product, price (updated), discounted
+```
+
+### Renaming Columns
+
+`.with_column_renamed()` renames a column without requiring an expression:
+
+```rust
+let df = df.with_column_renamed("price", "unit_price")?;
+```
+
+### Dropping Columns
+
+`.drop_columns()` removes columns by name—no SQL equivalent exists:
+
+```rust
+let df = df.drop_columns(&["category", "temp_id"])?;
+```
+
+### Union by Column Name
+
+`.union_by_name()` aligns DataFrames by column _name_, not position. SQL `UNION` fails if column order differs:
+
+```rust
+let q1 = dataframe!(
+    "product" => ["A"],
+    "revenue" => [100]
+)?;
+
+let q2 = dataframe!(
+    "revenue" => [200],  // Different order!
+    "product" => ["B"]
+)?;
+
+// SQL UNION would fail or produce wrong results
+// union_by_name handles it correctly
+let combined = q1.union_by_name(q2)?;
+```
+
+### DISTINCT ON (PostgreSQL-Style)
+
+`.distinct_on()` keeps the first row for each unique value in specified columns—a PostgreSQL feature not in standard SQL:
+
+```rust
+use datafusion::prelude::*;
+
+let df = dataframe!(
+    "customer" => ["Alice", "Alice", "Bob"],
+    "order_date" => ["2024-01-01", "2024-01-05", "2024-01-02"],
+    "amount" => [100, 200, 150]
+)?;
+
+// Keep only the earliest order per customer
+let first_orders = df.distinct_on(
+    vec![col("customer")],
+    vec![col("order_date").sort(true, true)],
+    None
+)?;
+```
+
+### Unnesting Arrays
+
+`.unnest_columns()` explodes array columns into multiple rows:
+
+```rust
+let df = dataframe!(
+    "customer" => ["Alice", "Bob"],
+    "tags" => [vec!["vip", "early"], vec!["new"]]
+)?;
+
+let expanded = df.unnest_columns(&["tags"])?;
+// Alice | vip
+// Alice | early
+// Bob   | new
+```
+
+### Bridging to SQL
+
+`.into_view()` registers a DataFrame as a table that SQL can query—enabling hybrid workflows:
+
+```rust
+let ctx = SessionContext::new();
+
+let df = dataframe!(
+    "id" => [1, 2, 3],
+    "value" => [100, 200, 300]
+)?
+.filter(col("value").gt(lit(150)))?;
+
+// Register the filtered DataFrame as a SQL-queryable table
+ctx.register_table("filtered_data", df.into_view())?;
+
+// Now query it with SQL
+let result = ctx.sql("SELECT * FROM filtered_data WHERE id > 1").await?;
+```
+
+## Builder Methodology: Architecting with DataFrames
+
+**The DataFrame API isn't just SQL with different syntax—it's a programmatic _builder_ for query plans that integrates with Rust's type system, control flow, and tooling.**
+
+This section explains _how to think_ in DataFrames: leveraging Rust's strengths to build dynamic, reusable, and robust data pipelines that SQL strings cannot express.
+
+| Pattern                                                         | What It Enables                           | SQL Limitation                       |
+| --------------------------------------------------------------- | ----------------------------------------- | ------------------------------------ |
+| [Builder Pattern & Laziness](#the-builder-pattern-and-laziness) | Reuse intermediate plans as variables     | CTEs are query-scoped                |
+| [Dynamic Construction](#dynamic-pipeline-construction)          | Rust `if/else` modifies the plan          | String concatenation, injection risk |
+| [Encapsulation](#encapsulation-and-reusability)                 | Functions returning `Expr` or `DataFrame` | UDFs are hard to deploy/test         |
+| [Error Handling](#error-handling-and-observability)             | Compile-time + runtime error separation   | All errors at runtime                |
+
+### The Builder Pattern and Laziness
+
+**Every DataFrame method returns a new DataFrame wrapping an extended `LogicalPlan`—no data moves until you call an action like `.collect()` or `.show()`.**
+
+```rust
+// Each step builds a plan, doesn't execute
+let step1 = df.filter(col("price").gt(lit(100)))?;      // Plan: Filter
+let step2 = step1.select(vec![col("product")])?;        // Plan: Filter → Project
+let step3 = step2.sort(vec![col("product").sort(true, true)])?;  // Plan: Filter → Project → Sort
+
+// Inspect the plan without executing
+println!("{}", step3.logical_plan().display_indent());
+
+// Only NOW does execution happen
+step3.show().await?;
+```
+
+**The Mindfight: Variables vs CTEs**
+
+| Aspect               | DataFrame (Rust)                               | SQL (CTEs)              |
+| -------------------- | ---------------------------------------------- | ----------------------- |
+| Intermediate storage | Rust variables                                 | `WITH step1 AS (...)`   |
+| Reuse across queries | Variable lives in scope                        | CTE is query-scoped     |
+| Debugging            | `.schema()`, `.explain()` at any point         | Must execute to inspect |
+| Branching            | `step1.filter(...)` and `step1.aggregate(...)` | Duplicate the CTE       |
+
+> **Footgun:** DataFrame is _consumed_ by transformations. To reuse, call `.clone()`:
+>
+> ```rust
+> let filtered = df.clone().filter(...)?;  // df still usable
+> let aggregated = df.aggregate(...)?;     // df consumed here
+> ```
+
+### Dynamic Pipeline Construction
+
+**Use Rust control flow (`if/else`, `match`, loops) to build query plans dynamically—something SQL strings make dangerous and error-prone.**
+
+The "Dynamic SQL" anti-pattern (string concatenation) is prone to injection attacks and syntax errors. DataFrames eliminate both risks: values pass through `lit()`, and the plan is validated at build time.
+
+**The Mindfight: Control Flow vs String Concatenation**
+
+```rust
+// ❌ SQL: String concatenation (injection risk, runtime errors)
+let mut query = "SELECT * FROM users WHERE 1=1".to_string();
+if let Some(dept) = filter_department {
+    query.push_str(&format!(" AND department = '{}'", dept));  // 💀 Injection!
+}
+
+// ✅ DataFrame: Type-safe, validated at build time
+let mut result = users_df;
+if let Some(dept) = filter_department {
+    result = result.filter(col("department").eq(lit(dept)))?;  // Safe
+}
+```
 
 #### Runtime Schema Discovery
 
@@ -1891,7 +3374,46 @@ let transformed_cols: Vec<_> = schema
 let result = df.select(transformed_cols)?;
 ```
 
-#### Metaprogramming: Reusable Transformation Functions
+### Encapsulation and Reusability
+
+**Move complex transformation logic into reusable Rust functions—no UDF registration, no deployment headaches, full unit-testability.**
+
+SQL UDFs require registration with the execution context and have limited composability. Rust functions are native citizens: they compose naturally, benefit from IDE tooling, and can be unit-tested in isolation.
+
+**The Mindfight: Native Functions vs SQL UDFs**
+
+| Aspect       | Rust Functions        | SQL UDFs                       |
+| ------------ | --------------------- | ------------------------------ |
+| Registration | None needed           | `ctx.register_udf(...)`        |
+| Testing      | Standard `#[test]`    | Requires execution context     |
+| IDE support  | Full autocomplete     | None                           |
+| Composition  | Direct function calls | Limited nesting                |
+| Distribution | Compiled into binary  | Must be registered per context |
+
+#### Functions Returning `Expr` (Column-Level)
+
+Create reusable column transformations:
+
+```rust
+use datafusion::prelude::*;
+
+/// Clean and standardize a currency column
+fn clean_currency(column: &str) -> Expr {
+    // Remove $ prefix, trim whitespace, cast to float
+    use datafusion::functions::string::expr_fn::*;
+    cast(
+        trim(vec![ltrim(col(column), lit("$"))]),
+        arrow::datatypes::DataType::Float64
+    )
+}
+
+// Usage: reusable across any DataFrame
+let df = df.with_column("amount_clean", clean_currency("amount_raw"))?;
+```
+
+#### Functions Returning `DataFrame` (Table-Level)
+
+Encapsulate multi-step transformations:
 
 ```rust
 use datafusion::prelude::*;
@@ -1958,10 +3480,12 @@ _Quick Debug_: When building queries dynamically, verify the generated column li
 > **See also:**
 >
 > - [Apache Spark DataFrames] for similar dynamic construction patterns
-> - [`expr_api.rs`] for advanced expression building examples
-> - [`schema`] API documentation for schema introspection
+> - [`expr_api`] for advanced expression building examples
+> - [`schema`](schema-management.md) API documentation for schema introspection
 
 ### Memory Management & Streaming
+
+> **Note:** This section covers execution patterns. For production tuning, see [Best Practices](best-practices.md).
 
 Handle large datasets efficiently by understanding when to collect vs stream, and how to process data incrementally.
 
@@ -2073,7 +3597,68 @@ _Quick Debug_: If you're running out of memory, check if you're calling `collect
 > - [`recordbatch`] - Arrow RecordBatch format for understanding batch processing
 > - [Best Practices](best-practices.md) for memory configuration
 
-### Error Handling & Recovery
+### Error Handling and Observability
+
+**DataFusion catches plan errors at build time—before any data moves. SQL catches everything at runtime.**
+
+This separation is the DataFrame API's safety advantage: invalid column names, type mismatches, and schema errors surface immediately when you call `.filter()` or `.select()`, not when you finally execute.
+
+**The Mindfight: Compile-Time vs Runtime Errors**
+
+| Error Type         | DataFrame                   | SQL                           |
+| ------------------ | --------------------------- | ----------------------------- |
+| Unknown column     | `Err` at `.filter()` call   | Runtime parse/execution error |
+| Type mismatch      | `Err` at `.with_column()`   | Runtime execution error       |
+| File not found     | `Err` at `.collect().await` | Runtime (same)                |
+| Invalid expression | `Err` at build time         | Runtime parse error           |
+
+**The `Result<DataFrame>` Pattern:**
+
+```rust
+// Construction errors are synchronous (no await)
+fn build_pipeline(df: DataFrame) -> datafusion::error::Result<DataFrame> {
+    df.filter(col("price").gt(lit(0)))?        // May fail: column not found
+      .with_column("tax", col("price") * lit(0.1))?  // May fail: type mismatch
+      .select(vec![col("product"), col("tax")])      // May fail: column not found
+}
+
+// Execution errors are asynchronous
+async fn run_pipeline(df: DataFrame) -> datafusion::error::Result<()> {
+    build_pipeline(df)?   // Construction errors caught here
+        .show().await?;   // Execution errors caught here (IO, memory, etc.)
+    Ok(())
+}
+```
+
+#### The `explain()` Matrix: Debugging Plans
+
+Use `df.explain(verbose, analyze)` to inspect what DataFusion will do:
+
+| Call                    | Shows                                 | Use When                    |
+| ----------------------- | ------------------------------------- | --------------------------- |
+| `explain(false, false)` | Logical + Physical plan (basic)       | Quick sanity check          |
+| `explain(true, false)`  | Verbose plan with details             | Understanding optimizations |
+| `explain(false, true)`  | **EXPLAIN ANALYZE** (execution stats) | Performance debugging       |
+| `explain(true, true)`   | Verbose + Analyzed                    | Deep investigation          |
+
+```rust
+// See what optimizations were applied
+let plan = df.clone().explain(false, false)?;
+plan.show().await?;
+
+// See actual execution statistics
+let analyzed = df.clone().explain(false, true)?;
+analyzed.show().await?;
+```
+
+**What to look for in EXPLAIN output:**
+
+- **Projection pushdown**: Are only needed columns being read?
+- **Predicate pushdown**: Is the filter near the data source?
+- **Filter merging**: Were multiple `.filter()` calls combined?
+- **Partition pruning**: Were irrelevant partitions skipped?
+
+#### Graceful Degradation
 
 Build robust data pipelines with graceful error handling and recovery patterns.
 
@@ -2392,78 +3977,6 @@ async fn audited_pipeline() -> datafusion::error::Result<()> {
 > - [mlinspect] - Python framework for ML pipeline inspection
 > - [Mixing SQL and DataFrames](#mixing-sql-and-dataframes) section
 
-### Subqueries
-
-Subqueries allow you to use the result of one query within another query. DataFusion supports scalar subqueries (returning a single value), IN subqueries (checking membership), and EXISTS subqueries (checking existence).
-
-#### Scalar Subqueries
-
-```rust
-use datafusion::prelude::*;
-use datafusion::logical_expr::expr::ScalarSubquery;
-use datafusion::functions_aggregate::expr_fn::avg;
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    // Register tables
-    let orders = dataframe!(
-        "order_id" => [1, 2, 3, 4],
-        "amount" => [100, 200, 150, 300]
-    )?;
-    ctx.register_table("orders", orders.clone().into_view())?;
-
-    // Find orders above average
-    let avg_subquery = ctx.table("orders").await?
-        .aggregate(vec![], vec![avg(col("amount"))])?
-        .select(vec![avg(col("amount"))])?
-        .into_unoptimized_plan();
-
-    let result = ctx.table("orders").await?
-        .filter(col("amount").gt(scalar_subquery(Arc::new(avg_subquery))))?;
-
-    result.show().await?;
-    Ok(())
-}
-```
-
-### IN Subqueries
-
-```rust
-use datafusion::prelude::*;
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    let customers = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
-
-    let premium_customers = dataframe!(
-        "customer_id" => [1, 3]
-    )?;
-
-    ctx.register_table("customers", customers.into_view())?;
-    ctx.register_table("premium", premium_customers.into_view())?;
-
-    // Find customers who are premium
-    let premium_ids = ctx.table("premium").await?
-        .select(vec![col("customer_id")])?
-        .into_unoptimized_plan();
-
-    let result = ctx.table("customers").await?
-        .filter(in_subquery(col("id"), Arc::new(premium_ids)))?;
-
-    result.show().await?;
-    Ok(())
-}
-```
-
 ## Mixing SQL and DataFrames
 
 One of DataFusion's strengths is the ability to seamlessly mix SQL and DataFrame APIs. You can start with SQL and refine with DataFrames, or build DataFrames and query them with SQL.
@@ -2677,7 +4190,7 @@ let result = df
 // If it works now, the commented line is the problem
 ```
 
-Faster approach using `.show()` at each step:
+Faster approach using [`.show()`] at each step:
 
 ```rust
 let step1 = df.filter(col("a").gt(lit(0)))?;
@@ -3137,13 +4650,13 @@ when(col("amount").gt(lit(1000)), lit("High"))
 - [DataFrame Concepts](concepts.md)
 - [Writing DataFrames](writing-dataframes.md)
 - [Best Practices](best-practices.md)
-- [SQL User Guide](../user-guide/sql/index.md)
-- [Aggregate Functions](../user-guide/sql/aggregate_functions.md)
-- [Window Functions](../user-guide/sql/window_functions.md)
+- [SQL User Guide](../../user-guide/sql/index.md)
+- [Aggregate Functions](../../user-guide/sql/aggregate_functions.md)
+- [Window Functions](../../user-guide/sql/window_functions.md)
 
 ### Examples
 
-- [expr_api.rs] - Complex expression patterns
+- [expr_api] - Complex expression patterns
 - [dataframe.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe.rs) - Basic DataFrame operations
 - [dataframe_transformations.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe_transformations.rs) - Examples from this guide
 - [All Examples](https://github.com/apache/datafusion/tree/main/datafusion-examples/examples)

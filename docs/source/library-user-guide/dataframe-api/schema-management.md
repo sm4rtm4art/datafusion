@@ -17,80 +17,26 @@
   under the License.
 -->
 
-<!-- TODO: MAJOR RESTRUCTURE NEEDED - This section has gold content but poor organization -->
-<!-- TODO: Move a concise "Type System essentials" primer to the start of this section (automatic coercion vs strict matching; safest widening rule; joins/unions require exact types). Either relocate the full type-system section here or add a 4–6 line summary with a link to details below. -->
-<!-- TODO: Reorder subsections for flow: Type System → Four Mismatch Types → Diagnose → Resolve → Automatic Schema Merging → At‑a‑glance Checklist. -->
-<!-- TODO: Add a compact table mapping each mismatch type → recommended fix (linking to code snippets). -->
-<!-- TODO: Consider splitting into two sections: "Schema Fundamentals" (type system, coercion rules) and "Schema Problem Solving" (mismatches, debugging, recovery) -->
-<!-- TODO: Add a visual diagram showing the type coercion hierarchy -->
-<!-- TODO: Add more real-world examples from common scenarios (JSON ingestion, database migrations, API versioning) -->
-
-<!-- TODO: Move a concise "Type System essentials" primer to the start of this section (automatic coercion vs strict matching; safest widening rule; joins/unions require exact types). Either relocate the full type-system section here or add a 4–6 line summary with a link to details below. -->
-<!-- TODO: Add examples showing each coercion in practice -->
-<!-- TODO: Explain what happens with Option<T> types -->
-<!-- TODO: Document string type coercions (Utf8 vs LargeUtf8 vs Binary) -->
-
-<!--
-. Start with a primer on the Type System. (Fulfills Move this section earlier, CRITICAL foundational knowledge)
-This sets the stage by explaining the "rules of the game."
-
-2. Introduce the Four Mismatch Types. (Fulfills Reorder subsections)
-This provides the core mental model for classifying any problem.
-
-3. Show how to Diagnose the problem. (Fulfills Reorder subsections)
-This teaches the mandatory first step.
-
-4. Show how to Resolve the problem. (Fulfills Reorder subsections)
-* Present union_by_name as the superpower for Name, Order, and Count.
-* Present the cast-then-union pattern as the solution for Type.
-* Present the select toolkit for advanced control.
-
-5. Present the Alternative Strategies. (Fulfills Reorder subsections)
-* Show "Automatic Schema Merging on Read" as the batch-loading alternative.
-
-6. Provide the Summary and Checklists. (Fulfills Add a compact table, Extract a 5–7 line "At a glance" checklist)
-This summarizes the key takeaways for quick reference.
--->
-
-<!-- TODO: Placement: Move this subsection to the very start of "Schema Management" (before Root Causes) -->
-<!-- TODO: Goal: Teach readers how to author explicit schemas and when to prefer them over inference -->
-<!-- TODO: Include: A minimal, copy-pastable example for building an Arrow Schema -->
-<!--
-Topics to cover (each with a short, runnable snippet):
-1) Building a Schema programmatically
-   - Use Arrow types: `use datafusion::arrow::datatypes::{DataType, Field, Schema};`
-   - `let schema = Arc::new(Schema::new(vec![ Field::new("id", DataType::Int64, false), Field::new("name", DataType::Utf8, true), ]));`
-   - Explain `nullable` and why it matters
-   - Use `SchemaRef` (`Arc<Schema>`) consistently
-2) Applying schemas per source format
-   - CSV: `CsvReadOptions::new().schema(&schema)` and when to avoid inference
-   - JSON/NDJSON: show `JsonReadOptions`/`NdJsonReadOptions` equivalent if available; otherwise add note to verify API
-   - Parquet: schema is embedded; show how to enforce a target logical schema via `.select()`/casts
-   - Avro/Arrow IPC: note schema behavior and options briefly
-3) Inference vs explicit schemas
-   - When to use explicit schemas (production); when inference is acceptable (exploration)
-   - If inferring, show how to increase `infer_schema_max_records`
-4) Complex and time-related types
-   - `Decimal128/256(precision, scale)` with guidance on choosing values
-   - `Timestamp` with/without timezone; note timezone semantics
-   - `Struct`, `List`, `Map` examples; Binary vs LargeBinary; Utf8 vs LargeUtf8
-5) Nullability and defaults
-   - Clarify that schemas do not encode default values
-   - Show adding defaults with `.with_column()`/`.select()` (`coalesce`, `lit`) after scan
-6) Reuse and versioning
-   - Keep a canonical schema in code or a schema registry file
-   - Reuse `SchemaRef` across reads and tests
-7) Macros and literals
-   - Show how `dataframe!` infers types; casting to enforce target types; using `lit()` safely
-8) References
-   - Link to Arrow `DataType`, `Field`, `Schema` docs and DataFusion read options per format
--->
-
-<!-- TODO: Convert this callout into a Sphinx admonition (tip) for consistency with the rest of the docs. -->
-
 # Schema Management
 
-Schema management is the process of defining, evolving, and reconciling the structure of your data as it moves through a pipeline. Accurate data types are critical for both correctness and performance: they let the optimizer push predicates, pick efficient vectorized kernels, and leverage columnar statistics. In self‑describing formats (Parquet, Avro, Arrow IPC) schemas are embedded and types are known at scan time; in text formats (CSV, NDJSON/JSON) types come from either an explicit schema you provide or inference (e.g., via [`schema_infer_max_records`]), which can drift and should be avoided in production. For custom sources implemented via a [`TableProvider`], the schema returned by [`.schema()`] is the source of truth for column names, data types, and nullability—keep it stable across scans so unions/joins and downstream optimizations behave predictably. For background on [Apache Arrow] schemas and fields (names, data types, nullability, metadata), see the [Arrow schema documentation][arrow schema docs] or the [Arrow schema docs.rs][arrow schema docs.rs].
+Schema management is the foundation of a robust data pipeline. It defines how you declare, evolve, and reconcile the structure of your data as it flows through DataFusion.
+
+**Why Schemas Matter:**
+Accurate types are critical for both **correctness** and **performance**. They allow the DataFusion optimizer to:
+
+- Push down predicates efficiently.
+- Select the fastest vectorized compute kernels.
+- Leverage columnar statistics to skip irrelevant data.
+
+### Where Schemas Come From
+
+DataFusion determines your schema in one of three ways, depending on your data source:
+
+1.  **Self-Describing Formats (Parquet, Avro, Arrow):** The schema is embedded in the file metadata. Types are known instantly at scan time.
+2.  **Text Formats (CSV, JSON):** Types must be either **provided explicitly** (Recommended) or **inferred** from a data sample (Risk of drift).
+3.  **Custom Sources (TableProvider):** The source of truth is the `schema()` method implemented by the provider. This contract must remain stable to ensure predictable query behavior.
+
+For a deep dive into the underlying [Apache Arrow] type system, see the [Arrow Schema Specification][arrow schema].
 
 > **Style Note:** In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
 
@@ -100,8 +46,6 @@ Schema management is the process of defining, evolving, and reconciling the stru
 ```
 
 This guide provides the fundamental concepts and practical tools within DataFusion's DataFrame API to handle these challenges effectively, making your data pipelines more robust and resilient to change.
-
-<!-- TODO: NEW SUBSECTION - Defining Schemas -->
 
 ## The Anatomy of a DataFusion Schema
 
@@ -178,10 +122,10 @@ Schema {
 
 Reading this representation:
 
-- **`name`**: The column's identifier, used by DataFrame operations.
-- **`data_type`**: The Arrow `DataType` describing the column's logical and physical type.
-- **`nullable`**: Whether the column may contain `NULL` values (`true` = `NULL`s allowed).
-- **`metadata`**: Arbitrary key/value pairs that can be attached to a field or the whole schema. This is often used by file readers to add extra semantic information.
+- **[`name`][Field]**: The column's identifier, used by DataFrame operations.
+- **[`data_type`][Field]**: The Arrow `DataType` describing the column's logical and physical type.
+- **[`nullable`][Field]**: Whether the column may contain [`NULL`] values (`true` = `NULL`s allowed).
+- **[`metadata`][Field]**: Arbitrary key/value pairs that can be attached to a field or the whole schema. This is often used by file readers to add extra semantic information.
 
 In the remainder of this section, we will focus on four practical aspects of schema management:
 
@@ -195,6 +139,8 @@ In the remainder of this section, we will focus on four practical aspects of sch
 The name is the primary identifier for a column in the DataFrame API. Operations like [`.select()`], [`.with_column()`], and [`.union_by_name()`] all rely on the column name to perform their work.
 
 > **Important:** Column names in DataFusion are **case-sensitive**. A mismatch in capitalization (e.g., `Region` vs. `region`) is treated as a different column.
+>
+> **Best Practice:** Because names are case-sensitive, always enforce a consistent naming convention (e.g., all snake_case) at your ingestion boundary. See [Strategy C: The Schema Adapter](#strategy-c-the-surgical-fix-name-mismatches-complex-logic) for how to normalize names.
 
 #### 2. Column Count
 
@@ -239,7 +185,8 @@ The `nullable` flag on a field is a critical part of its type definition. When m
 
 > The Golden Rule of Nullability: If a column is nullable in any of the input schemas, it will be nullable in the output schema.
 
-This is a widening conversion: a non‑nullable column can always be represented in a nullable one, but not the other way around. For a deeper discussion of how NULL values behave in expressions, filters, and joins, see the [Handling Null Values guide](./concepts.md#handling-null-values).
+This is a widening conversion: a non‑nullable column can always be represented in a nullable one, but not the other way around. For a deeper discussion of how NULL values behave in expressions, filters, and joins, see [Handling Missing Data & Nullability](#handling-missing-data--nullability) or
+the [Handling Null Values guide](./concepts.md#handling-null-values).
 
 ### Type Behavior in DataFrames
 
@@ -489,7 +436,7 @@ A schema specifies:
 
 ### Basic Schema Construction
 
-Build schemas with `Schema`, `Field`, and `DataType`; reuse them via `Arc<Schema>`.
+Build schemas with [`Schema`], [`Field`], and [`DataType`]; reuse them via `Arc<Schema>`.
 
 A minimal schema example demonstrating the core components:
 
@@ -707,7 +654,7 @@ let df = ctx.read_csv("data.csv", options).await?;
 
 A schema defines the structure of your data—column names, types, nullability, and nested structures. Applying schemas when reading files enables planning-time validation, improves query performance, and ensures data quality. This section covers schema strategies for different file formats, handling schema evolution, partition pruning, and modeling nested data. <br> **See also:**
 
-- [Schemas and Data Types](../concepts.md#schemas-and-data-types) for fundamentals and
+- [Schemas and Data Types](concepts.md#schemas-and-data-types) for fundamentals and
 - [Creating DataFrames](./creating-dataframes.md) for file reading basics.
 
 **Jump to:**
@@ -2223,7 +2170,7 @@ fn compare_schemas(actual: &Schema, expected: &Schema) -> Result<()> {
 }
 ```
 
-Call `compare_schemas` on the first `RecordBatch` or during table registration to fail immediately with a readable diff.
+Call the here defined example function `compare_schemas` on the first `RecordBatch` or during table registration to fail immediately with a readable diff.
 
 ### Partial Failure Tolerance for Multi-File Reads
 
@@ -2747,69 +2694,42 @@ By understanding these performance characteristics, you can build schema managem
 
 ## Debugging and Resolving Schema Mismatches
 
-When schemas refuse to line up—typically during [`.union()`], [`.union_by_name()`], [`.join()`], or multi-file reads—DataFusion surfaces schema errors instead of guessing and risking data corruption. This section is the **applied, troubleshooting playbook** for those moments: it connects the type system and schema concepts from earlier sections to concrete debugging steps and fixes. Use it when you see schema errors in logs and need a systematic way to understand the root cause and repair the pipeline.
+**Diagnose schema conflicts by classifying them into four types (Count, Order, Name, Type), resolve them using resilient union strategies or explicit casting, and implement robust error handling.**
 
-### The Root Cause: Why Schemas Break in the Real World
+In a perfect world, schemas never change. In the real world, **schemas drift constantly.** As an example the following shoul be mentioned:
 
-In modern data platforms, schemas rarely stay still. Most changes fall into three buckets:
+- **Source Drift:** A database migration widens `user_id` from `Int32` to `Int64`.
+- **Evolution:** A nightly export gains a new `customer_segment` column.
+- **Inconsistency:** One CSV uses `Region` (capitalized) while another uses `region`.
 
-- **Source-system drift** – the authoritative source shifts  
-  • Database migration: widen `user_id` Int32 → Int64  
-  • API v2: rename `userID` → `user_guid`, int → string
-
-- **Feature evolution** – new business requirements  
-  • Added column: nightly export gains `customer_segment`  
-  • Dropped column: deprecated field removed
-
-- **Inconsistent sources** – systems or humans never aligned  
-  • Join Salesforce (`ContactId`) with Zendesk (`requester_id`)  
-  • CSV header `Region` vs `region` (case-sensitive)
-
-> **Schema-on-read:** In data-lake practice, old files are immutable; new ones carry the new schema. DataFusion unifies them at query time ([`.union_by_name()`], reader-level merging), avoiding risky rewrites.
-
-<!-- TODO: Add concrete error messages for each mismatch type to help users recognize them -->
+When these shifts happen, DataFusion surfaces schema errors to protect data integrity. This section is your troubleshooting playbook.
 
 ### The Four Types of Mismatch
 
-No matter the root cause, a schema conflict will always manifest as one of four technical problems. Your first step in diagnosing any issue is to identify which of these you are facing:
+No matter the real-world cause—whether it's a migration, a typo, or a new feature—the conflict always manifests as one of **four technical problems**. Diagnosing which one you have is the first step to fixing it:
 
-1.  **Count Mismatch:** DataFrames have a different number of columns.
-2.  **Order Mismatch:** Columns are in a different order.
-3.  **Name Mismatch:** A column has a different name or capitalization (e.g., `cust_id` vs `customer_id`).
-4.  **Type Mismatch:** A column has a different data type (e.g., `Int32` vs `Int64`).
+1.  **Count Mismatch:** DataFrames have a different number of columns (e.g., a new feature added a field).
+2.  **Order Mismatch:** Columns are in a different sequence.
+3.  **Name Mismatch:** A column has a different name or capitalization (`Region` vs `region`).
+4.  **Type Mismatch:** A column has a different data type (`Int32` vs `Int64`).
 
-The rest of this guide is structured around this powerful mental model. We will show you how a single tool, [`.union_by_name()`], solves the first three problems, and how explicit casting solves the fourth.
+The rest of this guide maps these four problems to specific solutions using [`.union_by_name()`] (for shape/name issues) and explicit casting (for type issues).
 
-<!--TODO definitly implement a proper solution for every kind in the following !-->
+### Phase 1: Diagnosis
 
-<!-- TODO: Replace the generic TODO above with concrete per-mismatch examples (Count/Order/Name/Type), each with runnable snippets. -->
-
-<!-- TODO: Fix typo: "Mismatch" occurrences if any new ones are introduced. -->
-<!-- TODO: Add a helper function/macro for pretty-printing schema comparisons -->
-<!-- TODO: Show how to use df.explain() to see where schema errors occur in complex queries -->
-
-<!-- TODO: CONTINUE HERE ! -->
-
-### Diagnose the Schema Mismatch
-
-When an error fires
+When an error fires like:
 
 ```
-Schema error: Union schemas have different number of fields: 3 vs 4
-Arrow error: Schema error: Cannot merge incompatible data types Int32 and Utf8
+Schema error: Union schemas have different number of fields: 3 vs 4`
 ```
 
-The [`.schema()`][`.schema()`] method on a DataFrame tells you what the problem is.
-
-Compare both schemas side-by-side like in the following example:
+The [`.schema()`] method is your primary diagnostic tool. Compare both schemas side-by-side to spot the difference:
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::arrow::datatypes::DataType;
 
-// Assume df1 and df2 are failing to union due to a schema error.
+// Assume df1 and df2 are failing to union.
 // Print and compare their schemas side-by-side.
-
 println!("=== Schema 1 ===");
 for field in df1.schema().fields() {
     println!("{:20} {:?} nullable={}", field.name(), field.data_type(), field.is_nullable());
@@ -2821,323 +2741,309 @@ for field in df2.schema().fields() {
 }
 ```
 
-Example output revealing the problems:
+**Example Output:**
 
-```
+```text
 === Schema 1 ===
 customer_id          Int32 nullable=false
 amount               Float64 nullable=false
 region               Utf8  nullable=true
 
 === Schema 2 ===
-customer_id          Int64 nullable=false    ← Type changed!
+customer_id          Int64 nullable=false    ← Type Mismatch (Int32 vs Int64)
 amount               Float64 nullable=false
-Region               Utf8  nullable=true     ← Human error!
-category             Utf8  nullable=true     ← New column!
+Region               Utf8  nullable=true     ← Name Mismatch (region vs Region)
+category             Utf8  nullable=true     ← Count Mismatch (Extra column)
 ```
 
-This immediately surfaces the root cause (type drift, new column, naming inconsistency), turning a confusing error into an actionable checklist.
+### Phase 2: Resolution Strategies
 
-<!-- TODO: Break this into clearer subsections: "Quick Fixes" vs "Strategic Solutions" -->
-<!-- TODO: Add decision tree: When to use union_by_name vs select vs cast_to -->
+Once diagnosed, choose the strategy that fits your mismatch type.
 
-### Resolve - Strategies for Aligning Schemas
+#### Strategy A: The "Resilient" Fix (Count & Order Mismatches)
 
-<!-- TODO: Show the failure case first (what happens without union_by_name), then the solution -->
+**Best for:** Handling added/removed columns or shuffled column order. **This strategy solves ~90% of real-world schema mismatches.**
 
-### The Default Strategy: The `union_by_name()` Superpower
-
-For 90% of cases, this is the first and best tool you should reach for. It is the idiomatic DataFrame solution because it solves the most common and dangerous problems of schema evolution safely and elegantly.
-
-Its power comes from two capabilities SQL `UNION`/`UNION ALL` don't combine:
-
-1. **Name‑aligned, not positional**: SQL `UNION`/`UNION ALL` match by position and can misalign when order changes; [`.union_by_name()`] and [`.union_by_name_distinct()`] align by header.
-2. **Choice of semantics + flexible shape:** Creates a unified superset schema (fills missing columns with `NULL`) and lets you choose duplicates behavior — [`.union_by_name()`] keeps duplicates (SQL `UNION ALL`), [`.union_by_name_distinct()`] deduplicates (SQL `UNION`).
-
-This combination of safety and flexibility is a primary reason the DataFrame API is so effective for data engineering.
-
-<!-- TODO: Title is confusing - simplify to "The Two-Step Pattern" or "Type Alignment Pattern" -->
-
-### Process: The Core Pattern: Align Types, then Unify Shape
-
-While [`.union_by_name()`] handles shape and order, it still requires that matched columns have compatible types. If you have a type mismatch (e.g., `Int32` vs. `Int64`), you must align the types first.
-
-The example below demonstrates the complete, robust pattern for handling a real-world schema drift scenario.
+Use [`.union_by_name()`]. Unlike standard SQL unions which match by position, this method matches by column name and fills missing columns with `NULL`. For more information see the section [The Anatomy of a DataFusion Schema](#the-anatomy-of-a-datafusion-schema).
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::arrow::datatypes::DataType;
-
-// df1: 'id' is explicitly defined as Int64.
-let df1 = dataframe!(
-    "id" => [1_i64, 2_i64],
-    "name" => ["Alice", "Bob"]
-)?;
-
-// df2: 'id' is inferred as Int32, has a different column order, and an extra column.
-let df2 = dataframe!(
-    "name" => ["Carol", "Dave"],
-    "id" => [3, 4], // Rust integer literals default to Int32
-    "email" => ["c@ex.com", "d@ex.com"]
-)?;
-
-// Step 1: Align the schemas by casting df2's 'id' column to Int64.
-let df2_aligned = df2.with_column(
-    "id",
-    col("id").cast_to(&DataType::Int64, df2.schema())?
-)?;
-
-// Step 2: Now union_by_name can safely merge the aligned DataFrames.
-let result = df1.union_by_name(df2_aligned)?;
-
-// Resulting Schema: (id: Int64, name: Utf8, email: Utf8 nullable)
-// Verify the result:
-#[cfg(test)]
 use datafusion::assert_batches_eq;
 
-#[cfg(test)]
-assert_batches_eq!(
-    &[
-        "+----+-------+-----------+",
-        "| id | name  | email     |",
-        "+----+-------+-----------+",
-        "| 1  | Alice |           |",
-        "| 2  | Bob   |           |",
-        "| 3  | Carol | c@ex.com  |",
-        "| 4  | Dave  | d@ex.com  |",
-        "+----+-------+-----------+",
-    ],
-    &result.collect().await?
-);
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Schema: [a, b]
+    let df1 = ctx.read_csv("tests/data/example.csv", CsvReadOptions::default()).await?
+        .select_columns(&["a", "b"])?;
+
+    // Schema: [b, a, c] (Different order, extra column)
+    let df2 = ctx.read_csv("tests/data/example.csv", CsvReadOptions::default()).await?
+        .select_columns(&["b", "a", "c"])?;
+
+    // Fails: df1.union(df2) -> Schema Error
+    // Succeeds: Aligns by name, fills missing 'c' in df1 with NULL
+    let unified = df1.union_by_name(df2)?;
+
+    Ok(())
+}
 ```
 
-<!-- TODO: Link to API docs for `with_column`, `cast_to`, `col`, `lit`. -->
-<!-- TODO: Fix wording "Best Practise" → "Best Practice"; convert to Sphinx admonition (e.g., .. tip::). -->
+#### Strategy B: The "Alignment" Fix (Type Mismatches)
 
-> **Best Practise - "The Golden Rule of Type Casting"- :**<br>
-> To prevent data loss, you must **always cast the narrower type up to the widest common type.** For example, cast `Int32` up to `Int64`. This "widening conversion" is always safe.<br> > **Never cast** a wider type down to a narrower one (e.g., `Int64` -> `Int32`) unless you have explicitly proven that no values will be truncated. Doing so risks silent data corruption.
+**Best for:** Unifying numeric types (e.g., Int32/Int64) or compatible formats.
 
----
+Use [`.cast_to()`] inside a [`.with_column()`] transformation.
 
-<!-- TODO: Add more examples showing the power of select() for complex transformations -->
-<!-- TODO: Show how to handle nullable vs non-nullable mismatches -->
-
-<!-- TODO: Add reference links: [Schema], [Field], [DataType], [TimeUnit], [SessionContext], [CsvReadOptions], [JsonReadOptions], [NdJsonReadOptions], [ParquetReadOptions], [coalesce] -->
-
-<!-- TODO: This "Root Cause" section should come AFTER understanding the type system and mismatch types -->
-
-### Precision toolkit: [`.select()`] for full control
-
-Use this when you need surgical control over names, types, and semantics:
-
-- **Semantic transforms:** map legacy integer codes to strings with `when(...).otherwise(...)`
-- **Explicit rename/cast:** align columns that differ in name or type
-- **Custom defaults:** add missing columns with meaningful values (not just `NULL`)
-
-<!-- TODO: The table format is hard to read - consider reformatting or using a different layout -->
-
-### Strategic choice: resilient vs strict union
-
-Choose based on how you want the pipeline to behave when upstream schemas evolve.
-
-| Strategy     | Resilient union ([`.union_by_name()`])                               | Strict union ([`.union()`])                                               |
-| ------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Philosophy   | Robust default; tolerates non-breaking changes (e.g., extra columns) | Fail-fast; asserts identical name, type, and order                        |
-| When to use  | Pipelines that must keep working if non-critical columns are added   | Locked-down pipelines where any schema deviation should error immediately |
-| What it does | Matches by name; order ignored; missing columns filled with `NULL`   | Matches by position; errors if shape/order/types don't match exactly      |
-
-<!-- TODO: Polish copy: "An example is shown as the following :" → "Example:". -->
-
-An example is shown as the following :
+> **The Golden Rule of Casting:**
+> Always cast the **narrower** type up to the **widest** common type (e.g., `Int32` → `Int64`). This is safe and prevents data loss. Never cast down unless you are certain values won't be truncated. For a detailed hierarchy of safe conversions, see [Type Coercion Hierarchy](#mode-2-strict-matching-for-joins-and-unions).
 
 ```rust
 use datafusion::prelude::*;
 use datafusion::arrow::datatypes::DataType;
 
-// jan_df schema: (customer_id: Int32, status_code: Int32)
-// feb_df schema: (id: Int64, status: Utf8, category: Utf8)
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
 
-// Step 1: Manually align jan_df to match the target schema's core columns.
-let jan_aligned = jan_df.select(vec![
-    col("customer_id").cast_to(&DataType::Int64, jan_df.schema())?.alias("id"),
-    when(col("status_code").eq(lit(1)), lit("active"))
-        .otherwise(lit("inactive"))?
-        .alias("status"),
-])?;
+    // df1: id is Int32
+    let df1 = ctx.sql("SELECT 1::int as id").await?;
 
-// Step 2A: The Resilient Strategy (using union_by_name)
-// This is robust. It will succeed even though feb_df has an extra 'category' column.
-let resilient_union = jan_aligned.clone().union_by_name(feb_df.clone())?;
+    // df2: id is Int64
+    let df2 = ctx.sql("SELECT 2::bigint as id").await?;
 
-
-// Step 2B: The Strict Strategy (using union)
-// This is a fail-fast assertion. It requires selecting the exact same columns in the same order.
-let strict_union = jan_aligned
-    .select(vec![col("id"), col("status")])?
-    .union(
-        feb_df.select(vec![col("id"), col("status")])?
+    // Fix: Explicitly cast df1's 'id' to Int64 to match df2
+    let df1_aligned = df1.with_column(
+        "id",
+        col("id").cast_to(&DataType::Int64, df1.schema())?
     )?;
+
+    // Now they can be safely combined
+    let result = df1_aligned.union(df2)?;
+    Ok(())
+}
 ```
 
-**Hint:** Prefer union_by_name() unless you intentionally want a fail-fast positional check after alignment.
+#### Strategy C: The "Schema Adapter" (Name Mismatches & Complex Logic)
+
+**Best for:** Renaming columns, fixing capitalization, or enforcing a strict target schema.
+
+Use [`.select()`] with [`.alias()`] to manually map the problematic schema to your target shape. This acts as a "schema adapter": it picks exactly the columns you want and **normalizes** them (e.g. renaming `Region` to `region` to enforce snake_case).
+
+> **Golden Rule of Normalization:**
+> Enforce your schema boundaries explicitly. Don't just hope upstream data stays clean—use `.select()` + `.alias()` to build an explicit "Adapter Layer" that renames and filters columns before they enter your core logic.
+
+```rust
+// Problem: Incoming data has "Region" (capped), target expects "region" (lowercase)
+let df_fixed = df_incoming.select(vec![
+    col("Region").alias("region"), // 1. Rename "Region" -> "region"
+    col("amount"),                 // 2. Keep "amount" as-is
+    col("customer_id"),            // 3. Keep "customer_id"
+    // Note: Any other columns in df_incoming are dropped here, enforcing the schema.
+])?;
+```
+
+### Automatic Schema Merging
+
+DataFusion automatically attempts to merge schemas when reading multiple files (e.g., `ctx.read_parquet(...)`). As detailed in [Strategy 2: Self-Describing Formats](#strategy-2-self-describing-formats-parquetavroarrow--merge--normalize), this process promotes types (widening) and handles missing columns (nullability).
+
+**If automatic merging fails**, it is usually due to a strict incompatibility (e.g., `Int64` vs `String`). In these cases, you must fall back to **manual alignment**: read the files as separate DataFrames, apply **Strategy B (Casting)**, and then union them.
+
+### Summary Checklist
+
+| Problem   | Symptom                              | Solution                          |
+| :-------- | :----------------------------------- | :-------------------------------- |
+| **Shape** | "Different number of fields"         | Use [`.union_by_name()`]          |
+| **Order** | Columns swapped                      | Use [`.union_by_name()`]          |
+| **Type**  | "Incompatible types Int32 and Int64" | Use [`.cast_to()`] (cast up)      |
+| **Name**  | "Field not found"                    | Use [`.alias()`] in [`.select()`] |
+
+> **Performance Note:**
+>
+> [`.select()`] and [`.union_by_name()`] are logical transformations (metadata only) and are essentially free. [`.cast_to()`] requires rewriting data at execution time and has a computational cost. Always prefer fixing schemas at the source (write time) over casting at read time.
+
+### Debugging Resources
+
+- [Reading Explain Plans](../../user-guide/explain-usage.md) - How to debug query plans when schemas fail.
+- Medium: [Schema Mismatch Error: Understanding and Resolving][schema mismatch medium]
+- Stackademic: [Apache Spark Basics: Schema Enforcement vs Inference](https://blog.stackademic.com/apache-spark-basics-101-schema-enforcement-vs-schema-inference-78b6f35cec10) - Concepts of schema enforcement that apply universally to data engines.
 
 ---
 
-<!-- TODO: This should probably be moved earlier as it's a common first encounter with schema issues -->
-<!-- TODO: Add examples for JSON and CSV files, not just Parquet -->
-<!-- TODO: Explain what happens when automatic merging fails and how to debug it -->
+## Schema Management References
 
-### Automatic Schema Merging for File Sources
+This concludes the guide to Schema Management in DataFusion. Below are the technical specifications and architectural references required to debug type mismatches and memory layout issues when using the DataFrame API.
 
-When you pass multiple files of the same format (e.g., a list of Parquet files...), DataFusion computes a unified superset schema:
+### 1. The Physical Memory Model (Essential)
 
-**The Rules of the Merge:**
+_You cannot effectively use the DataFusion DataFrame API without understanding the underlying Arrow memory format. These specs explain "zero-copy" operations and why certain casts are expensive._
 
-- **It is Named, Not Positional:** It matches columns by their headers, making it robust against different column orders.
-- **It is Widening:** It promotes compatible numeric types to the widest common type (e.g., a mix of `Int32` and `Int64` columns will become `Int64`).
-- **It is Additive:** It marks columns that are missing in some files as nullable.
-- **It is Safe:** It will error on incompatible type conflicts that would lead to data corruption (e.g., `Int32` vs. `Utf8`).
+- **[Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)**
+  - **Focus on:** _Physical Memory Layout_ and _Variable-size Binary View Layout_ (StringView).
+  - **Why:** Explains why `StringView` is faster than `String` in DataFusion and how to optimize your schema for it.
+- **[Arrow Schema IPC Message](https://arrow.apache.org/docs/format/Columnar.html#schema-message)**
+  - **Why:** Debugging "Schema Mismatch" errors often requires understanding how Arrow serializes field metadata and nullability flags.
 
-**Limitations to be aware of:**
+### 2. On-Disk to In-Memory Mapping
 
-- **Nested type mismatches fail**: While simple types can be widened (e.g., `Int32` → `Int64`), nested structures must match exactly. For example, `List<Struct{a:Int32}>` and `List<Struct{a:Int64}>` are incompatible and will cause a merge error, even though the difference is only in the nested field's width.
-- **Metadata is discarded by default**: Schema-level and field-level metadata are dropped during merge unless you explicitly configure Parquet to preserve it (via `skip_metadata(false)` on `ParquetReadOptions`). If you rely on metadata annotations (e.g., for lineage or compliance), ensure consistent metadata across files or handle reconciliation explicitly.
+_Schema management often fails at the boundary between storage (Parquet/CSV) and memory (Arrow). Use these references to understand type coercion._
 
-```rust
-use datafusion::prelude::*;
+- **[Parquet Logical Types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md)**
+  - **Why:** Explains how DataFusion maps complex Parquet types (like `INT96` timestamps or `DECIMAL`) into Arrow types.
+- **[DataFusion Type Coercion Rules](https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/index.html)**
+  - **Why:** This module source code documents the exact rules DataFusion uses to resolve type conflicts (e.g., joining `Int32` with `Int64`).
 
-// Assume two files with schema drift:
-// v1.parquet: (id: Int32, name: Utf8)
-// v2.parquet: (id: Int64, name: Utf8, email: Utf8)
-let df = ctx.read_parquet(
-    vec!["v1.parquet", "v2.parquet"],
-    ParquetReadOptions::default()
-).await?;
+### 3. Execution & Optimization
 
-// The resulting schema is automatically unified.
-println!("Unified Schema:\n{}", df.schema().to_string_pretty());
+_Understanding how your schema design impacts the Query Plan._
 
-/* Expected Output:
-Unified Schema:
------------------
-id: Int64
-name: Utf8
-email: Utf8 (nullable)
------------------
-*/
+- **[DataFusion Optimizer Rules](https://docs.rs/datafusion/latest/datafusion/optimizer/index.html)**
+  - **Focus on:** `type_coercion` and `simplify_expressions`.
+  - **Why:** See how DataFusion automatically rewrites your DataFrame operations to handle schema discrepancies, sometimes adding hidden `CAST` operations that affect performance.
 
-// The data from both files is merged with NULLs for missing columns:
-#[cfg(test)]
-assert_batches_eq!(
-    &[
-        "+----+------+----------+",
-        "| id | name | email    |",
-        "+----+------+----------+",
-        "| 1  | A    |          |",  // v1.parquet: email didn't exist
-        "| 2  | B    |          |",
-        "| 3  | C    | c@ex.com |",  // v2.parquet: has email column
-        "| 4  | D    | d@ex.com |",
-        "+----+------+----------+",
-    ],
-    &df.collect().await?
-);
-```
+## Advanced Reading: Foundational Resources
 
-**Strategic guidance: choosing the right ingestion pattern**
+The DataFusion DataFrame API builds upon established patterns in database theory and system design. For users wishing to deepen their understanding of data modeling, schema evolution, and query engine internals, we recommend the following industry-standard resources.
 
-| Aspect      | Automatic Batch Read (this section)                                    | Iterative DataFrame Union ([`.union_by_name()`])                       |
-| :---------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Best for    | Batch loading a full, known set of files/partitions at once            | Incremental pipelines where files arrive one by one                    |
-| Control     | Automatic; merge rules are built-in                                    | Full control; inject casts/renames/defaults per file via [`.select()`] |
-| Performance | Often higher: planner can optimize the entire multi-file scan together | Flexible; per-file work may add overhead but enables custom logic      |
+### Data Modeling & Schema Design
 
-<!-- TODO: Convert this HTML-styled warning into a Sphinx admonition (`.. warning::`) for consistency with the docs. -->
+_Foundational texts on structuring data for consistency, scalability, and analytics._
 
-> **⚠️"A Critical Note on CSVs: Always Provide an Explicit Schema"**<br>
-> Schema inference for CSV files ([`schema_infer_max_records`]) is a common source of drift. A single "dirty" row outside the initial scan can change the inferred type between reads. <br> **In production, always provide an explicit schema**:
+- **The Data Model Resource Book (Vol 1-3)** by Len Silverston
+  The standard library of universal data models for common business domains.
+  [Vol 1](https://www.oreilly.com/library/view/the-data-model/9780471380238/), [Vol 2](https://www.oreilly.com/library/view/the-data-model/9780471353485/), [Vol 3](https://www.oreilly.com/library/view/the-data-model/9780470178454/)
 
-```rust
-use std::sync::Arc;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::prelude::*;
-// Define the canonical schema you expect.
-let schema = Arc::new(Schema::new(vec![
-    Field::new("id", DataType::Int64, false),
-    Field::new("name", DataType::Utf8, false),
-]));
-// --- Best Practice: Provide the schema explicitly ---
-let df_safe = ctx.read_csv(
-    "data.csv",
-    CsvReadOptions::new().schema(&schema)
-).await?;
-// --- If you must rely on inference, increase the sample size ---
-let df_inferred = ctx.read_csv(
-    "data.csv",
-    CsvReadOptions::new()
-    .with_schema_infer_max_records(10000) // Increase sample to 10k rows
-).await?;
-```
+- **Patterns of Data Modeling** by David Hay
+  A comprehensive guide to the conceptual structures that underlie robust data design.
+  [Patterns of Data Modeling](https://www.oreilly.com/library/view/patterns-of-data/9781439819906/)
+
+- **The Data Warehouse Toolkit** by Ralph Kimball & Margy Ross
+  The definitive guide to Dimensional Modeling (Star Schemas), the most common design pattern for analytical query engines like DataFusion.
+  [The Data Warehouse Toolkit](https://www.oreilly.com/library/view/the-data-warehouse/9781118530801/)
+
+### Database Internals & Systems
+
+_Essential reading for understanding the mechanisms of storage, encoding, and execution._
+
+- **Designing Data-Intensive Applications** by Martin Kleppmann
+  A modern classic on distributed systems. Chapters on **Encoding and Evolution** are particularly relevant for understanding schema management in modern data pipelines.
+  [Designing Data-Intensive Applications](https://www.oreilly.com/library/view/designing-data-intensive-applications/9781491903063/)
+
+- **How Query Engines Work** by Andy Grove
+  Written by the creator of DataFusion, this book bridges the gap between general database theory and the specific implementation of a query engine.
+  [How Query Engines Work](https://leanpub.com/how-query-engines-work)
 
 ---
 
-<!-- TODO: Extract a 5–7 line "At a glance" checklist and place it near the start of the section (keep the full version here). -->
+---
 
-<!-- TODO: This checklist is great but buried at the end - consider moving key points up front -->
-<!-- TODO: Add a "Quick Reference Card" format that users can print/bookmark -->
+<!-- Invisible References (Sorted by Category) -->
 
-## Summary: A Strategic Checklist
+<!-- External Standards -->
 
-Now that you have the tools, here is a strategic summary for building and debugging robust pipelines.
+[Apache Arrow]: https://arrow.apache.org/
+[arrow schema]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[arrow schema docs]: https://arrow.apache.org/cookbook/py/schema.html
+[arrow schema rust]: https://github.com/apache/arrow-rs/tree/main/arrow/examples
+[arrow dtype]: https://arrow.apache.org/docs/python/api/datatypes.html
+[`arrow` crate]: https://docs.rs/arrow/latest/arrow/
+[`arrow::compute::can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
+[`can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
+[`Schema`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html
+[`Field`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
+[`DataType`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html
 
-### The Debugging Workflow
+<!-- DataFusion Core Types -->
 
-When schemas won't align, check for these four mismatch types in order:
+[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[DFSchema::inner]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
+[`DFSchema::field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
+[`DFSchema::logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
+[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+[TableProvider::schema]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
+[`ListingTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`SchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
+[`DataFusionError`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html
+[`DataFusionError::Plan`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.Plan
+[`DataFusionError::SchemaError`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.SchemaError
+[`NULL`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.NULL.html
 
-1. **Column Count Mismatch**: Are columns missing or extra?
+<!-- DataFusion Methods -->
 
-   - **Fix**: Use `.union_by_name()` to handle this automatically.
+[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.alias
+[`col()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.col.html
+[`.cast_to()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.cast_to
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.to_string_pretty()`]: https://docs.rs/serde_json/latest/serde_json/fn.to_string_pretty.html
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
+[`.union_by_name_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name_distinct
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`coalesce`]: https://docs.rs/datafusion-functions/latest/datafusion_functions/core/expr_fn/fn.coalesce.html
+[`avg()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/average/index.html
+[`count()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/count/index.html
+[`max()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
+[`median()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/median/index.html
+[`min()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
+[`stddev()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/stddev/index.html
+[typesignature]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.TypeSignature.html
 
-2. **Column Order Mismatch**: Are the columns in a different order?
+<!-- DFSchema Methods (Advanced) -->
 
-   - **Fix**: Use `.union_by_name()` to safely ignore positional order.
+[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
+[`.datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
+[`.datatype_is_semantically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_semantically_equal
+[`.field_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_names
+[`.field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
+[`field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
+[`.field_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_qualified_name
+[`.field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
+[`.fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
+[`.has_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
+[`.has_column_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_qualified_name
+[`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
+[`.index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column
+[`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
+[`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.matches_arrow_schema
+[`.maybe_index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.maybe_index_of_column
+[`nullable()`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html#method.nullable
+[`.qualified_field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.qualified_field_with_name
+[Field]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
 
-3. **Column Name Mismatch**: Are there typos or capitalization differences?
+<!-- IO & Configuration -->
 
-   - **Fix**: Use [`.alias()`] within a `.select()` expression to standardize names.
+[`CsvReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
+[`NdJsonReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
+[`ParquetReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
+[`has_header`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#structfield.has_header
+[`infer_schema_max_records`]: https://docs.rs/deltalake/latest/deltalake/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
 
-4. **Column Type Mismatch**: Are the types incompatible?
-   - **Fix**: Use `.cast_to()` to unify types, always casting up to the widest common type to prevent data loss.
+<!-- External Reading -->
 
-<!-- .cast_to() is NOT metadata-only - it transforms actual data and has a performance cost -->
+[avro-evolution]: https://avro.apache.org/docs/current/specification/#schema-resolution
+[kleppmann]: https://dataintensive.net/
+[parquet-dremio]: https://medium.com/data-engineering-with-dremio/all-about-parquet-part-04-schema-evolution-in-parquet-c2c2b1aa6141
+[parquet-evolution]: https://spark.apache.org/docs/latest/sql-data-sources-parquet.html#schema-merging
+[schema mismatch medium]: https://medium.com/data-engineering-with-dremio/schema-mismatch-error-understanding-and-resolving-8d6c1e1a7e1a
 
-<!-- TODO: Add anti-patterns section: "What NOT to do" -->
-<!-- TODO: Add performance implications of different approaches -->
-
-### High-Level Best Practices
-
-- **At Write Time**: Enforce consistent schemas at the source if possible. An ounce of prevention is worth a pound of cure.
-- **At Read Time**: Prefer `.union_by_name()` for its resilience against common schema evolution problems.
-- **In Pipelines**: Validate schemas at critical steps. Fail fast if a schema deviates unexpectedly.
-- **For Debugging**: Inspect schemas liberally. `println!("{:#?}", df.schema())` is your best friend.
-
-> **Performance Note**
->
-> **Metadata operations** like `.select()` and `.union_by_name()` work at the logical plan level and are essentially free—they describe transformations without touching data until execution.
->
-> **Data operations** like `.cast_to()` perform actual data transformation and have a runtime cost proportional to your dataset size. Type casts materialize new arrays with converted values, requiring a full scan and compute pass over the data.
->
-> When designing pipelines, prefer schema alignment at read time (via explicit schemas) over runtime casts to minimize compute overhead.
-
-<!-- TODO: Move this section earlier (just after the intro) or insert a condensed primer there; keep full details here. -->
-
-<!-- TODO: This is CRITICAL foundational knowledge - should be at the START of the section! -->
-<!-- TODO: Add examples of what happens when you violate these rules -->
-<!-- TODO: Explain nullable type coercion rules -->
-
-### References <!--TODO References -->
-
-- Medium Article [Schema Mismatch Error:- Understanding and Resolving][schema mismatch medium]
-
+<!-- Invisible References (Sorted by Category)
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.cast_to()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.cast_to
+[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.alias
+[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/config/struct.ConfigOptions.html
 [`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
 [`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
@@ -3219,5 +3125,79 @@ When schemas won't align, check for these four mismatch types in order:
 [kleppmann]: https://dataintensive.net/
 [parquet-dremio]: https://medium.com/data-engineering-with-dremio/all-about-parquet-part-04-schema-evolution-in-parquet-c2c2b1aa6141
 [`infer_schema_max_records`]: https://docs.rs/deltalake/latest/deltalake/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`Field`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
+[`Schema`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html
+[`nullable()`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html#method.nullable
 
----
+<>
+
+<!-- TODO: MAJOR RESTRUCTURE NEEDED - This section has gold content but poor organization -->
+<!-- TODO: Move a concise "Type System essentials" primer to the start of this section (automatic coercion vs strict matching; safest widening rule; joins/unions require exact types). Either relocate the full type-system section here or add a 4–6 line summary with a link to details below. -->
+<!-- TODO: Reorder subsections for flow: Type System → Four Mismatch Types → Diagnose → Resolve → Automatic Schema Merging → At‑a‑glance Checklist. -->
+<!-- TODO: Add a compact table mapping each mismatch type → recommended fix (linking to code snippets). -->
+<!-- TODO: Consider splitting into two sections: "Schema Fundamentals" (type system, coercion rules) and "Schema Problem Solving" (mismatches, debugging, recovery) -->
+<!-- TODO: Add a visual diagram showing the type coercion hierarchy -->
+<!-- TODO: Add more real-world examples from common scenarios (JSON ingestion, database migrations, API versioning) -->
+
+<!-- TODO: Move a concise "Type System essentials" primer to the start of this section (automatic coercion vs strict matching; safest widening rule; joins/unions require exact types). Either relocate the full type-system section here or add a 4–6 line summary with a link to details below. -->
+<!-- TODO: Add examples showing each coercion in practice -->
+<!-- TODO: Explain what happens with Option<T> types -->
+<!-- TODO: Document string type coercions (Utf8 vs LargeUtf8 vs Binary) -->
+
+<!--
+. Start with a primer on the Type System. (Fulfills Move this section earlier, CRITICAL foundational knowledge)
+This sets the stage by explaining the "rules of the game."
+
+2. Introduce the Four Mismatch Types. (Fulfills Reorder subsections)
+This provides the core mental model for classifying any problem.
+
+3. Show how to Diagnose the problem. (Fulfills Reorder subsections)
+This teaches the mandatory first step.
+
+4. Show how to Resolve the problem. (Fulfills Reorder subsections)
+* Present union_by_name as the superpower for Name, Order, and Count.
+* Present the cast-then-union pattern as the solution for Type.
+* Present the select toolkit for advanced control.
+
+5. Present the Alternative Strategies. (Fulfills Reorder subsections)
+* Show "Automatic Schema Merging on Read" as the batch-loading alternative.
+
+6. Provide the Summary and Checklists. (Fulfills Add a compact table, Extract a 5–7 line "At a glance" checklist)
+This summarizes the key takeaways for quick reference.
+-->
+
+<!-- TODO: Placement: Move this subsection to the very start of "Schema Management" (before Root Causes) -->
+<!-- TODO: Goal: Teach readers how to author explicit schemas and when to prefer them over inference -->
+<!-- TODO: Include: A minimal, copy-pastable example for building an Arrow Schema -->
+<!--
+Topics to cover (each with a short, runnable snippet):
+1) Building a Schema programmatically
+   - Use Arrow types: `use datafusion::arrow::datatypes::{DataType, Field, Schema};`
+   - `let schema = Arc::new(Schema::new(vec![ Field::new("id", DataType::Int64, false), Field::new("name", DataType::Utf8, true), ]));`
+   - Explain `nullable` and why it matters
+   - Use `SchemaRef` (`Arc<Schema>`) consistently
+2) Applying schemas per source format
+   - CSV: `CsvReadOptions::new().schema(&schema)` and when to avoid inference
+   - JSON/NDJSON: show `JsonReadOptions`/`NdJsonReadOptions` equivalent if available; otherwise add note to verify API
+   - Parquet: schema is embedded; show how to enforce a target logical schema via `.select()`/casts
+   - Avro/Arrow IPC: note schema behavior and options briefly
+3) Inference vs explicit schemas
+   - When to use explicit schemas (production); when inference is acceptable (exploration)
+   - If inferring, show how to increase `infer_schema_max_records`
+4) Complex and time-related types
+   - `Decimal128/256(precision, scale)` with guidance on choosing values
+   - `Timestamp` with/without timezone; note timezone semantics
+   - `Struct`, `List`, `Map` examples; Binary vs LargeBinary; Utf8 vs LargeUtf8
+5) Nullability and defaults
+   - Clarify that schemas do not encode default values
+   - Show adding defaults with `.with_column()`/`.select()` (`coalesce`, `lit`) after scan
+6) Reuse and versioning
+   - Keep a canonical schema in code or a schema registry file
+   - Reuse `SchemaRef` across reads and tests
+7) Macros and literals
+   - Show how `dataframe!` infers types; casting to enforce target types; using `lit()` safely
+8) References
+   - Link to Arrow `DataType`, `Field`, `Schema` docs and DataFusion read options per format
+-->
+
+<!-- TODO: Convert this callout into a Sphinx admonition (tip) for consistency with the rest of the docs. -->

@@ -30,57 +30,62 @@ This guide covers the core concepts you need to understand when working with Dat
 
 ## Introduction
 
-Do see where the dataframe lives in the following a architecutal overview scheme is shown. This scheme should not be informative, but as well guide the interest thourhgout this documentations. The Main focus is here, to understand where the Dataframe lives, what it is made of (under the hood) to get a deeper understanding of the inner workings and how changes or descisions might interact with the querey execution.
+To understand where DataFrames fit in DataFusion, consider the following architectural overview. This diagram is central to understanding the inner workings—how decisions you make interact with query execution.
 
 **The architectural overview schema:**
 
 ```
-                +------------------+
-                |  SessionContext  |
-                +------------------+
-                         |
-                         | captures state
-                         v
-                +------------------+
-                |   SessionState   |
-                |    (snapshot)    |
-                +------------------+
-                     /         \
-                    /           \
-       +-----------+             +-------------+
-       |   SQL     |             | DataFrame   |
-       |  ctx.sql  |             |   API (lazy)|
-       +-----------+             +-------------+
-               \                       /
-                \                     /
-                 v                   v
-             +-----------------------------+
-             |         LogicalPlan         |
-             +-----------------------------+
-                         |
-                         | optimize (rules: projection/predicate pushdown, etc.)
-                         v
-             +-----------------------------+
-             |     Optimized LogicalPlan   |
-             +-----------------------------+
-                         |
-                         | plan (physical planner)
-                         v
-             +-----------------------------+
-             |     ExecutionPlan (Physical)|
-             +-----------------------------+
-                         |
-                         | optimize (physical optimizer)
-                         v
-             +-----------------------------+
-             |   Optimized ExecutionPlan   |
-             +-----------------------------+
-                         |
-                         | execute (Tokio + CPU runtimes)
-                         v
-             +-----------------------------+
-             |     RecordBatch streams     |
-             +-----------------------------+
+                    ┌──────────────────┐
+                    │  SessionContext  │
+                    └────────┬─────────┘
+                             │
+                             │ captures state
+                             ▼
+                    ┌──────────────────┐
+                    │   SessionState   │
+                    │    (snapshot)    │
+                    └────────┬─────────┘
+                             │
+               ┌─────────────┴─────────────┐
+               │                           │
+               ▼                           ▼
+        ┌─────────────┐             ┌─────────────┐
+        │     SQL     │             │  DataFrame  │
+        │   ctx.sql   │             │  API (lazy) │
+        │   (parse)   │             │   (build)   │
+        └──────┬──────┘             └──────┬──────┘
+               │                           │
+               │ produces                  │ produces
+               │                           │
+               └───────────┬───────────────┘
+                           ▼
+               ┌───────────────────────────┐
+               │        LogicalPlan        │
+               └─────────────┬─────────────┘
+                             │
+                             │ optimize (projection/predicate pushdown, etc.)
+                             ▼
+               ┌───────────────────────────┐
+               │   Optimized LogicalPlan   │
+               └─────────────┬─────────────┘
+                             │
+                             │ plan (physical planner)
+                             ▼
+               ┌───────────────────────────┐
+               │ ExecutionPlan (Physical)  │
+               └─────────────┬─────────────┘
+                             │
+                             │ optimize (physical optimizer)
+                             ▼
+               ┌───────────────────────────┐
+               │  Optimized ExecutionPlan  │
+               └─────────────┬─────────────┘
+                             │
+                             │ execute (Tokio + CPU runtimes)
+                             ▼
+               ┌───────────────────────────┐
+               │    RecordBatch streams    │
+               └───────────────────────────┘
 ```
 
 > **Glossary snapshot**
@@ -91,6 +96,78 @@ Do see where the dataframe lives in the following a architecutal overview scheme
 > - **`LogicalPlan`**: Tree describing _what_ to compute (projection, filter, join, etc.).
 > - **`ExecutionPlan`**: Physical operator tree describing _how_ to compute (hash aggregate, parquet scan, shuffle, etc.).
 > - **`RecordBatch`**: Arrow data structure representing a chunk of rows in columnar form; execution produces streams of batches.
+
+## Two Paths to the Same Plan: Parser vs Builder
+
+The diagram above reveals DataFusion's most important architectural insight: **SQL and the DataFrame API are two different ways to construct the same thing—a `LogicalPlan`**.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Two Construction Paths                       │
+├─────────────────────────────┬───────────────────────────────────────┤
+│         SQL (Parser)        │       DataFrame API (Builder)         │
+├─────────────────────────────┼───────────────────────────────────────┤
+│  "SELECT a, b FROM t        │  ctx.table("t")?                      │
+│   WHERE a > 10"             │     .filter(col("a").gt(lit(10)))?    │
+│         │                   │     .select(vec![col("a"), col("b")])│
+│         │ parse             │         │                             │
+│         ▼                   │         │ build                       │
+│    ┌─────────┐              │         ▼                             │
+│    │  AST    │              │    (no intermediate AST)              │
+│    └────┬────┘              │         │                             │
+│         │ plan              │         │                             │
+│         ▼                   │         ▼                             │
+│  ┌─────────────┐            │  ┌─────────────┐                      │
+│  │ LogicalPlan │ ═══════════╪══│ LogicalPlan │  ← Identical!        │
+│  └─────────────┘            │  └─────────────┘                      │
+└─────────────────────────────┴───────────────────────────────────────┘
+```
+
+### Why This Matters
+
+Understanding this distinction is fundamental because it explains:
+
+1. **Why both APIs exist**: They serve different use cases with different ergonomics
+2. **Why mixing them is free**: Both produce the same `LogicalPlan`—no translation overhead
+3. **Why optimization is holistic**: The optimizer sees one unified plan, regardless of how you built it
+
+### Parser Path (SQL)
+
+```rust
+let df = ctx.sql("SELECT a, b FROM t WHERE a > 10").await?;
+```
+
+- **Input**: Query string
+- **Process**: Lexer → Parser → AST → Logical planner → `LogicalPlan`
+- **Strengths**: Familiar to SQL users, portable queries, easy to load from config files
+- **Trade-offs**: Runtime parsing overhead, string-based (no compile-time checks)
+
+### Builder Path (DataFrame API)
+
+```rust
+let df = ctx.table("t").await?
+    .filter(col("a").gt(lit(10)))?
+    .select(vec![col("a"), col("b")])?;
+```
+
+- **Input**: Method calls
+- **Process**: Direct `LogicalPlan` node construction (no parsing)
+- **Strengths**: Compile-time type checking, IDE autocomplete, programmatic composition
+- **Trade-offs**: More verbose for complex queries, Rust-specific
+
+### The Dataframe Abstraction
+
+This architecture follows principles established in the broader data science ecosystem. As described in [Towards Scalable Dataframe Systems][dataframe-paper], dataframes provide a powerful abstraction for data manipulation that has proven successful across languages (Python pandas, R data.frame, Spark DataFrame).
+
+DataFusion's contribution is providing **both** the programmatic builder pattern _and_ SQL parsing, unified through a common `LogicalPlan` representation. This means you can:
+
+- Write SQL for complex analytical queries (window functions, CTEs)
+- Use the DataFrame API for dynamic query construction in application code
+- Mix both in a single pipeline with zero overhead
+
+> **Key insight**: When you understand that SQL parsing and DataFrame building are just two construction paths to the same `LogicalPlan`, everything else—lazy evaluation, optimization, mixing APIs—follows naturally.
+
+[dataframe-paper]: https://arxiv.org/abs/2001.00888
 
 ## SessionContext: The Entry Point for DataFrames
 
@@ -380,6 +457,87 @@ When you call an action like `.collect()`:
    - Collect statistics for adaptive optimization
 
 > **Memory vs. Streaming**: `.collect()` buffers all results in memory—convenient but risky for large datasets. Use `.execute_stream()` for incremental processing or write directly to files.
+
+### The Async Runtime: Understanding Tokio
+
+Every DataFrame action (`.collect()`, `.show()`, `.execute_stream()`) is an `async` function. But why? DataFusion is built on [Tokio], Rust's most widely used async runtime, which serves as a work-stealing thread pool for both I/O and CPU-bound work.
+
+**Why Tokio?**
+
+DataFusion uses Tokio not just for network I/O (reading from S3, serving gRPC) but also for **CPU-bound work** like decoding Parquet, filtering rows, and computing aggregates. This might seem surprising—async is typically associated with I/O—but Tokio's work-stealing scheduler combined with Rust's zero-cost `async`/`await` makes it an excellent choice for parallelizing compute-heavy workloads. For a deeper dive, see [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks].
+
+**How It Works**
+
+When you call `.collect()` or `.execute_stream()`:
+
+1. **Partitioned Streams**: DataFusion creates multiple async [`Stream`]s (one per partition, controlled by [`target_partitions`])
+2. **Work Stealing**: Tokio's scheduler distributes work across threads—if one thread finishes early, it "steals" work from others
+3. **Cooperative Scheduling**: Each operator yields control after processing a batch, preventing any single task from monopolizing a thread (see [`coop` module])
+
+```text
+┌─────────────┐           ┏━━━━━━━━━━━━━━━━━━━┓┏━━━━━━━━━━━━━━━━━━━┓
+│             │thread 1   ┃     Decoding      ┃┃     Filtering     ┃
+│Tokio Runtime│           ┗━━━━━━━━━━━━━━━━━━━┛┗━━━━━━━━━━━━━━━━━━━┛
+│(thread pool)│thread 2   ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
+│             │           ┃   Decoding   ┃     Filtering     ┃       ...
+│             │     ...   ┗━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━┛
+│             │thread N   ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
+└─────────────┘           ┃     Decoding      ┃     Filtering     ┃
+                          ┗━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━┛
+                         ────────────────────────────────────────────▶ time
+```
+
+**Practical Implications**
+
+For most users, the async details are invisible—you just `await` your DataFrame operations and DataFusion handles parallelism automatically:
+
+```rust
+#[tokio::main]  // Creates the Tokio runtime
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // All these operations are async—they may do I/O or spawn parallel work
+    let df = ctx.read_parquet("data.parquet", ParquetReadOptions::default()).await?;
+    let results = df.filter(col("id").gt(lit(100)))?.collect().await?;
+
+    Ok(())
+}
+```
+
+**Advanced: Separating I/O and CPU Runtimes**
+
+For production systems with latency-sensitive I/O (e.g., serving queries while reading from S3), mixing I/O and CPU work on the same runtime can cause issues—CPU-heavy decoding can delay network packet processing, triggering TCP congestion control and throttling.
+
+The solution is using separate Tokio runtimes:
+
+- **I/O Runtime**: Handles network requests (object store reads, gRPC serving)
+- **CPU Runtime**: Handles compute-heavy work (decoding, filtering, aggregating)
+
+```text
+┌─────────────┐    ┌─────────────┐
+│ IO Runtime  │    │ CPU Runtime │
+│ (network)   │───▶│ (compute)   │───▶ Results
+└─────────────┘    └─────────────┘
+```
+
+> **Example**: See [`thread_pools.rs`] for a complete example of running DataFusion with separate I/O and CPU runtimes, including how to configure `ObjectStore` to use a specific runtime.
+
+**Key Configuration**
+
+| Setting               | Purpose                            | Default             |
+| --------------------- | ---------------------------------- | ------------------- |
+| [`target_partitions`] | Number of parallel streams/threads | Number of CPU cores |
+| Batch size            | Rows processed before yielding     | 8192                |
+
+> **Deep Dive**: For the complete technical details including ASCII diagrams of thread scheduling, see the [Thread Scheduling documentation] in the main crate docs.
+
+[Tokio]: https://tokio.rs
+[`Stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
+[`target_partitions`]: ../../user-guide/configs.md#target_partitions
+[`coop` module]: https://docs.rs/datafusion-physical-plan/latest/datafusion_physical_plan/coop/index.html
+[`thread_pools.rs`]: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/thread_pools.rs
+[Thread Scheduling documentation]: https://docs.rs/datafusion/latest/datafusion/index.html#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
+[Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks]: https://thenewstack.io/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/
 
 ### Optimizer architecture note
 
