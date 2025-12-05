@@ -37,62 +37,122 @@ DataFusion [`DataFrame`]s are modeled after the [Pandas DataFrame] interface and
 :depth: 2
 ```
 
+## The DataFrame Lifecycle
+
+The documentation follows the **lifecycle of a DataFrame**—from creation to execution (Inspiered by [the desctiption of physics of photons][photon]):
+
+| Phase             | Document                                      | What Happens                                |
+| ----------------- | --------------------------------------------- | ------------------------------------------- |
+| **Understanding** | [Concepts](concepts.md)                       | What are DataFrames and where do they live? |
+| **Birth**         | [Creating DataFrames](creating-dataframes.md) | Instantiate from files, SQL, in-memory data |
+| **Health**        | [Schema Management](schema-management.md)     | Inspect, validate, and evolve schema        |
+| **Life**          | [Transformations](transformations.md)         | Filter, join, aggregate, sort, enrich       |
+| **Death**         | [Writing & Executing](writing-dataframes.md)  | Materialize results or persist to storage   |
+| **Wellness**      | [Best Practices](best-practices.md)           | Optimize performance and debug issues       |
+| **Graduation**    | [Advanced Topics](dataframes-advance.md)      | S3, Kafka, Arrow Flight, custom execution   |
+
 ## Quick Navigation
 
-### I want to...
-
-- [Create my first DataFrame](creating-dataframes.md#quick-start) - Start here if you're new
-- [Understand core concepts](concepts.md) - SessionContext, LogicalPlan, lazy evaluation
-- [Transform data](transformations.md) - Filter, join, aggregate operations
-- [Write results to files](writing-dataframes.md) - Export to Parquet, CSV, JSON
-- [Optimize performance](best-practices.md) - Tuning & debugging
-
-### Complete Guide
-
-1. **[Concepts](concepts.md)** - Core foundations: SessionContext, LogicalPlan relationships, lazy evaluation, null values
-2. **[Creating DataFrames](creating-dataframes.md)** - All creation methods (files, tables, SQL, in-memory) and execution methods
-3. **[Transformations](transformations.md)** - Data manipulation: selection, filtering, aggregation, joins, sorting, set operations, subqueries, SQL mixing
-4. **[Writing DataFrames](writing-dataframes.md)** - Persistence: writing to Parquet, CSV, JSON, and registered tables
-5. **[Best Practices](best-practices.md)** - Performance tuning, debugging techniques, common pitfalls, and optimization strategies
-
-## 🎯 Quick Navigation
-
-| I want to...                            | Go to                                                                           |
-| --------------------------------------- | ------------------------------------------------------------------------------- |
-| **Understand the basics**               |                                                                                 |
-| Learn what DataFrames are conceptually  | [User Guide](../../user-guide/dataframe.md)                                     |
-| Understand Arrow & RecordBatches        | [Arrow Introduction](../../user-guide/arrow-introduction.md)                    |
-| Learn about data types                  | [Data Types](../../user-guide/sql/data_types.md)                                |
-| **Work with DataFrames**                |                                                                                 |
-| Create my first DataFrame               | [Creating DataFrames](creating-dataframes.md)                                   |
-| Understand SessionContext & LogicalPlan | [Concepts](concepts.md)                                                         |
-| Filter, join, or aggregate data         | [Transformations](transformations.md)                                           |
-| Mix SQL with DataFrames                 | [Transformations § SQL](transformations.md#mixing-sql-and-dataframes)           |
-| Save results to files                   | [Writing DataFrames](writing-dataframes.md)                                     |
-| **Optimize & Debug**                    |                                                                                 |
-| Improve query performance               | [Best Practices](best-practices.md)                                             |
-| Debug query plans                       | [Best Practices § Debugging](best-practices.md#debugging-techniques)            |
-| Configure batch sizes                   | [Best Practices § Configuration](best-practices.md#physical-optimizer-controls) |
+| I want to...                            | Go to                                                                              |
+| --------------------------------------- | ---------------------------------------------------------------------------------- |
+| **Understand the basics**               |                                                                                    |
+| Learn what DataFrames are conceptually  | [User Guide](../../user-guide/dataframe.md)                                        |
+| Understand Arrow & RecordBatches        | [Arrow Introduction](../../user-guide/arrow-introduction.md)                       |
+| Learn about data types                  | [Data Types](../../user-guide/sql/data_types.md)                                   |
+| **Create DataFrames**                   |                                                                                    |
+| Create my first DataFrame               | [Creating DataFrames](creating-dataframes.md)                                      |
+| Understand SessionContext & LogicalPlan | [Concepts](concepts.md)                                                            |
+| **Transform data**                      |                                                                                    |
+| Filter, join, or aggregate data         | [Transformations](transformations.md)                                              |
+| Mix SQL with DataFrames                 | [Transformations § SQL](transformations.md#mixing-sql-and-dataframes)              |
+| **Execute and write results**           |                                                                                    |
+| Execute DataFrames and get results      | [Writing & Executing](writing-dataframes.md#dataframe-execution-in-memory-results) |
+| Save results to files                   | [Writing DataFrames](writing-dataframes.md#writing-dataframes-persistent-storage)  |
+| Stream large results                    | [Streaming Execution](writing-dataframes.md#streaming-execution)                   |
+| **Optimize & Debug**                    |                                                                                    |
+| Improve query performance               | [Best Practices](best-practices.md)                                                |
+| Debug query plans                       | [Best Practices § Debugging](best-practices.md#debugging-techniques)               |
+| Configure batch sizes                   | [Best Practices § Configuration](best-practices.md#physical-optimizer-controls)    |
 
 ## Common Operations Quick Reference
 
-- SELECT a,b → `df.select(vec![col("a"), col("b")])?`
-- WHERE a > 5 → `df.filter(col("a").gt(lit(5)))?`
-- GROUP BY a, SUM(b) → `df.aggregate(vec![col("a")], vec![sum(col("b"))])?`
-- ORDER BY a DESC → `df.sort(vec![col("a").sort(false, true)])?`
-- LIMIT 10 → `df.limit(0, Some(10))?`
-- JOIN USING (id) → `left.join(right, JoinType::Inner, &["id"], &["id"], None)?`
-- DISTINCT → `df.distinct()?`
-- UNION → `df1.union(df2)?`
-- SHOW → `df.show().await?`
-- EXPLAIN → `df.explain(false, false)?`
+```text
+SQL                          DataFrame API
+─────────────────────────────────────────────────────────────────────────
+SELECT a, b                  df.select(vec![col("a"), col("b")])?
+WHERE a > 5                  df.filter(col("a").gt(lit(5)))?
+GROUP BY a, SUM(b)           df.aggregate(vec![col("a")], vec![sum(col("b"))])?
+ORDER BY a DESC              df.sort(vec![col("a").sort(false, true)])?
+LIMIT 10                     df.limit(0, Some(10))?
+JOIN ... USING (id)          left.join(right, JoinType::Inner, &["id"], &["id"], None)?
+DISTINCT                     df.distinct()?
+UNION ALL                    df1.union(df2)?
+```
+
+**Execution actions:**
+
+```text
+Action                       DataFrame API
+─────────────────────────────────────────────────────────────────────────
+Show results                 df.show().await?
+Collect to memory            df.collect().await?
+Stream results               df.execute_stream().await?
+Explain plan                 df.explain(false, false)?.show().await?
+Cache for reuse              df.cache().await?
+```
 
 ## I/O Quick Reference
 
-- Read CSV → `ctx.read_csv("data.csv", CsvReadOptions::new()).await?`
-- Read JSON (NDJSON) → `ctx.read_json("data.json", NdJsonReadOptions::default()).await?`
-- Read Parquet → `ctx.read_parquet("data.parquet", ParquetReadOptions::default()).await?`
-- Write Parquet (partitioned) → `df.write_parquet("out/", DataFrameWriteOptions::new().with_partition_by(vec!["year".to_string()]), None).await?`
-- Write Parquet (single file) → `df.write_parquet("out/file.parquet", DataFrameWriteOptions::new().with_single_file_output(true), None).await?`
-- Write CSV (gzip, tab) → `df.write_csv("out.csv.gz", DataFrameWriteOptions::new(), Some(CsvOptions::default().with_delimiter(b'\t').with_has_header(true).with_compression(CompressionTypeVariant::GZIP))).await?`
-- Register in-memory table → `ctx.register_table("t", Arc::new(MemTable::try_new(schema, vec![batches])?))?`
+**Reading data:**
+
+```rust
+// CSV
+ctx.read_csv("data.csv", CsvReadOptions::new()).await?
+
+// JSON (NDJSON)
+ctx.read_json("data.json", NdJsonReadOptions::default()).await?
+
+// Parquet
+ctx.read_parquet("data.parquet", ParquetReadOptions::default()).await?
+
+// In-memory
+ctx.read_batch(record_batch)?
+```
+
+**Writing data:**
+
+```rust
+// Parquet (partitioned by year)
+df.write_parquet(
+    "out/",
+    DataFrameWriteOptions::new().with_partition_by(vec!["year".to_string()]),
+    None
+).await?
+
+// Parquet (single file)
+df.write_parquet(
+    "out/file.parquet",
+    DataFrameWriteOptions::new().with_single_file_output(true),
+    None
+).await?
+
+// CSV with compression
+df.write_csv(
+    "out.csv.gz",
+    DataFrameWriteOptions::new(),
+    Some(CsvOptions::default()
+        .with_delimiter(b'\t')
+        .with_has_header(true)
+        .with_compression(CompressionTypeVariant::GZIP))
+).await?
+```
+
+<!-- Link references -->
+
+[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`DataType`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html
+[Pandas DataFrame]: https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[photon]: https://www.sciencedaily.com/releases/2007/04/070402122514.htm

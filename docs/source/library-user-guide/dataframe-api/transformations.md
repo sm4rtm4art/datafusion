@@ -1756,6 +1756,13 @@ Whether you're enriching customer records with their orders, filtering products 
 
 Master joins, and you unlock the full power of relational data processing.
 
+> **DataFrame API coverage:** The DataFrame API supports all common join types ([`Inner`], [`Left`], [`Right`], [`Full`], [`LeftSemi`], [`LeftAnti`], and their right variants). Two SQL join types have **no direct DataFrame equivalent**:
+>
+> - [`NATURAL JOIN`] — use [`ctx.sql()`][`SessionContext::sql()`] or specify keys explicitly with [`.join()`]
+> - [`CROSS JOIN`] — use [`.join()`] with empty key lists, or [`ctx.sql("... CROSS JOIN ...")`][`SessionContext::sql()`]
+>
+> For most workflows, the DataFrame API is fully sufficient. Fall back to SQL for these edge cases.
+
 #### Why Joins Matter
 
 Real-world data rarely lives in a single table. Customers are in one file, orders in another, products in a third. Joins let you:
@@ -1785,30 +1792,52 @@ JOIN orders              -- right table
   ON customers.id = orders.customer_id   -- join keys
 ```
 
+Since we cannot cover a tutorial for joins, please follow other tutorials as but not only the following resources:
+
+| Resource                        | Focus                                                              |
+| :------------------------------ | :----------------------------------------------------------------- |
+| [Visual JOIN guide]             | Interactive visualization of all join types with animated examples |
+| [Join tutorial]                 | Why Venn diagrams are misleading for understanding joins           |
+| [Semi and Anti joins explained] | First-class existence checks that SQL forgot                       |
+| [PostgreSQL JOIN docs]          | Authoritative reference—DataFusion follows PostgreSQL semantics    |
+| [NULL handling in joins]        | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
+
 #### DataFrame API vs SQL
+
+**Two paths, same destination.** Both APIs compile to the same internal [`LogicalPlan`] and benefit from identical optimizer passes—the difference is _how_ you construct the query:
+
+| Aspect           | DataFrame API                                                 | SQL API                                           |
+| ---------------- | ------------------------------------------------------------- | ------------------------------------------------- |
+| **Construction** | Builder pattern—chain methods like [`.join()`], [`.filter()`] | Parser—write a query string, DataFusion parses it |
+| **Type safety**  | Compile-time checks; typos caught by `rustc`                  | Runtime errors; typos discovered at execution     |
+| **Composition**  | Programmatic; easy to build queries conditionally             | String-based; dynamic SQL requires concatenation  |
+| **Result**       | [`LogicalPlan`] → Optimizer → Execution                       | [`LogicalPlan` ]→ Optimizer → Execution           |
+
+**The multiplicity of SQL-Dialects**<br>
+DataFusion's SQL parser ([`sqlparser`]) accepts syntax from multiple dialects—PostgreSQL, MySQL, Snowflake, and others. Throughout this documentation, we use **PostgreSQL syntax** as the reference standard: it's widely understood, well-documented, and DataFusion's join semantics (NULL handling, outer join behavior) closely follow PostgreSQL conventions. <br>
+For more deeper insights follow [SQL Dialects][Understanding SQL Dialects (medium-article)]
 
 Both SQL and the DataFrame API support the standard join families:
 
-| Family      | SQL syntax                       | DataFrame [`JoinType`]  | Purpose                                     |
-| ----------- | -------------------------------- | ----------------------- | ------------------------------------------- |
-| **Inner**   | `INNER JOIN`                     | `Inner`                 | Only matching rows                          |
-| **Outer**   | `LEFT / RIGHT / FULL OUTER JOIN` | `Left`, `Right`, `Full` | Keep non-matches from one or both sides     |
-| **Semi**    | `LEFT / RIGHT SEMI JOIN`         | `LeftSemi`, `RightSemi` | Filter by existence (no columns from right) |
-| **Anti**    | `LEFT / RIGHT ANTI JOIN`         | `LeftAnti`, `RightAnti` | Filter by non-existence                     |
-| **Cross**   | `CROSS JOIN`                     | _(none)_                | Cartesian product (use empty keys)          |
-| **Natural** | `NATURAL JOIN`                   | _(none)_                | Auto-match same-named columns               |
-| **Mark**    | _(internal)_                     | `LeftMark`, `RightMark` | Adds boolean column for `EXISTS` subqueries |
+| Family      | SQL syntax                                   | DataFrame [`JoinType`]        | Purpose                                     |
+| ----------- | -------------------------------------------- | ----------------------------- | ------------------------------------------- |
+| **Inner**   | [`INNER JOIN`]                               | [`Inner`]                     | Only matching rows                          |
+| **Outer**   | [`LEFT`] / [`RIGHT`] / [`FULL OUTER JOIN`]   | [`Left`], [`Right`], [`Full`] | Keep non-matches from one or both sides     |
+| **Semi**    | [`LEFT / RIGHT SEMI JOIN`][`LEFT SEMI JOIN`] | [`LeftSemi`], [`RightSemi` ]  | Filter by existence (no columns from right) |
+| **Anti**    | [`LEFT / RIGHT ANTI JOIN`][`LEFT ANTI JOIN`] | [`LeftAnti`], [`RightAnti` ]  | Filter by non-existence                     |
+| **Cross**   | [`CROSS JOIN`]                               | _(none)_                      | Cartesian product (use empty keys)          |
+| **Natural** | [`NATURAL JOIN`]                             | _(none)_                      | Auto-match same-named columns               |
+| **Mark**    | _(internal)_                                 | [`LeftMark`], [`RightMark`]   | Adds boolean column for `EXISTS` subqueries |
 
-> **SQL-only joins:** `NATURAL JOIN` and `CROSS JOIN` have no direct `JoinType` variant.
-> Use `ctx.sql()` for natural joins; for cross joins, call `.join()` with empty key lists (see Anti-Pattern section).
+> **SQL-only joins:**<br> > [`NATURAL JOIN`] and [`CROSS JOIN`] have no direct [`JoinType`] variant.
+> Use [`ctx.sql()`][`SessionContext::sql()`] for natural joins; for cross joins, call [`.join()`] with empty key lists (see Anti-Pattern section).
 
-The [`.join()`] method signature:
+The [`.join()`] method signature in the datafusion dataframe-API:
 
 ```rust
-use datafusion::prelude::*;
-use datafusion::common::JoinType;
+use datafusion::prelude::*;  // Includes JoinType
 
-df.join(
+left_df.join(
     right_df,                    // 1. Right DataFrame
     JoinType::Inner,             // 2. Join type
     &["id"],                     // 3. Left key columns
@@ -1822,19 +1851,36 @@ df.join(
 - [`.join()`] — Pass column names (`&[&str]`) for each side plus an optional `filter: Option<Expr>`. DataFusion builds equality predicates from the columns.
 - [`.join_on()`] — Pass the full join condition as `Expr`s. Internally this wraps [`.join()`] with empty key lists and a combined filter expression (`expr_1 AND expr_2 ...`). Optimizer passes then extract equality predicates and treat them as equi-join keys.
 
-After optimization there should be **no meaningful performance difference**; pick whichever reads better for your use case. Note: `on_exprs` are combined with logical AND; if you need `OR`, build a single boolean expression manually:
+After optimization, both methods produce equivalent plans—**no performance difference** for standard equi-joins. However, [`.join()`] is the "safer" choice: you explicitly declare equi-join keys, guaranteeing hash/sort-merge algorithms. With [`.join_on()`], if the optimizer can't extract equality predicates from your expression, it may fall back to nested loop joins.
 
-```rust
-// OR condition: pass as single expression
-let df = left.join_on(right, JoinType::Inner,
-    [col("a").eq(col("a2")).or(col("b").eq(col("b2")))]  // single OR expr
-)?;
-```
+Pick whichever reads better for your use case.
+
+> **Gotcha: [`.join_on()`] uses AND, not OR**
+>
+> Multiple expressions passed to [`.join_on()`] are combined with [`AND`]:
+>
+> ```rust
+> // This means: a = a2 AND b = b2 (not OR!)
+> join_on(right, JoinType::Inner, [col("a").eq(col("a2")), col("b").eq(col("b2"))])
+> ```
+>
+> For [`OR`] logic, build a single expression:
+>
+> ```rust
+> // Match if EITHER a or b matches
+> join_on(right, JoinType::Inner, [col("a").eq(col("a2")).or(col("b").eq(col("b2")))])
+> ```
 
 > **Trade-off: DataFrame vs SQL**
 >
-> - **DataFrame shines:** Chain multiple joins fluently, [`.join_on()`] for complex conditions, Semi/Anti joins as first-class operations
-> - **SQL shines:** Visual clarity for multi-table joins, familiar `ON` clause syntax
+> | DataFrame API Advantages                                                                                                                                                   | SQL Advantages                                                        |
+> | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+> | **First-class Semi/Anti joins** — `JoinType::LeftAnti`, `LeftSemi` etc. are explicit; no workarounds needed (unlike PySpark where you'd use `LEFT JOIN` + `WHERE IS NULL`) | **Visual clarity** — Multi-table joins read naturally in SQL syntax   |
+> | **Type-safe composition** — Build joins conditionally with `if/else`; compiler catches column typos                                                                        | **Familiar syntax** — Standard `ON` clause understood by any SQL user |
+> | **Chained transformations** — `.join().filter().select()` flows naturally                                                                                                  | **Copy-paste ready** — Test queries directly in SQL tools             |
+> | **Complex conditions** — [`.join_on()`] accepts any `Expr`, not just column equality                                                                                       | **Self-documenting** — SQL is often readable by non-programmers       |
+>
+> **DataFusion-specific advantage:** Unlike many DataFrame libraries, DataFusion exposes the _full_ set of join types ([`LeftSemi`], [`RightSemi`], [`LeftAnti`], [`RightAnti`], [`LeftMark`], [`RightMark`]) as first-class operations—no need to emulate anti-joins with outer joins and null checks.
 
 #### How Joins Execute
 
@@ -1847,7 +1893,7 @@ Under the hood, DataFusion selects from [several join algorithms] based on your 
 | [**Symmetric Hash Join**]  | Streaming/unbounded data—both sides build hash tables, rows pruned via sliding windows.        |
 | [**Nested Loop Join**]     | General non-equi conditions where hash-based algorithms don't apply.                           |
 | [**Piecewise Merge Join**] | Single range filter (`<`, `>`, `<=`, `>=`)—much faster than nested loop for these cases.       |
-| [**Cross Join**]           | Cartesian product—used for SQL `CROSS JOIN` and `.join()` with empty key lists.                |
+| [**Cross Join**]           | Cartesian product—used for SQL [`CROSS JOIN`] and [`.join()`] with empty key lists.            |
 
 The optimizer _can_ (based on configuration and statistics):
 
@@ -1855,9 +1901,23 @@ The optimizer _can_ (based on configuration and statistics):
 - **Choose partition mode**—broadcast small tables or hash-partition both sides
 - **Push dynamic filters**—min/max bounds from the build side skip irrelevant probe data (e.g., Parquet row groups)
 
-These behaviors are tunable via `datafusion.optimizer.*` settings.
+These behaviors are tunable via [`datafusion.optimizer`] settings.
 
 All join algorithms leverage [Arrow]'s columnar format: instead of copying rows, DataFusion computes index arrays and uses vectorized [`take()`] operations to assemble results efficiently.
+
+> **Why DataFusion Joins Are Fast**
+>
+> Unlike traditional row-based databases, DataFusion combines several modern techniques:
+>
+> | Technique                          | Benefit                                                                                                                                          |
+> | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+> | **Columnar format (Arrow)**        | Read only the columns you need; SIMD instructions process thousands of keys in parallel                                                          |
+> | **Vectorized execution**           | Joins process batches of rows, not one at a time—simple inner loops let CPUs parallelize at the instruction level                                |
+> | **SQL = DataFrame**                | Both compile to the same `LogicalPlan`—identical optimizer benefits regardless of API choice                                                     |
+> | **Statistics-driven optimization** | Table metadata (row counts, min/max) guide join order and algorithm selection—[**16x faster** on TPC-H benchmarks][DataFusion Join Optimization] |
+> | **Late materialization**           | During joins, only key columns + row indices are processed; other columns are fetched afterward                                                  |
+>
+> The result: you describe _what_ to join, and the optimizer handles _how_—often matching or exceeding hand-tuned imperative code.
 
 #### Join Types at a Glance
 
@@ -1868,21 +1928,21 @@ Joins control how rows from two tables are matched and combined. The key decisio
 
 Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and Anti joins answer existence questions without adding columns from the right table.
 
-| Join Type          | Returns                   | Use Case                                    |
-| :----------------- | :------------------------ | :------------------------------------------ |
-| [`Inner`]          | Matches from both sides   | Standard join—only matching rows            |
-| [`Left`]           | All left + matching right | Keep all left rows (NULL if no match)       |
-| [`Right`]          | All right + matching left | Keep all right rows (NULL if no match)      |
-| [`Full`]           | Everything from both      | See all data, matched or not                |
-| [`LeftSemi`]       | Left rows WITH matches    | "Which left rows have a match?"             |
-| [`LeftAnti`]       | Left rows WITHOUT matches | "Which left rows have NO match?"            |
-| _Cross_ (SQL only) | Cartesian product         | All combinations (see Anti-Pattern section) |
+| Join Type            | Returns                   | Use Case                                    |
+| :------------------- | :------------------------ | :------------------------------------------ |
+| [`Inner`]            | Matches from both sides   | Standard join—only matching rows            |
+| [`Left`]             | All left + matching right | Keep all left rows (NULL if no match)       |
+| [`Right`]            | All right + matching left | Keep all right rows (NULL if no match)      |
+| [`Full`]             | Everything from both      | See all data, matched or not                |
+| [`LeftSemi`]         | Left rows WITH matches    | "Which left rows have a match?"             |
+| [`LeftAnti`]         | Left rows WITHOUT matches | "Which left rows have NO match?"            |
+| ~~Cross~~ (SQL only) | Cartesian product         | All combinations (see Anti-Pattern section) |
 
-> **Note:** The DataFrame API has no `JoinType::Cross`. Cartesian products are represented as `Inner` joins with empty key lists or as `CROSS JOIN` in SQL.
+> **Note:** The DataFrame API has no `JoinType::Cross`. Cartesian products are represented as `Inner` joins with empty key lists or as [`CROSS JOIN`] in SQL.
 
 > **Learn more:** You may want to check out this source [Join tutorial] or [Semi and Anti joins explained].
 
-#### Basic: Inner Join
+#### Basic: The Inner Join
 
 This example establishes `customers_df` and `orders_df`—used throughout this section. Note: Carol has no orders, and order 104 has no matching customer (orphan).
 
@@ -1926,31 +1986,25 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Joins as Efficient Filters**
+**When to use Inner Join:**
+
+- **Enrich data** — Attach related information (customer details → their orders)
+- **Filter by relationship** — Keep only rows that have a match on the other side
+- **Combine normalized tables** — Reassemble data split across multiple tables
+
+**Not for set intersections!** <br>
+If you need rows that exist in _both_ DataFrames (identical schemas, all columns compared), use [`.intersect()`] instead—that's a set operation, not a join.
+<br> For more see the subsection [Dataframes unique methods](#dataframe-unique-methods)
+
+> **⚠️ The hidden cost: [Survivorship bias][survivorship_bias]**
 >
-> Beyond combining data, joins are powerful filtering tools—**Inner Join is arguably the most common filter pattern**:
+> Many join types silently drop non-matching rows—Inner, Semi, and Anti joins all filter out data. In the example above, Carol and order 104 simply vanish. Chain several such joins together and you may lose 60% of your data without noticing—you only see the "survivors" (rows that matched at every step).
 >
-> ```rust
-> // Pattern: Pre-filter with intermediate DataFrames, then Inner Join as secondary filter
-> let active_customers = customers_df.filter(col("status").eq(lit("active")))?;  // First filter
-> let result = active_customers.join(
->     orders_df,
->     JoinType::Inner,
->     &["id"],
->     &["customer_id"],
->     None
-> )?;  // Second filter: must have orders
-> ```
->
-> - **Inner Join** = "keep only rows that exist in BOTH tables" — a natural composition of filters
-> - **Left Join + `IS NULL`** = find unmatched rows (orphan detection)
-> - **Semi/Anti Joins** (next section) = filter without adding columns—often faster than `IN` subqueries
->
-> The query optimizer pushes predicates into scans, making join-based filtering highly efficient.
+> As a sanity check, if you need to see what's _missing_, use [Outer Joins](#intermediate-leftrightfull-joins) (or other oposit joins like left vs. right) instead—`NULL` values reveal exactly where data gaps exist.
 
 #### Intermediate: Multi-Key Joins
 
-Join on multiple columns when a single key isn't enough to uniquely identify matches—common with composite keys or when adding temporal constraints.
+Join on multiple columns when a single key isn't enough to uniquely identify matches—common with composite keys or temporal constraints.
 
 ```rust
 // Regional sales: same product_id can exist in different regions
@@ -1967,15 +2021,15 @@ let sales_df = dataframe!(
 )?;
 
 // Multi-key join: match on BOTH product_id AND region
-let result = inventory_df.join(
+let joined = inventory_df.join(
     sales_df,
     JoinType::Left,  // Keep all inventory, even unsold
-    &["product_id", "region"],  // Multiple left keys
-    &["product_id", "region"],  // Multiple right keys
+    &["product_id", "region"],
+    &["product_id", "region"],
     None
 )?;
 
-result.show().await?;
+joined.show().await?;
 // +------------+--------+-------+------------+--------+------+
 // | product_id | region | stock | product_id | region | sold |
 // +------------+--------+-------+------------+--------+------+
@@ -1984,71 +2038,81 @@ result.show().await?;
 // | 2          | East   | 200   | 2          | East   | 80   |
 // | 2          | West   | 75    |            |        |      |
 // +------------+--------+-------+------------+--------+------+
-
-//  product_id 2, region West has no sales!
+// Notice: product_id and region appear TWICE (once from each table)
 ```
 
-> **Pro tip for time-dependent data:** Multi-key joins on temporal columns work well when truncated to appropriate granularity using [`date_trunc()`]. Joining on `DATE` (day) has minimal edge cases (~0.004% at midnight); joining on raw `TIMESTAMP` (milliseconds) risks silent mismatches.
+**The duplicate key columns are expected behavior.** DataFusion preserves all columns from both sides. Clean them up with `.select()`:
 
-Notice the output above: `product_id` and `region` appear **twice** (once from each table). Unlike Spark, DataFusion doesn't auto-rename duplicates (`_1`, `_2`). Rename or alias columns before joining to avoid ambiguity when referencing them later.
+```rust
+// Select only the columns you need
+let result = joined.select(vec![
+    col("product_id"),  // Picks the left-side column
+    col("region"),
+    col("stock"),
+    col("sold"),
+])?;
 
-> **⚠️ Critical: Handling Same-Named Columns**
->
-> Unlike Spark (which auto-deduplicates), DataFusion preserves **both** columns after a join. Joining on `id = id` gives you _two_ `id` columns. Referencing `col("id")` without a qualifier may become ambiguous.
->
-> **Three solutions:**
->
-> 1. **Select only what you need** (preferred) — Inspect `.schema()` after joining and explicitly select:
->
->    ```rust
->    let joined = customers.join(orders, JoinType::Inner, &["id"], &["customer_id"], None)?;
->    // Explicit projection: only keep the columns you need
->    let cleaned = joined.select(vec![
->        col("id"),           // from customers (left)
->        col("name"),
->        col("order_id"),     // from orders (right)
->        col("amount"),
->    ])?;
->    ```
->
-> 2. **Alias before joining** — Use [`.alias()`] to qualify all columns:
->
->    ```rust
->    let customers = customers_df.alias("c")?;
->    let orders = orders_df.alias("o")?;
->    // After join: col("c.id") vs col("o.customer_id")
->    ```
->
-> 3. **Rename before joining** — Use [`.with_column_renamed()`]:
->
->    ```rust
->    let orders = orders_df.with_column_renamed("status", "order_status")?;
->    ```
->
-> **Practical rule:** Use explicit `.select()` for simple joins; alias for complex multi-way joins. Check `.schema()` to see actual column names after joining.
+result.show().await?;
+// +------------+--------+-------+------+
+// | product_id | region | stock | sold |
+// +------------+--------+-------+------+
+// | 1          | East   | 100   | 30   |
+// | 1          | West   | 50    | 20   |
+// | 2          | East   | 200   | 80   |
+// | 2          | West   | 75    |      |  ← No sales
+// +------------+--------+-------+------+
+```
+
+**⚠️ Handling Same-Named Columns**
+
+DataFusion's [`.join()`] preserves columns from both sides. When join keys share names, use one of these patterns:
+
+| Pattern                        | When to use                                                |
+| ------------------------------ | ---------------------------------------------------------- |
+| **[`.select()`] after join**   | Simple joins—pick the columns you need                     |
+| **[`.alias()`] before join**   | Complex multi-way joins—qualify with `col("alias.column")` |
+| **[`.with_column_renamed()`]** | Rename conflicting columns before joining                  |
+
+**Tip:** Call [`.schema()`] after joining to see actual column names.
+
+> **Pro tip for time-dependent data:** <br>
+> Multi-key joins on temporal columns work well when truncated to appropriate granularity using [`date_trunc()`]. Joining on `DATE` (day) has minimal edge cases (~0.004% at midnight); joining on raw `TIMESTAMP` (milliseconds) risks silent mismatches.
 
 #### Intermediate: Left/Right/Full Joins
 
-**What:** Outer joins preserve non-matching rows by filling missing columns with NULL—unlike Inner Join which discards them.
+Where Inner Join keeps only the intersection (rows matching on both sides), **"partial" outer joins (left, right and full) preserve rows that don't match**—filling missing columns with `NULL`. This makes data gaps visible instead of silently dropping them.
 
-**Why three types?** <br>
-Each answers a different question:
+| Join Type | Keeps                                           | Typical Use Case                                        |
+| :-------- | :---------------------------------------------- | :------------------------------------------------------ |
+| **Left**  | All left rows, matching right data if available | Customer reports—keep all customers, show orders if any |
+| **Right** | All right rows, matching left data if available | Orphan detection—find orders without valid customers    |
+| **Full**  | Everything from both sides                      | Data reconciliation—find ALL discrepancies              |
 
-| Join Type | Question It Answers                                            | Use Case                                                  |
-| :-------- | :------------------------------------------------------------- | :-------------------------------------------------------- |
-| **Left**  | "Give me all left rows, enriched with right data if available" | Customer reports (keep all customers, show orders if any) |
-| **Right** | "Give me all right rows, enriched with left data if available" | Orphan detection (find orders without valid customers)    |
-| **Full**  | "Show me everything—matched and unmatched from both sides"     | Data reconciliation, finding ALL discrepancies            |
-
-**How to choose:** <br>
-Left Join is most common (~90% of outer joins). Right Join can usually be rewritten as Left Join by swapping tables. Full Join is for reconciliation scenarios where you need the complete picture.
+Left Join handles ~90% of outer join use cases. Right Join can usually be rewritten as Left Join by swapping tables. Full Join is for reconciliation scenarios.
 
 ##### Left Join — Enrich Your Primary Data
 
 Keep **all rows from the left table**, enrich with matching data from the right table. No match? Right-side columns become `NULL`.
 
 ```rust
-// Using customers_df and orders_df from Basic example
+// customers_df:
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 1  | Alice |
+// | 2  | Bob   |
+// | 3  | Carol |  ← Has no orders
+// +----+-------+
+//
+// orders_df:
+// +----------+-------------+--------+
+// | order_id | customer_id | amount |
+// +----------+-------------+--------+
+// | 101      | 1           | 100    |
+// | 102      | 1           | 200    |
+// | 103      | 2           | 150    |
+// | 104      | 99          | 300    |  ← Orphan
+// +----------+-------------+--------+
 
 // "All customers with their orders (if any)"
 let left_result = customers_df.clone().join(
@@ -2066,15 +2130,59 @@ left_result.show().await?;
 // | 1  | Alice | 101      | 1           | 100    |
 // | 1  | Alice | 102      | 1           | 200    |
 // | 2  | Bob   | 103      | 2           | 150    |
-// | 3  | Carol |          |             |        |
+// | 3  | Carol |          |             |        |  ← Preserved with NULLs
 // +----+-------+----------+-------------+--------+
-
-// id 3,  Carol has no orders
 ```
+
+**Use Case: Self-Joins (Customer Referrals)**
+
+A **self-join** joins a table with itself—essential for hierarchical data. Left Join preserves all rows even if they have no match (like Alice, who has no referrer).
+
+```rust
+// Extended customers: add referred_by (which customer referred them)
+let customers_referrals = dataframe!(
+    "id" => [1, 2, 3],
+    "name" => ["Alice", "Bob", "Carol"],
+    "referred_by" => [None::<i64>, Some(1), Some(1)]  // Alice referred Bob and Carol
+)?;
+
+// Self-join: alias both sides to disambiguate
+let customer = customers_referrals.clone().alias("customer")?;
+let referrer = customers_referrals.clone().alias("referrer")?;
+
+let with_referrers = customer.join(
+    referrer,
+    JoinType::Left,  // Keep customers without referrers (Alice)
+    &["referred_by"],
+    &["id"],
+    None
+)?.select(vec![
+    col("customer.name").alias("customer"),
+    col("referrer.name").alias("referred_by"),
+])?;
+
+with_referrers.show().await?;
+// +----------+-------------+
+// | customer | referred_by |
+// +----------+-------------+
+// | Alice    | NULL        |  ← No referrer
+// | Bob      | Alice       |
+// | Carol    | Alice       |
+// +----------+-------------+
+```
+
+**Key pattern:** <br>
+Use [`.alias()`] to create two "views" of the same DataFrame, then join with qualified column names (`customer.name`, `referrer.name`).
+
+**Common self-join patterns:**
+
+- **Hierarchy traversal:** employees → managers, categories → parent categories
+- **Sequential comparison:** this_year.sales vs last_year.sales (join on product_id)
+- **Finding pairs:** "Which products are often bought together?" (order_items self-join)
 
 ##### Right Join — Find Orphaned Records
 
-Keep all rows from the right table, useful for finding records that reference non-existent parents.
+Keep all rows from the right table—useful for finding records that reference non-existent parents (like order 104 referencing customer 99).
 
 ```rust
 // "All orders, showing customer info (if customer exists)"
@@ -2093,21 +2201,12 @@ right_result.show().await?;
 // | 1  | Alice | 101      | 1           | 100    |
 // | 1  | Alice | 102      | 1           | 200    |
 // | 2  | Bob   | 103      | 2           | 150    |
-// |    |       | 104      | 99          | 300    |
+// |    |       | 104      | 99          | 300    |  ← Orphan! No customer 99
 // +----+-------+----------+-------------+--------+
-
-// Order 104 has invalid customer_id!
 ```
 
-> **Why not just use Left Join?** Right Join keeps all _right_ rows, but you can get the same result by swapping the table order and using Left Join:
->
-> ```rust
-> // These produce identical results:
-> customers_df.join(orders_df, JoinType::Right, ...)  // Right Join
-> orders_df.join(customers_df, JoinType::Left, ...)   // Left Join (tables swapped)
-> ```
->
-> Left Join reads more naturally because your "main" table (the one you want ALL rows from) comes first. Most codebases use Left Join exclusively and avoid Right Join for consistency.
+**Tip:** <br>
+Right Join is just Left Join with swapped tables. `A.join(B, Right)` = `B.join(A, Left)`. Most teams use Left Join exclusively for consistency—put your "main" table first.
 
 ##### Full Join — Complete Reconciliation
 
@@ -2141,26 +2240,27 @@ full_result.show().await?;
 // +----+-------+----------+-------------+--------+
 ```
 
-> **Data Quality Pattern:** Full Join + NULL filters = powerful reconciliation tool:
->
-> ```rust
-> // Find customers WITHOUT orders (left-only)
-> let inactive = full_result.clone().filter(col("order_id").is_null())?;
->
-> // Find orphaned orders (right-only, invalid customer_id)
-> let orphans = full_result.clone().filter(col("id").is_null())?;
->
-> // Find matched records (both sides present)
-> let matched = full_result.filter(
->     col("id").is_not_null().and(col("order_id").is_not_null())
-> )?;
-> ```
->
-> This pattern is invaluable for ETL pipelines, data migration validation, and debugging referential integrity issues.
+**Data Quality Pattern:** Full Join + NULL filters = powerful reconciliation tool:
+
+```rust
+// Find customers WITHOUT orders (left-only)
+let inactive = full_result.clone().filter(col("order_id").is_null())?;
+
+// Find orphaned orders (right-only, invalid customer_id)
+let orphans = full_result.clone().filter(col("id").is_null())?;
+
+// Find matched records (both sides present)
+let matched = full_result.filter(
+    col("id").is_not_null().and(col("order_id").is_not_null())
+)?;
+```
+
+This pattern is invaluable for ETL pipelines, data migration validation, and debugging referential integrity issues.
 
 #### Intermediate: Semi and Anti Joins
 
-**What makes them special?** Semi and Anti joins are **filtering joins**—they filter the left table based on existence in the right table, but **never add columns** from the right table. This is fundamentally different from Inner/Left/Right/Full joins which combine data.
+**What makes them special?** <br>
+Semi and Anti joins are **filtering joins**—they filter the left table based on existence in the right table, but **never add columns** from the right table. This is fundamentally different from Inner/Left/Right/Full joins which combine data.
 
 | Join Type    | Question                         | Returns                           | SQL Equivalent                               |
 | :----------- | :------------------------------- | :-------------------------------- | :------------------------------------------- |
@@ -2180,7 +2280,17 @@ full_result.show().await?;
 Returns left rows that have **at least one match** in the right table. Even if a customer has 10 orders, they appear only once.
 
 ```rust
-// Using customers_df and orders_df from Basic example
+// Using customers_df and orders_df from Basic example:
+//
+// customers_df:                 orders_df:
+// +----+-------+                +----------+-------------+--------+
+// | id | name  |                | order_id | customer_id | amount |
+// +----+-------+                +----------+-------------+--------+
+// | 1  | Alice |                | 101      | 1           | 100    |
+// | 2  | Bob   |                | 102      | 1           | 200    |
+// | 3  | Carol |                | 103      | 2           | 150    |
+// +----+-------+                | 104      | 99          | 300    |
+//                               +----------+-------------+--------+
 
 // "Which customers have placed at least one order?"
 let active_customers = customers_df.clone().join(
@@ -2202,17 +2312,29 @@ active_customers.show().await?;
 // Note: No order columns! Just filtered customers.
 ```
 
-> **Use cases for LeftSemi:**
->
-> - Find active customers (have placed orders)
-> - Find products that have been sold (exist in order_items)
-> - Filter to "things that are referenced somewhere"
+**Use cases for LeftSemi:**
+
+- Find active customers (have placed orders)
+- Find products that have been sold (exist in order_items)
+- Filter to "things that are referenced somewhere"
 
 ##### LeftAnti — "Which Rows Have No Matches?"
 
 Returns left rows that have **zero matches** in the right table. The inverse of Semi join.
 
 ```rust
+// Using customers_df and orders_df from Basic example:
+//
+// customers_df:                 orders_df:
+// +----+-------+                +----------+-------------+--------+
+// | id | name  |                | order_id | customer_id | amount |
+// +----+-------+                +----------+-------------+--------+
+// | 1  | Alice |                | 101      | 1           | 100    |
+// | 2  | Bob   |                | 102      | 1           | 200    |
+// | 3  | Carol |                | 103      | 2           | 150    |
+// +----+-------+                | 104      | 99          | 300    |
+//                               +----------+-------------+--------+
+
 // "Which customers have NEVER placed an order?"
 let inactive_customers = customers_df.clone().join(
     orders_df.clone(),
@@ -2231,26 +2353,45 @@ inactive_customers.show().await?;
 // Alice and Bob excluded—they have orders
 ```
 
-> **Use cases for LeftAnti:**
->
-> - Find inactive customers (never ordered)
-> - Find dead inventory (products never sold)
-> - Data cleanup: "Find records missing required relationships"
-> - Complement of Semi: `Semi ∪ Anti = Full Left Table`
+**Use cases for LeftAnti:**
+
+- Find inactive customers (never ordered)
+- Find dead inventory (products never sold)
+- Data cleanup: "Find records missing required relationships"
+- Complement of Semi: `Semi ∪ Anti = Full Left Table`
 
 ##### Why Not Just Use Left Join + Filter?
 
 A common question: "Can't I just do Left Join and filter for NULLs?"
 
 ```rust
+// Using customers_df and orders_df from Basic example:
+//
+// customers_df:                 orders_df:
+// +----+-------+                +----------+-------------+--------+
+// | id | name  |                | order_id | customer_id | amount |
+// +----+-------+                +----------+-------------+--------+
+// | 1  | Alice |                | 101      | 1           | 100    |
+// | 2  | Bob   |                | 102      | 1           | 200    |
+// | 3  | Carol |                | 103      | 2           | 150    |
+// +----+-------+                | 104      | 99          | 300    |
+//                               +----------+-------------+--------+
+
 // ❌ Less efficient: Join everything, then filter
-let inactive = customers_df.clone()
+let inactive_v1 = customers_df.clone()
     .join(orders_df.clone(), JoinType::Left, &["id"], &["customer_id"], None)?
     .filter(col("order_id").is_null())?;
 
 // ✅ More efficient: Anti join filters during the join
-let inactive = customers_df.clone()
+let inactive_v2 = customers_df.clone()
     .join(orders_df.clone(), JoinType::LeftAnti, &["id"], &["customer_id"], None)?;
+
+// Both produce the same result:
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 3  | Carol |
+// +----+-------+
 ```
 
 Both produce the same result, but Anti join:
@@ -2261,9 +2402,10 @@ Both produce the same result, but Anti join:
 
 > **Learn more:** See [Semi and Anti joins explained] for why these deserve first-class syntax in SQL.
 
-> **Other variants:** DataFusion's [`JoinType`] also includes `RightSemi`, `RightAnti`, and mark variants for advanced use cases. For most DataFrame work, stick to left variants and swap input tables if needed.
+> **Other variants:** <br>
+> DataFusion's [`JoinType`] also includes `RightSemi`, `RightAnti`, and mark variants for advanced use cases. For most DataFrame work, stick to left variants and swap input tables if needed.
 
-> **Mark joins:** [`LeftMark`]/[`RightMark`] are used internally to decorrelate `EXISTS` subqueries. They return all rows from one side plus an extra boolean "mark" column indicating whether any match exists on the other side. Most DataFrame code won't use them directly, but you may see them in `EXPLAIN` plans for complex SQL with `EXISTS` predicates.
+> **Mark joins:** <br> > [`LeftMark`]/[`RightMark`] are used internally to decorrelate `EXISTS` subqueries. They return all rows from one side plus an extra boolean "mark" column indicating whether any match exists on the other side. Most DataFrame code won't use them directly, but you may see them in `EXPLAIN` plans for complex SQL with `EXISTS` predicates.
 
 #### Advanced: Multi-Way Joins
 
@@ -2272,39 +2414,100 @@ Both produce the same result, but Anti join:
 Real-world data is often normalized across multiple tables. A business question like "which customers have paid orders?" requires combining customers → orders → payments. Each chained Inner Join acts as a filter—only rows matching _all_ join conditions survive.
 
 ```rust
-// Using customers_df and orders_df from Basic example
+// Using customers_df and orders_df from Basic example:
+//
+// customers_df:                 orders_df:
+// +----+-------+                +----------+-------------+--------+
+// | id | name  |                | order_id | customer_id | amount |
+// +----+-------+                +----------+-------------+--------+
+// | 1  | Alice |                | 101      | 1           | 100    |
+// | 2  | Bob   |                | 102      | 1           | 200    |
+// | 3  | Carol |                | 103      | 2           | 150    |
+// +----+-------+                | 104      | 99          | 300    |
+//                               +----------+-------------+--------+
 
 // Introduce a payments table: only orders 101 and 103 have payment records
+//
+// payments_df:
+// +------------------+---------+
+// | payment_order_id | status  |
+// +------------------+---------+
+// | 101              | paid    |
+// | 103              | pending |
+// +------------------+---------+
+//
 let payments_df = dataframe!(
     "payment_order_id" => [101, 103],
     "status" => ["paid", "pending"]
 )?;
 
 // 3-way join: customers → orders → payments
+// Use .select() to keep only the columns we need (avoids duplicates)
 let result = customers_df.clone()
     .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
-    .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?;
+    .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?
+    .select(vec![ // for better visibility of the result df
+        col("name"),
+        col("order_id"),
+        col("amount"),
+        col("status"),
+    ])?;
 
 result.show().await?;
-// +----+-------+----------+-------------+--------+------------------+---------+
-// | id | name  | order_id | customer_id | amount | payment_order_id | status  |
-// +----+-------+----------+-------------+--------+------------------+---------+
-// | 1  | Alice | 101      | 1           | 100    | 101              | paid    |
-// | 2  | Bob   | 103      | 2           | 150    | 103              | pending |
-// +----+-------+----------+-------------+--------+------------------+---------+
-// Alice's order 102: excluded—no payment record
-// Carol: excluded—no orders
-// Order 104: excluded—no matching customer (orphan)
+// +-------+----------+--------+---------+
+// | name  | order_id | amount | status  |
+// +-------+----------+--------+---------+
+// | Alice | 101      | 100    | paid    |
+// | Bob   | 103      | 150    | pending |
+// +-------+----------+--------+---------+
+//
+// What got filtered out:
+// - Alice's order 102: no payment record
+// - Carol: no orders at all
+// - Order 104: orphan (customer_id 99 doesn't exist)
 ```
 
-> **Tip:** Use Left Joins at intermediate steps if you need to preserve unmatched rows (e.g., customers without payments).
+> **Tip:** <br>
+> Use Left Joins at intermediate steps if you need to preserve unmatched rows (e.g., customers without payments).
 
 ##### Join Order Matters
 
-The order you chain joins affects both **readability** and **performance**:
+The order you chain joins affects both **readability** and **performance**. General principles:
+
+| Principle                                     | Why                                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| **Start with your "main" table (Left-Table)** | Reads naturally: "customers with their orders and payments"                |
+| **Filter early**                              | Reduces intermediate result size before expensive joins                    |
+| **Smaller tables on the right**               | Hash joins build from the right side—smaller = faster                      |
+| **Let the optimizer help**                    | DataFusion may reorder joins, but good initial order reduces planning work |
 
 ```rust
-// Using customers_df, orders_df, payments_df from above
+// customers_df:
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 1  | Alice |
+// | 2  | Bob   |
+// | 3  | Carol |
+// +----+-------+
+//
+// orders_df:
+// +----------+-------------+--------+
+// | order_id | customer_id | amount |
+// +----------+-------------+--------+
+// | 101      | 1           | 100    |
+// | 102      | 1           | 200    |
+// | 103      | 2           | 150    |
+// | 104      | 99          | 300    |
+// +----------+-------------+--------+
+//
+// payments_df:
+// +------------------+---------+
+// | payment_order_id | status  |
+// +------------------+---------+
+// | 101              | paid    |
+// | 103              | pending |
+// +------------------+---------+
 
 // ✅ Good: Start with the table you're "asking about"
 // "Which customers have payments?"
@@ -2319,26 +2522,54 @@ let result = high_value_orders
     .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?;
 ```
 
-> **Performance tip:** The optimizer reorders joins when possible, but starting with filtered/smaller tables helps. Use [`.explain()`] to see the actual execution plan.
+> **Performance tip:** <br>
+> The optimizer reorders joins when beneficial, but good initial ordering reduces planning overhead. Use [`.explain()`] to see the actual execution plan.
 
 ##### Managing Column Proliferation
 
-Multi-way joins accumulate columns from every table. Clean up with [`.select()`]:
+Multi-way joins accumulate columns from every table. With each join, you get **all columns from both sides**—including duplicate key columns. Chain [`.select()`] at the end to keep only what you need:
 
 ```rust
-// Using customers_df, orders_df, payments_df from above
+// customers_df (2 columns):
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 1  | Alice |
+// | 2  | Bob   |
+// | 3  | Carol |
+// +----+-------+
+//
+// orders_df (3 columns):
+// +----------+-------------+--------+
+// | order_id | customer_id | amount |
+// +----------+-------------+--------+
+// | 101      | 1           | 100    |
+// | 102      | 1           | 200    |
+// | 103      | 2           | 150    |
+// | 104      | 99          | 300    |
+// +----------+-------------+--------+
+//
+// payments_df (2 columns):
+// +------------------+---------+
+// | payment_order_id | status  |
+// +------------------+---------+
+// | 101              | paid    |
+// | 103              | pending |
+// +------------------+---------+
 
-let clean_result = customers_df.clone()
+// Without .select(): 2 + 3 + 2 = 7 columns (with redundant id, customer_id, order_id, payment_order_id)
+// With .select(): pick only the 4 columns that matter
+let result = customers_df.clone()
     .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
     .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?
-    .select(vec![
+    .select(vec![     // <--- This select removes the cludder
         col("name").alias("customer"),
         col("order_id"),
         col("amount"),
         col("status").alias("payment_status"),
     ])?;
 
-clean_result.show().await?;
+result.show().await?;
 // +----------+----------+--------+----------------+
 // | customer | order_id | amount | payment_status |
 // +----------+----------+--------+----------------+
@@ -2347,14 +2578,40 @@ clean_result.show().await?;
 // +----------+----------+--------+----------------+
 ```
 
-> **When SQL might be clearer:** Multi-way joins with 4+ tables can become hard to read as chained method calls. Consider [`SessionContext::sql()`] for complex star-schema queries where SQL's visual structure helps.
+> **When SQL might be clearer:** <br>
+> Multi-way joins with 4+ tables can become hard to read as chained method calls. Consider [`SessionContext::sql()`] for complex [star-schema queries][databricks_star_schema] where SQL's visual structure helps.
 
 #### Advanced: Join with Complex Conditions
 
-Use [`.join_on()`] when join conditions go beyond simple column equality—range joins, inequality predicates, or compound logic. The standard [`.join()`] only supports equi-joins (column A = column B). For anything else, [`.join_on()`] accepts arbitrary boolean expressions.
+Sometimes you need more than simple column equality. Range joins ("orders placed within 7 days of signup"), inequality predicates ("amount > threshold"), or compound logic ("match on id AND status = 'active'") require expressions that [`.join()`] can't express with just column names.
+
+[`.join_on()`] accepts arbitrary boolean expressions as join conditions. Internally it wraps [`.join()`] with empty key lists and passes your expressions as a filter—the optimizer then extracts any equality predicates for efficient hash/sort-merge execution.
+
+| Use Case           | Example Condition                                                       |
+| ------------------ | ----------------------------------------------------------------------- |
+| **Range join**     | `order_date.between(start_date, end_date)`                              |
+| **Inequality**     | `col("amount").gt(col("threshold"))`                                    |
+| **Compound logic** | `col("id").eq(col("customer_id")).and(col("status").eq(lit("active")))` |
 
 ```rust
-// Using customers_df and orders_df from Basic example
+// customers_df:
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 1  | Alice |
+// | 2  | Bob   |
+// | 3  | Carol |
+// +----+-------+
+//
+// orders_df:
+// +----------+-------------+--------+
+// | order_id | customer_id | amount |
+// +----------+-------------+--------+
+// | 101      | 1           | 100    |  ← Alice, amount = 100
+// | 102      | 1           | 200    |  ← Alice, amount = 200
+// | 103      | 2           | 150    |  ← Bob, amount = 150
+// | 104      | 99          | 300    |  ← Orphan
+// +----------+-------------+--------+
 
 // Give DataFrames aliases so we can qualify column references
 let customers = customers_df.clone().alias("customers")?;
@@ -2375,96 +2632,105 @@ high_value.show().await?;
 // | 1  | Alice | 102      | 1           | 200    |
 // | 2  | Bob   | 103      | 2           | 150    |
 // +----+-------+----------+-------------+--------+
-// Alice's order 101 (100) excluded—doesn't meet amount > 100
+// Alice's order 101 (amount=100) excluded—doesn't meet amount > 100
+// Carol excluded—no orders at all
 ```
 
-> **Tip:** When using [`.join_on()`], column names may clash between tables. Use [`.alias()`] to qualify references: `col("customers.id")` vs `col("orders.id")`.
+> **Tip:** <br>
+> When using [`.join_on()`], column names may clash between tables. Use [`.alias()`] to qualify references: `col("customers.id")` vs `col("orders.id")`.
 
 ##### The `filter` Argument on Outer Joins
 
-The [`.join()`] method accepts an optional `filter: Option<Expr>` argument. For outer joins, this filter has subtle semantics: it applies only to _matched_ rows, not to preserved unmatched rows.
+The [`.join()`] method's fifth parameter is [`filter: Option<Expr>`][join_filter_param]—easy to overlook in the signature but powerful for outer joins. This filter has **subtle but important semantics**: it applies only to _matched_ rows, not to preserved unmatched rows.
+
+This distinction matters because:
+
+- A [`WHERE`] clause **after** the join would filter out unmatched rows (turning your Left Join into an Inner Join)
+- The `filter` argument applies **during** the join, controlling which matches are considered valid while still preserving unmatched rows
+
+| Approach                                      | Behavior                         | Result                              |
+| --------------------------------------------- | -------------------------------- | ----------------------------------- |
+| [`.join(..., Some(filter))`][`.join()`]       | Filter is part of join condition | Unmatched rows preserved with NULLs |
+| [`.join(..., None).filter(...)`][`.filter()`] | Filter applied after join        | Unmatched rows may be removed       |
 
 ```rust
-// Using customers_df and orders_df from Basic example
+// customers_df:
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 1  | Alice |
+// | 2  | Bob   |
+// | 3  | Carol |  ← Has no orders
+// +----+-------+
+//
+// orders_df:
+// +----------+-------------+--------+
+// | order_id | customer_id | amount |
+// +----------+-------------+--------+
+// | 101      | 1           | 100    |  ← Alice, amount = 100 (will be filtered)
+// | 102      | 1           | 200    |  ← Alice, amount = 200 (passes filter)
+// | 103      | 2           | 150    |  ← Bob, amount = 150 (passes filter)
+// | 104      | 99          | 300    |  ← Orphan
+// +----------+-------------+--------+
 
 // Left join with filter: Carol still appears, but only orders > 100 attach
 let result = customers_df.clone().join(
     orders_df.clone(),
     JoinType::Left,
-    &["id"],
-    &["customer_id"],
-    Some(col("amount").gt(lit(100))),  // Applied only to matched rows
+    &["id"],                           // left_cols
+    &["customer_id"],                  // right_cols
+    Some(col("amount").gt(lit(100))),  // filter (5th param) - applied only to matched rows
 )?;
 
 result.show().await?;
 // +----+-------+----------+-------------+--------+
 // | id | name  | order_id | customer_id | amount |
 // +----+-------+----------+-------------+--------+
-// | 1  | Alice | 102      | 1           | 200    |  ← Only order > 100 attached
+// | 1  | Alice | 102      | 1           | 200    |  ←  > 100 attached
 // | 2  | Bob   | 103      | 2           | 150    |
-// | 3  | Carol |          |             |        |  ← Preserved (left join), no matching order
+// | 3  | Carol |          |             |        |  ← Preserved!
 // +----+-------+----------+-------------+--------+
-// Alice's order 101 (100) excluded by filter, but Alice still appears via order 102
+// Alice's order 101 (amount=100) excluded by filter
+// Carol preserved because Left Join keeps all left rows
 ```
 
-> **Note:** Think of `filter` as part of the _join condition_, not a `WHERE` after the join. It controls which matches are considered valid during the join itself.
+> **Mental model:** <br>
+> Think of `filter` as part of the _join condition_, not a `WHERE` after the join. It controls which matches are valid during the join itself.
 
-> This applies equally to [`.join_on()`], which is implemented as `.join()` with empty key lists and the combined `on_exprs` as `filter`. The same "filter applies only to matched rows" semantics apply.
-
-#### Advanced: **Self-Joins**
-
-A self-join joins a table to itself—essential for hierarchical data (employees/managers), sequential comparisons (year-over-year), or finding relationships within the same dataset. **Aliasing is mandatory** to distinguish the two "copies" of the table.
-
-```rust
-// Employee hierarchy: find each employee's manager name
-let employees_df = dataframe!(
-    "emp_id" => [1, 2, 3, 4],
-    "name" => ["Alice", "Bob", "Carol", "Dave"],
-    "manager_id" => [None::<i64>, Some(1), Some(1), Some(2)]  // Alice has no manager
-)?;
-
-// Self-join: alias the same DataFrame twice
-let emp = employees_df.clone().alias("emp")?;
-let mgr = employees_df.clone().alias("mgr")?;
-
-// Join employees to their managers
-let with_managers = emp.join(
-    mgr,
-    JoinType::Left,  // Keep employees without managers (Alice)
-    &["manager_id"],
-    &["emp_id"],
-    None
-)?
-.select(vec![
-    col("emp.name").alias("employee"),
-    col("mgr.name").alias("manager"),
-])?;
-
-with_managers.show().await?;
-// +----------+---------+
-// | employee | manager |
-// +----------+---------+
-// | Alice    |         |  ← No manager (NULL)
-// | Bob      | Alice   |
-// | Carol    | Alice   |
-// | Dave     | Bob     |
-// +----------+---------+
-```
-
-> **Common self-join patterns:**
->
-> - **Hierarchy traversal:** employees → managers, categories → parent categories
-> - **Sequential comparison:** this_year.sales vs last_year.sales (join on product_id)
-> - **Finding pairs:** "Which products are often bought together?" (order_items self-join)
+> **Also applies to [`.join_on()`]:** <br>
+> Since [`.join_on()`] is implemented as [`.join()`] with empty key lists and combined `on_exprs` as `filter`, the same semantics apply.
 
 #### Anti-Pattern: Accidental Cartesian Product
 
-Empty join keys produce a Cartesian product—every left row paired with every right row. With 3 customers × 4 orders = 12 rows. With 1M × 1M = 1 trillion rows. This is almost never intentional and will crash your query or exhaust memory.
+Empty join keys produce a **Cartesian product**—every left row paired with every right row. This is almost never intentional and can crash your query or exhaust memory.
+
+| Left rows | Right rows | Result rows       | Scale                            |
+| --------- | ---------- | ----------------- | -------------------------------- |
+| 3         | 4          | 12                | Tiny dataset, still 4× larger    |
+| 1,000     | 1,000      | 1,000,000         | 1 million rows                   |
+| 1,000,000 | 1,000,000  | 1,000,000,000,000 | **1 trillion rows** — will crash |
 
 ```rust
-// Using customers_df and orders_df from Basic example
+// customers_df:
+// +----+-------+
+// | id | name  |
+// +----+-------+
+// | 1  | Alice |
+// | 2  | Bob   |
+// | 3  | Carol |
+// +----+-------+
+//
+// orders_df:
+// +----------+-------------+--------+
+// | order_id | customer_id | amount |
+// +----------+-------------+--------+
+// | 101      | 1           | 100    |
+// | 102      | 1           | 200    |
+// | 103      | 2           | 150    |
+// | 104      | 99          | 300    |
+// +----------+-------------+--------+
 
-// ❌ DANGEROUS: Empty keys = Cartesian product (3 × 4 = 12 rows!)
+// ❌ DANGEROUS: Empty keys = Cartesian product
 let cartesian = customers_df.clone().join(
     orders_df.clone(),
     JoinType::Inner,
@@ -2473,63 +2739,192 @@ let cartesian = customers_df.clone().join(
     None
 )?;
 
-println!("Row count: {}", cartesian.clone().count().await?);
-// Row count: 12  ← Every customer paired with every order!
+cartesian.show().await?;
+// +----+-------+----------+-------------+--------+
+// | id | name  | order_id | customer_id | amount |
+// +----+-------+----------+-------------+--------+
+// | 1  | Alice | 101      | 1           | 100    |  ← Alice × order 101
+// | 1  | Alice | 102      | 1           | 200    |  ← Alice × order 102
+// | 1  | Alice | 103      | 2           | 150    |  ← Alice × order 103 (not her order!)
+// | 1  | Alice | 104      | 99          | 300    |  ← Alice × order 104 (not her order!)
+// | 2  | Bob   | 101      | 1           | 100    |  ← Bob × order 101 (not his order!)
+// | ... 7 more rows ... |
+// +----+-------+----------+-------------+--------+
+// Total: 3 × 4 = 12 rows — every combination!
 
 // ✅ CORRECT: Always specify join keys
 let correct = customers_df.clone().join(
+    orders_df.clone(),
+    JoinType::Inner,
+    &["id"],         // left key
+    &["customer_id"], // right key
+    None
+)?;
+
+println!("Row count: {}", correct.clone().count().await?);
+// Row count: 3  ← Only matching rows (Alice×2, Bob×1)
+```
+
+**⚠️ Warning:** <br>
+If a join returns unexpectedly many rows, check your keys. An empty or mismatched key array silently produces a Cartesian product. Use [`.count()`] before [`.collect()`] to verify.
+
+**If you need a Cartesian product:** <br>
+Use SQL via [`ctx.sql("SELECT ... FROM a CROSS JOIN b")`][`SessionContext::sql()`]. The DataFrame API has no `JoinType::Cross`—empty keys with `Inner` produces the same result but reads like a bug.
+
+#### Join Troubleshooting
+
+Joins can silently produce unexpected results. When something looks wrong, check these common issues:
+
+| Symptom             | Common Causes                                                             | Diagnosis                                                                   |
+| :------------------ | :------------------------------------------------------------------------ | :-------------------------------------------------------------------------- |
+| **Empty result**    | Key values don't match, trailing whitespace, case mismatch, NULLs in keys | Inspect both sides: `.select(vec![col("key")]).distinct().show().await?`    |
+| **Too many rows**   | Duplicate keys create row multiplication, accidental Cartesian product    | Check key uniqueness: `.select(vec![col("key")]).distinct().count().await?` |
+| **Missing columns** | Wrong column names after join, schema mismatch                            | Inspect schema: [`.schema()`] and use [`.alias()`] to qualify               |
+| **Wrong matches**   | Keys have different types (string vs int), encoding issues                | Compare types: `df.schema().field_with_name("key")?.data_type()`            |
+
+##### Sanity Check: Did the Join Drop Too Much Data?
+
+DataFusion doesn't have built-in join validation, but you can build a simple check to catch silent data loss:
+
+```rust
+// Count rows before join
+let left_count = customers_df.clone().count().await?;
+
+// Perform the join
+let joined = customers_df.clone().join(
     orders_df.clone(),
     JoinType::Inner,
     &["id"],
     &["customer_id"],
     None
 )?;
+let joined_count = joined.clone().count().await?;
 
-println!("Row count: {}", correct.clone().count().await?);
-// Row count: 3  ← Only matching rows
+// Calculate retention rate
+let retention_pct = (joined_count as f64 / left_count as f64) * 100.0;
+println!("Rows: {} → {} ({:.1}% retention)", left_count, joined_count, retention_pct);
+
+// ⚠️ Alert if too much data was dropped
+if retention_pct < 50.0 {
+    eprintln!("WARNING: Join dropped {:.1}% of rows! Check keys, NULLs, types.",
+        100.0 - retention_pct);
+}
 ```
 
-> **Warning:** If a join returns unexpectedly many rows, check your keys. An empty or mismatched key array silently produces a Cartesian product.
+| Join Type    | Expected Retention     | Warning Sign                       |
+| ------------ | ---------------------- | ---------------------------------- |
+| **Inner**    | Varies by data overlap | < 50% often indicates key mismatch |
+| **Left**     | 100% of left rows      | < 100% means something is wrong    |
+| **LeftSemi** | ≤ 100% (filtered)      | 0% = no matches at all             |
+| **LeftAnti** | Complement of Semi     | 100% = nothing matched             |
 
-> **If you need a Cartesian product:** Use SQL via `ctx.sql("SELECT ... FROM a CROSS JOIN b")`. The DataFrame API has no dedicated `JoinType::Cross` variant—using `.join()` with empty keys and `JoinType::Inner` produces the same result but is almost always a bug.
+##### Quick Debugging Steps
 
-#### Join Troubleshooting
+**Step 1: Inspect inputs before joining**
 
-**Common join issues and how to diagnose them:**
+Before joining, verify that key values actually overlap. Use [`.distinct()`] to see the unique key values on each side—if they don't match, your join will produce empty or unexpected results.
 
-| Symptom              | Common Causes                                                  | Fix                                                              |
-| :------------------- | :------------------------------------------------------------- | :--------------------------------------------------------------- |
-| **Empty result**     | Key mismatch, trailing spaces, case sensitivity, NULLs in keys | Use [`.show()`] on both sides before joining                     |
-| **Too many rows**    | Duplicate keys create row explosion                            | Check with `.select(vec![col("key")]).distinct().count().await?` |
-| **Schema confusion** | Same column names in both tables                               | Qualify: `col("alias.column")` after using [`.alias()`]          |
+```rust
+// Verify key values exist and match on both sides
+println!("Left keys:");
+customers_df.clone()
+    .select(vec![col("id")])
+    .distinct()?  // Unique values only
+    .show().await?;
+// +----+
+// | id |
+// +----+
+// | 1  |
+// | 2  |
+// | 3  |
+// +----+
 
-> **Quick Debug:** Run [`.show()`] on each DataFrame _before_ joining to verify key values match.
+println!("Right keys:");
+orders_df.clone()
+    .select(vec![col("customer_id")])
+    .distinct()?
+    .show().await?;
+// +-------------+
+// | customer_id |
+// +-------------+
+// | 1           |
+// | 2           |
+// | 99          |  ← No matching customer! Will be dropped in Inner join
+// +-------------+
+```
 
-> **Rows missing? Check for NULLs.** In SQL semantics, `NULL = NULL` returns `UNKNOWN` (not `TRUE`), so NULL keys _never_ match. If you need to match nulls, replace them with a placeholder before joining:
->
-> ```rust
-> // Replace NULLs with sentinel value before joining
-> let df = df.with_column("key", coalesce(vec![col("key"), lit(-1)]))?;
-> ```
->
-> DataFusion has `datafusion.optimizer.filter_null_join_keys` to automatically filter NULL keys on nullable sides.
+**Step 2: Check for NULL keys**
 
-> **Debug join algorithms:** Run `.explain(true, false)?` on your DataFrame to see which join algorithm was selected (`HashJoinExec`, `SortMergeJoinExec`, `NestedLoopJoinExec`) and verify predicates were pushed down.
+In SQL semantics, `NULL = NULL` returns `UNKNOWN` (not `TRUE`), so NULL keys **never match**. This silently drops rows.
+
+```rust
+// Count NULLs in join key
+let null_count = df.clone()
+    .filter(col("customer_id").is_null())?
+    .count().await?;
+println!("NULL keys: {}", null_count);
+
+// Fix: Replace NULLs with sentinel value before joining
+let df = df.with_column("customer_id", coalesce(vec![col("customer_id"), lit(-1)]))?;
+```
+
+> **Config option:** <br>
+> DataFusion has [`datafusion.optimizer.filter_null_join_keys`][`datafusion.optimizer`] to automatically filter NULL keys.
+
+**Step 3: Examine the execution plan**
+
+DataFusion's [`.explain()`] is your window into how the query optimizer transformed your join. It reveals which algorithm was selected, whether predicates were pushed down, and potential performance issues.
+
+```rust
+// explain(verbose, analyze) - verbose=true shows optimized plan
+joined_df.explain(true, false)?.show().await?;
+```
+
+**What to look for in the plan:**
+
+| Node                 |                       Meaning                       | Performance                       |
+| -------------------- | :-------------------------------------------------: | --------------------------------- |
+| `HashJoinExec`       | Hash-based join (builds hash table from right side) | ✅ Fast for equi-joins            |
+| `SortMergeJoinExec`  |             Sort both sides, then merge             | ✅ Good for large sorted data     |
+| `NestedLoopJoinExec` |               Compares every row pair               | ⚠️ Slow — only for non-equi joins |
+| `CrossJoinExec`      |                  Cartesian product                  | ❌ Usually a bug                  |
+
+**Signs of a healthy plan:**
+
+- Predicates pushed into `ParquetExec` or `CsvExec` (filter early)
+- `HashJoinExec` or `SortMergeJoinExec` for equi-joins
+- Smaller table on the **build side** (right side of hash join)
+
+**⚠️ Warning signs:**
+
+- `NestedLoopJoinExec` when you expected equi-join → check if optimizer couldn't extract equality predicates
+- `CrossJoinExec` → accidental Cartesian product
+- Filters appearing **after** the join instead of pushed down
+
+```rust
+// Example output (simplified):
+// HashJoinExec: mode=Partitioned, join_type=Inner
+//   left: ParquetExec: file=customers.parquet, predicate=id IS NOT NULL
+//   right: ParquetExec: file=orders.parquet, predicate=customer_id IS NOT NULL
+//                       ↑ Good! NULL filter pushed down
+```
+
+> **Pro tip:** Use `.explain(true, true)?` (analyze=true) to see actual row counts and timing after execution—helps identify which join leg is the bottleneck.
 
 #### Join Cheat Sheet
 
 Quick reference for choosing the right join pattern:
 
-| Goal                        | Method                  | JoinType         |
-| :-------------------------- | :---------------------- | :--------------- |
-| Standard lookup             | `.join()`               | `Inner`          |
-| Keep all primary records    | `.join()`               | `Left`           |
-| Filter by existence         | `.join()`               | `LeftSemi`       |
-| Filter by non-existence     | `.join()`               | `LeftAnti`       |
-| See all data (reconcile)    | `.join()`               | `Full`           |
-| Range/inequality conditions | `.join_on()`            | `Inner`          |
-| Self-join (hierarchies)     | `.alias()` + `.join()`  | `Inner/Left`     |
-| Cartesian product           | Prefer SQL `CROSS JOIN` | Empty keys = bug |
+| Goal                        | Method                     | JoinType         |
+| :-------------------------- | :------------------------- | :--------------- |
+| Standard lookup             | [`.join()`]                | `Inner`          |
+| Keep all primary records    | [`.join()`]                | `Left`           |
+| Filter by existence         | [`.join()`]                | `LeftSemi`       |
+| Filter by non-existence     | [`.join()`]                | `LeftAnti`       |
+| See all data (reconcile)    | [`.join()`]                | `Full`           |
+| Range/inequality conditions | [`.join_on()`]             | `Inner`          |
+| Self-join (hierarchies)     | [`.alias()`] + [`.join()`] | `Inner/Left`     |
+| Cartesian product           | Prefer SQL `CROSS JOIN`    | Empty keys = bug |
 
 #### Further Reading
 
@@ -2557,199 +2952,18 @@ Joins are fundamental yet often misunderstood. These resources provide deeper un
 
 **SQL Semantics** — Conceptual foundations:
 
-| Resource                        | Focus                                                              |
-| :------------------------------ | :----------------------------------------------------------------- |
-| [Visual JOIN guide]             | Interactive visualization of all join types with animated examples |
-| [Join tutorial]                 | Why Venn diagrams are misleading for understanding joins           |
-| [Semi and Anti joins explained] | First-class existence checks that SQL forgot                       |
-| [PostgreSQL JOIN docs]          | Authoritative reference—DataFusion follows PostgreSQL semantics    |
-| [NULL handling in joins]        | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
+| Resource                                                                  | Focus                                                              |
+| :------------------------------------------------------------------------ | :----------------------------------------------------------------- |
+| [Visual JOIN guide]                                                       | Interactive visualization of all join types with animated examples |
+| [Join tutorial]                                                           | Why Venn diagrams are misleading for understanding joins           |
+| [Semi and Anti joins explained]                                           | First-class existence checks that SQL forgot                       |
+| [PostgreSQL JOIN docs]                                                    | Authoritative reference—DataFusion follows PostgreSQL semantics    |
+| [NULL handling in joins]                                                  | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
+| [Understanding SQL Dialects][Understanding SQL Dialects (medium-article)] | Medium article about different SQL dialects                        |
 
 ---
 
-[`RightSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightSemi
-[`RightAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightAnti
-[`array_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/array_agg/index.html
-[HyperLogLog]: https://en.wikipedia.org/wiki/HyperLogLog "HyperLogLog: probabilistic cardinality estimation"
-[expr_fn]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/index.html
-[`HAVING`]: ../../user-guide/sql/select.md#having_clause
-[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.coalesce.html
-[`reduce()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.reduce
-[`unwrap()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.unwrap
-[`unwrap_or_else`]: https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap_or_else
-[`.not()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.not
-[SQL clause order]: https://www.postgresql.org/docs/current/sql-select.html#SQL-HAVING "PostgreSQL: The optional HAVING clause filters groups after GROUP BY"
-[anti_semi_joins]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/
-
-<!-- Selection & Projection references -->
-
-[`.gt()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.gt
-[`CASE`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.when.html
-[`expr_api`]: docs/source/library-user-guide/working-with-exprs.md
-[`.select_exprs()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_exprs
-[`SessionContext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
-
-<!-- Filtering references -->
-
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
-[`.lt()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.lt
-[`.eq()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.eq
-[`.and()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.and
-[`.or()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.or
-[`in_list()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.in_list.html
-[`.like()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.like
-[`.ilike()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.ilike
-[`lower()`]: https://docs.rs/datafusion/latest/datafusion/functions/unicode/fn.lower.html
-[`.between()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.between
-[`.is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.is_not_null
-[`.is_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.is_null
-
-<!--SQL Statements-->
-
-[`SELECT`]: ../../user-guide/sql/select.md
-[`WHERE`]: ../../user-guide/sql/select.md#where
-[PostgreSQL]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "PostgreSQL: The de facto standard for DataFusion SQL behavior"
-[`AND`]: ../../user-guide/sql/operators.md#logical-operators#and
-[`OR`]: ../../user-guide/sql/operators.md#logical-operators#or
-[`AS`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/ast/struct.ExprWithAlias.html
-[`GROUP BY`]: ../../user-guide/sql/select.md#group-by-clause
-[`JOIN`]: ../../user-guide/sql/select.md#join-clause
-[`ORDER BY`]: ../../user-guide/sql/select.md#order-by-clause
-[`LIMIT`]: ../../user-guide/sql/select.md#limit-clause
-[`OFFSET`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.OFFSET.html
-[`UNION`]: ../../user-guide/sql/select.md#union-clause
-[`DISTINCT`]: ../../user-guide/sql/select.md#select-clause
-[`DISTINCT ON`]: https://github.com/apache/datafusion/issues/7827
-[`TO_DATE`]: ../../user-guide/sql/scalar_functions.md#to_date
-
-<!-- Dataframe Statements -->
-
-[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`.describe()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.describe
-[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
-[`.is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Expr.html#method.is_not_null
-[`.like()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Expr.html#method.like
-[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
-[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
-[`.select_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns
-[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
-[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
-[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
-[`sum()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.sum.html
-[`avg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.avg.html
-[`count()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.count.html
-[`min()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.min.html
-[`max()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.max.html
-[`stddev()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.stddev.html
-[`var_sample()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.var_sample.html
-[`var_pop()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.var_pop.html
-[`median()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.median.html
-[`approx_median()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_median.html
-[`count_distinct()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.count_distinct.html
-[`approx_distinct()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_distinct.html
-[`array_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.array_agg.html
-[`string_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.string_agg.html
-[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
-[`JoinType`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
-[`Inner`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Inner "Only rows with matches in both tables"
-[`Left`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Left "All left rows + matching right rows (NULL if no match)"
-[`Right`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Right "All right rows + matching left rows (NULL if no match)"
-[`Full`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Full "All rows from both tables (NULL where no match)"
-[`LeftSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
-[`LeftAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
-[`LeftMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
-[`RightMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
-[Join tutorial]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/ "Why Venn diagrams mislead when explaining joins"
-[Semi and Anti joins explained]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/ "Why Semi/Anti joins deserve first-class syntax"
-[several join algorithms]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/index.html "DataFusion join implementations"
-[Visual JOIN guide]: https://joins.spathon.com/ "Interactive visual guide to SQL joins"
-[PostgreSQL JOIN docs]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "Authoritative reference for join semantics"
-[NULL handling in joins]: https://modern-sql.com/concept/null "Why NULL comparisons return UNKNOWN, not TRUE/FALSE"
-[Join optimization strategies]: https://use-the-index-luke.com/sql/join "How databases optimize joins and what you can control"
-[Spark Join Guide]: https://spark.apache.org/docs/latest/sql-ref-syntax-qry-select-join.html "Apache Spark SQL join syntax and examples"
-[Polars Join Operations]: https://docs.pola.rs/user-guide/transformations/joins/ "Polars DataFrame join operations"
-[DataFusion `.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join "DataFusion join API"
-[Optimizing SQL & DataFrames Pt 1]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-one/ "Optimizing SQL (and DataFrames) in DataFusion: Part 1"
-[Optimizing SQL & DataFrames Pt 2]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-two/ "Optimizing SQL (and DataFrames) in DataFusion: Part 2"
-[DataFusion Join Optimization]: https://xebia.com/blog/making-joins-faster-in-datafusion-based-on-table-statistics/ "Making Joins Faster in DataFusion Based on Table Statistics"
-[CMU Join Algorithms]: https://www.youtube.com/watch?v=YIdIaPopfpk&list=PLSE8ODhjZXjYMAgsGH-GtY5rJYZ6zjsd5&index=12 "CMU 15-445 Lecture 11: Join Algorithms (Andy Pavlo)"
-[Hash Join (Wikipedia)]: https://en.wikipedia.org/wiki/Hash_join "Hash join algorithm explanation"
-[Sort-Merge Join]: https://en.wikipedia.org/wiki/Sort-merge_join "Sort-merge join algorithm"
-[**Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html "Equi-join using hash table on build side"
-[**Sort-Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html "Join pre-sorted inputs with optional spilling"
-[**Symmetric Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html "Streaming join for unbounded data"
-[**Nested Loop Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html "General non-equi join conditions"
-[**Piecewise Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.PiecewiseMergeJoinExec.html "Optimized for single range conditions"
-[**Cross Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.CrossJoinExec.html "Cartesian product of two tables"
-[Arrow]: https://arrow.apache.org/ "Apache Arrow: columnar in-memory format"
-[`take()`]: https://docs.rs/arrow/latest/arrow/compute/kernels/take/fn.take.html "Arrow kernel: select elements by index"
-[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
-[`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
-[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
-[`.union_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_distinct
-[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
-[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
-[`.distinct_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct_on
-[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
-[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
-[`.window()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.window
-[`.unnest_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns
-[`.unnest_columns_with_options()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns_with_options
-[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
-[`.show_limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show_limit
-[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
-[`.describe()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.describe
-[`upper()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.upper.html
-[`or()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.or
-[`.like()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.like
-[`.explain()`]: ../../user-guide/explain-usage.md
-
-<!--Datafusion Core types -->
-
-[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`LogicalPlan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`prelude`]: https://docs.rs/datafusion/latest/datafusion/prelude/index.html
-
-<!--  standalone functions-->
-
-[`lit()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.lit.html
-[`col()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.col.html
-[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
-[`lower()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.lower.html
-[`trim()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.trim.html
-[`to_date()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.to_date.html
-[`TO_DATE`]: ../../user-guide/sql/scalar_functions.md#to_date
-[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.coalesce.html
-[`COALESCE`]: ../../user-guide/sql/scalar_functions.md#coalesce
-[`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.nvl.html
-[`date_part()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_part.html
-[`date_trunc()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_trunc.html
-[`DATE_PART`]: ../../user-guide/sql/scalar_functions.md#date_part
-[`EXTRACT`]: ../../user-guide/sql/scalar_functions.md#date_part
-[`when()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.when.html
-[`.otherwise()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.CaseBuilder.html#method.otherwise
-[`substring()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.substring.html
-[`replace()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.replace.html
-[`date_part()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/compute/fn.date_part.html
-
-<!-- External resources-->
-
-[datafusion paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
-[docs.rs]: https://docs.rs/datafusion/latest/datafusion/#architecture
-[pandas]: https://pandas.pydata.org/docs/user_guide/dsintro.html#dataframe
-[Apache Spark]: https://people.csail.mit.edu/matei/papers/2015/sigmod_spark_sql.pdf
-[dataframe algebra]: https://arxiv.org/pdf/2001.00888
-[postgres docs]: https://www.postgresql.org/docs/
-[spark docs]: https://spark.apache.org/docs/latest/
-[three-valued logic]: https://modern-sql.com/concept/three-valued-logic
-[predicate pushdown]: https://docs.rs/datafusion/latest/datafusion/physical_plan/filter_pushdown/struct.PushedDownPredicate.html
-[SLAP]: https://www.jameshw.dev/blog/2022-02-05/principles-from-clean-code#d69d60c9b3054d47816551afafcfa847 "Functions should SLAP! — from Clean Code principles"
-[Apache Spark DataFrames]: https://spark.apache.org/docs/latest/sql-programming-guide.html#datasets-and-dataframes
+---
 
 ### Sorting and Limiting
 
@@ -2905,6 +3119,210 @@ let df1_only = df1.except(df2)?;
 _Quick Debug_: **Union fails with schema error?** The DataFrames must have the same schema (column names and types). Use `union_by_name()` for flexibility with column order, or use `select()` to align schemas before union.
 
 _Quick Debug_: **distinct() not working?** It considers all columns. If you want distinct based on specific columns, use `distinct_on()` or select only those columns first.
+
+---
+
+---
+
+<!--TODO New commers -->
+
+<!-- Selection & Projection references -->
+
+[`.gt()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.gt
+[`CASE`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.when.html
+[`expr_api`]: docs/source/library-user-guide/working-with-exprs.md
+[`.select_exprs()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_exprs
+[`SessionContext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`array_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/array_agg/index.html
+
+<!-- Filtering references -->
+
+[`.not()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.not
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.lt()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.lt
+[`.eq()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.eq
+[`.and()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.and
+[`.or()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.or
+[`in_list()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.in_list.html
+[`.like()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.like
+[`.ilike()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.ilike
+[`lower()`]: https://docs.rs/datafusion/latest/datafusion/functions/unicode/fn.lower.html
+[`.between()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.between
+[`.is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.is_not_null
+[`.is_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.is_null
+
+<!--SQL Statements-->
+
+[`SELECT`]: ../../user-guide/sql/select.md
+[`WHERE`]: ../../user-guide/sql/select.md#where
+[PostgreSQL]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "PostgreSQL: The de facto standard for DataFusion SQL behavior"
+[`AND`]: ../../user-guide/sql/operators.md#logical-operators#and
+[`OR`]: ../../user-guide/sql/operators.md#logical-operators#or
+[`AS`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/ast/struct.ExprWithAlias.html
+[`GROUP BY`]: ../../user-guide/sql/select.md#group-by-clause
+[`JOIN`]: ../../user-guide/sql/select.md#join-clause
+[`ORDER BY`]: ../../user-guide/sql/select.md#order-by-clause
+[`LIMIT`]: ../../user-guide/sql/select.md#limit-clause
+[`OFFSET`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.OFFSET.html
+[`UNION`]: ../../user-guide/sql/select.md#union-clause
+[`DISTINCT`]: ../../user-guide/sql/select.md#select-clause
+[`DISTINCT ON`]: https://github.com/apache/datafusion/issues/7827
+[`TO_DATE`]: ../../user-guide/sql/scalar_functions.md#to_date
+[`NATURAL JOIN`]: ../../user-guide/sql/select.md#natural-join
+[`CROSS JOIN`]: ../../user-guide/sql/select.md#cross-join
+[`INNER JOIN`]: ../../user-guide/sql/select.md#inner-join
+[`LEFT`]: ../../user-guide/sql/select.md#left-join
+[`LEFT SEMI JOIN`]: ../../user-guide/sql/select.md#left-semi-join
+[`LEFT ANTI JOIN`]: ../../user-guide/sql/select.md#left-anti-join√
+[`FULL OUTER JOIN`]: ../../user-guide/sql/select.md#full-outer-join
+[`HAVING`]: ../../user-guide/sql/select.md#having_clause
+
+<!-- Dataframe Statements -->
+
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.describe()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.describe
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Expr.html#method.is_not_null
+[`.like()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Expr.html#method.like
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.select_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
+[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`sum()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.sum.html
+[`avg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.avg.html
+[`count()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.count.html
+[`min()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.min.html
+[`max()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.max.html
+[`stddev()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.stddev.html
+[`var_sample()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.var_sample.html
+[`var_pop()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.var_pop.html
+[`median()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.median.html
+[`approx_median()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_median.html
+[`count_distinct()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.count_distinct.html
+[`approx_distinct()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_distinct.html
+[`array_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.array_agg.html
+[`string_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.string_agg.html
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[join_filter_param]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join "See the 'filter' parameter in the join() signature"
+[`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`JoinType`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
+[`Inner`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Inner "Only rows with matches in both tables"
+[`Left`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Left "All left rows + matching right rows (NULL if no match)"
+[`Right`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Right "All right rows + matching left rows (NULL if no match)"
+[`Full`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Full "All rows from both tables (NULL where no match)"
+[`LeftSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
+[`LeftAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
+[`LeftMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
+[`RightMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
+[Join tutorial]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/ "Why Venn diagrams mislead when explaining joins"
+[Semi and Anti joins explained]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/ "Why Semi/Anti joins deserve first-class syntax"
+[several join algorithms]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/index.html "DataFusion join implementations"
+[Visual JOIN guide]: https://joins.spathon.com/ "Interactive visual guide to SQL joins"
+[PostgreSQL JOIN docs]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "Authoritative reference for join semantics"
+[PostgreSQL semantics]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "DataFusion follows PostgreSQL SQL semantics"
+[`sqlparser`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/index.html "DataFusion's SQL parser supports multiple dialects"
+[NULL handling in joins]: https://modern-sql.com/concept/null "Why NULL comparisons return UNKNOWN, not TRUE/FALSE"
+[Join optimization strategies]: https://use-the-index-luke.com/sql/join "How databases optimize joins and what you can control"
+[Spark Join Guide]: https://spark.apache.org/docs/latest/sql-ref-syntax-qry-select-join.html "Apache Spark SQL join syntax and examples"
+[Polars Join Operations]: https://docs.pola.rs/user-guide/transformations/joins/ "Polars DataFrame join operations"
+[DataFusion `.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join "DataFusion join API"
+[Optimizing SQL & DataFrames Pt 1]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-one/ "Optimizing SQL (and DataFrames) in DataFusion: Part 1"
+[Optimizing SQL & DataFrames Pt 2]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-two/ "Optimizing SQL (and DataFrames) in DataFusion: Part 2"
+[DataFusion Join Optimization]: https://xebia.com/blog/making-joins-faster-in-datafusion-based-on-table-statistics/ "Making Joins Faster in DataFusion Based on Table Statistics"
+[CMU Join Algorithms]: https://www.youtube.com/watch?v=YIdIaPopfpk&list=PLSE8ODhjZXjYMAgsGH-GtY5rJYZ6zjsd5&index=12 "CMU 15-445 Lecture 11: Join Algorithms (Andy Pavlo)"
+[Hash Join (Wikipedia)]: https://en.wikipedia.org/wiki/Hash_join "Hash join algorithm explanation"
+[Sort-Merge Join]: https://en.wikipedia.org/wiki/Sort-merge_join "Sort-merge join algorithm"
+[**Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html "Equi-join using hash table on build side"
+[**Sort-Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html "Join pre-sorted inputs with optional spilling"
+[**Symmetric Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html "Streaming join for unbounded data"
+[**Nested Loop Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html "General non-equi join conditions"
+[**Piecewise Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.PiecewiseMergeJoinExec.html "Optimized for single range conditions"
+[**Cross Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.CrossJoinExec.html "Cartesian product of two tables"
+[Arrow]: https://arrow.apache.org/ "Apache Arrow: columnar in-memory format"
+[`take()`]: https://docs.rs/arrow/latest/arrow/compute/kernels/take/fn.take.html "Arrow kernel: select elements by index"
+[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_distinct
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
+[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
+[`.distinct_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct_on
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
+[`.window()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.window
+[`.unnest_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns
+[`.unnest_columns_with_options()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns_with_options
+[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.show_limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show_limit
+[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`.describe()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.describe
+[`upper()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.upper.html
+[`or()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.or
+[`.like()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.like
+[`.explain()`]: ../../user-guide/explain-usage.md
+
+<!--Datafusion Core types -->
+
+[`datafusion.optimizer`]: https://docs.rs/datafusion/latest/datafusion/optimizer/index.html
+[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`LogicalPlan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`prelude`]: https://docs.rs/datafusion/latest/datafusion/prelude/index.html
+[`RightSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightSemi
+[`RightAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightAnti
+[HyperLogLog]: https://en.wikipedia.org/wiki/HyperLogLog
+
+<!--  standalone functions-->
+
+[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.coalesce.html
+[`reduce()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.reduce
+[`unwrap()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.unwrap
+[`unwrap_or_else`]: https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap_or_else
+[`lit()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.lit.html
+[`col()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.col.html
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`lower()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.lower.html
+[`trim()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.trim.html
+[`to_date()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.to_date.html
+[`TO_DATE`]: ../../user-guide/sql/scalar_functions.md#to_date
+[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.coalesce.html
+[`COALESCE`]: ../../user-guide/sql/scalar_functions.md#coalesce
+[`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.nvl.html
+[`date_part()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_part.html
+[`date_trunc()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_trunc.html
+[`DATE_PART`]: ../../user-guide/sql/scalar_functions.md#date_part
+[`EXTRACT`]: ../../user-guide/sql/scalar_functions.md#date_part
+[`when()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.when.html
+[`.otherwise()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.CaseBuilder.html#method.otherwise
+[`substring()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.substring.html
+[`replace()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.replace.html
+[`date_part()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/compute/fn.date_part.html
+
+<!-- External resources-->
+
+[datafusion paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
+[docs.rs]: https://docs.rs/datafusion/latest/datafusion/#architecture
+[pandas]: https://pandas.pydata.org/docs/user_guide/dsintro.html#dataframe
+[Apache Spark]: https://people.csail.mit.edu/matei/papers/2015/sigmod_spark_sql.pdf
+[dataframe algebra]: https://arxiv.org/pdf/2001.00888
+[postgres docs]: https://www.postgresql.org/docs/
+[spark docs]: https://spark.apache.org/docs/latest/
+[three-valued logic]: https://modern-sql.com/concept/three-valued-logic
+[predicate pushdown]: https://docs.rs/datafusion/latest/datafusion/physical_plan/filter_pushdown/struct.PushedDownPredicate.html
+[SLAP]: https://www.jameshw.dev/blog/2022-02-05/principles-from-clean-code#d69d60c9b3054d47816551afafcfa847 "Functions should SLAP! — from Clean Code principles"
+[Apache Spark DataFrames]: https://spark.apache.org/docs/latest/sql-programming-guide.html#datasets-and-dataframes
+[databricks_star_schema]: https://www.databricks.com/glossary/star-schema
+[survivorship_bias]: https://en.wikipedia.org/wiki/Survivorship_bias
+[anti_semi_joins]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/
+[Understanding SQL Dialects (medium-article)]: https://medium.com/@abhapratiti27/understanding-sql-dialects-a-deeper-dive-into-the-linguistic-variations-of-sql-e7e2fdb7509b
+[expr_fn]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/index.html
+[SQL clause order]: https://www.postgresql.org/docs/current/sql-select.html#SQL-HAVING
 
 ### Window Functions
 
@@ -3114,6 +3532,8 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 ---
+
+<!-- TODO:  intersect and intersect_distinct, except and except_distinct, union, union_by name (but this is schema relevant, i guss , unnest columns see : https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html, ) -->
 
 ## DataFrame-Unique Methods
 
