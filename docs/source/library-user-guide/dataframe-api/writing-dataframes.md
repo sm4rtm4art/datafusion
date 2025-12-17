@@ -23,14 +23,67 @@
 
 This guide covers how to **execute** DataFrames to obtain results and **persist** them to files or tables. In the [DataFrame lifecycle metaphor](./index.md), this is the "death" phase—where the lazy query plan is consumed and transformed into concrete output, whether in-memory `RecordBatch`es, pretty-printed tables, or persistent storage.
 
-DataFusion uses **lazy evaluation**: all transformations ([`.filter()`], [`.select()`], [`.aggregate()`]) merely build a [`LogicalPlan`] without processing data. Execution only happens when you call an **action method**—and once executed, the DataFrame is consumed.
+DataFusion uses **lazy evaluation**: all transformations ([`.filter()`], [`.select()`], [`.aggregate()`]) build a [`LogicalPlan`] without processing data. Execution only happens when you call an **action method**—and because action methods take ownership, the DataFrame is consumed (use [`df.clone()`][`.clone()`] when you need multiple actions).
 
-> **Style Note:** In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.collect()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `RecordBatch`).
+> **Style Note:** <br> In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.collect()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `RecordBatch`).
 
 ```{contents}
 :local:
 :depth: 2
 ```
+
+Unlike SQL clients where every query implicitly executes and displays results, DataFusion's Rust API gives you **explicit control** over the final phase. This design enables memory-conscious patterns: collect small results entirely, stream large datasets batch-by-batch, cache expensive computations for reuse, or write directly to storage without intermediate buffering.
+
+The following diagram illustrates where execution fits in the DataFrame architecture:
+
+```text
+           +------------------+
+           |    DataFrame     |
+           |   (lazy plan)    |
+           +------------------+
+                    |
+                    | action method called
+                    v
+           +------------------+
+           |   LogicalPlan     |  ← Rewrites plan (pushdowns, pruning)
+           +------------------+
+                    |
+                    v
+           +------------------+
+           |  ExecutionPlan   |  ← Physical operators (parallel)
+           +------------------+
+                    |
+          +---------+---------+
+          |                   |
+          v                   v
+    +-----------+       +-------------+
+    |  In-Memory |      |  Persistent  |
+    |  Results   |      |   Storage    |
+    +-----------+       +-------------+
+    .collect()           .write_parquet()
+    .show()              .write_csv()
+    .cache()             .write_table()
+                         .write_json()
+```
+
+DataFusion uses **vectorized execution**: operators process data in columnar batches (`RecordBatch`), not tuple-at-a-time like the classic Volcano model. This design enables SIMD optimizations and cache-friendly memory access.
+
+In this guide, you will learn how to:
+
+- **Materialize results** with [`.collect()`] and inspect them with [`.show()`] / [`.to_string()`]
+- **Stream large results** with [`.execute_stream()`] (bounded memory, backpressure-aware)
+- **Reuse computed results** with [`.cache()`]
+- **Persist results** with [`.write_parquet()`], [`.write_csv()`], [`.write_json()`], and [`.write_table()`]
+
+> **Ownership Note:** <br>
+> All action methods in this guide take **ownership** of the DataFrame (`self`, not `&self`). After any action—whether [`.collect()`], [`.show()`], or [`.write_parquet()`]—the DataFrame is **consumed** and cannot be reused. This is Rust's ownership system at work: a compile-time guarantee, not a runtime restriction. Use [`.clone()`] before an action if you need the DataFrame for subsequent operations.
+
+### For deeper coverage, see:
+
+- [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations) — DataFrame lifecycle and async runtime
+- [Architecture Guide] — Official documentation on planner → logical → physical flow
+- [SIGMOD 2024 Paper]— Academic paper on DataFusion's design
+- [How Query Engines Work] — Beginner-friendly book by DataFusion's creator
 
 ## Actions vs Transformations: A Quick Recap
 
@@ -41,13 +94,53 @@ Before diving into execution methods, it's essential to understand the distincti
 | **Transformations** | `DataFrame`  | No (lazy) | [`.filter()`], [`.select()`], [`.join()`], [`.sort()`] |
 | **Actions**         | Results/Side | Yes       | [`.collect()`], [`.show()`], [`.write_parquet()`]      |
 
-> **Key insight**: The optimizer sees the **complete pipeline** before execution. This means filters, projections, and limits from your entire chain (including SQL operations) are optimized together—pushdowns, pruning, and reordering happen automatically.
+**This document focuses entirely on actions**—the methods that materialize your query into memory, streams, or persistent storage.
+
+> **Key insight**:<br> The optimizer sees the **complete pipeline** before execution. This means filters, projections, and limits from your entire chain (including SQL operations) are optimized together—pushdowns, pruning, and reordering happen automatically.
+
+**Ownership and cloning**: <br>
+
+> Actions take ownership of the `DataFrame`, consuming it. If you need to perform multiple actions on the same plan, call [`.clone()`] first:
+
+```rust
+# use datafusion::prelude::*;
+# use datafusion::error::Result;
+# #[tokio::main]
+# async fn main() -> Result<()> {
+# let ctx = SessionContext::new();
+# let df = ctx.sql("SELECT 1 as id").await?;
+// ✗ Won't compile: df is consumed by first action
+// df.show().await?;
+// df.collect().await?;
+
+// ✓ Clone for multiple actions
+df.clone().show().await?;    // Preview
+df.collect().await?;          // Collect for processing
+# Ok(())
+# }
+```
+
+> **SQL contrast**: <br>
+> In SQL clients, every query implicitly executes—there's no distinction between building a query and running it. The DataFrame API's explicit action methods give you control over _when_ and _how_ execution happens.
 
 For deeper conceptual coverage, see [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations).
 
-## DataFrame Execution (In-Memory Results)
+## DataFrame Execution
 
-**Execution actions consume the DataFrame and materialize results into memory or streams.** Unlike SQL clients that implicitly execute and display results, DataFusion's Rust API gives you explicit control over _how_ results are retrieved.
+**Execution actions consume the DataFrame and materialize results into memory (RAM).**
+
+This section covers methods that keep results in memory—as `RecordBatch` objects (Arrow's columnar data unit). The differences are briefly summarized in the following table.
+
+| Category    | Destination       | Methods                                                                       |
+| ----------- | ----------------- | ----------------------------------------------------------------------------- |
+| **Execute** | RAM (in-memory)   | [`.collect()`], [`.execute_stream()`], [`.show()`], [`.cache()`]              |
+| **Write**   | Disk (persistent) | [`.write_parquet()`], [`.write_csv()`], [`.write_json()`], [`.write_table()`] |
+
+> **Note:** Both execute and write methods process data internally as `RecordBatch` streams—Arrow's fundamental unit of columnar data. The difference is where results end up: memory (RAM) or storage (disk). With the individual I/O costs.
+
+Unlike traditional SQL clients (i.e. Postgres, MySQL, Oracle...) where every `SELECT` implicitly executes and displays results, **both** DataFusion APIs—SQL and DataFrame—return a lazy `DataFrame` that requires an explicit action to execute. This design gives you control over _when_ and _how_ results are retrieved, enabling memory-conscious patterns: collect small results entirely, stream large datasets batch-by-batch, or cache expensive computations for reuse.
+
+The following table summarizes the **9 execution methods** available on `DataFrame`:
 
 ### Action Methods Reference
 
@@ -65,18 +158,134 @@ For deeper conceptual coverage, see [Concepts § Execution Model](concepts.md#ex
 
 **SQL Equivalents:**
 
-- `.show()` / `.collect()` → Implicit in SQL clients (e.g., `SELECT * FROM ...` displays results)
-- `.cache()` → Similar to `CREATE TEMP TABLE AS SELECT ...`
-- `.create_physical_plan()` → Similar to `EXPLAIN` (plan inspection without execution)
+- [`.show()`] / [`.collect()`] → Implicit in SQL clients (e.g., `SELECT * FROM ...` displays results)
+- [`.cache()`] → Similar to `CREATE TEMP TABLE AS SELECT ...`
+- [`.explain()`] → `EXPLAIN` / `EXPLAIN ANALYZE` (plan inspection)
+- [`.create_physical_plan()`] → No direct SQL equivalent; programmatic access to the `ExecutionPlan` object
 
-### Quick Results: .collect() and .show()
+### Basic Execution Results: [`.collect()`], [`.show()`], [`.show_limit()`], [`.to_string()`]
 
-**[`.collect()`] materializes all results into memory as a `Vec<RecordBatch>`**—the most common action for programmatic access to query results.
+**These methods execute the query and return all results immediately—the simplest way to get data out of a DataFrame.**
 
-> **Trade-off: .collect() vs .execute_stream()**
->
-> - **`.collect()` shines**: Simple code, easy debugging, random access to all results
-> - **`.execute_stream()` shines**: Bounded memory, backpressure, handles results larger than RAM
+- [`.collect()`] returns a `Vec<RecordBatch>` for programmatic processing, for human-readable output
+- [`.show()`] prints all rows to stdout,
+- [`.show_limit(n)`][`.show_limit()`] prints the first n rows
+- [`.to_string()`] captures the formatted output as a `String` (useful for logging or tests).
+
+**SQL equivalent:** <br>
+In SQL clients, `SELECT * FROM ...` implicitly executes and displays results. The DataFrame API separates these concerns—you explicitly choose _how_ to retrieve results.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_eq;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let df = dataframe!(
+        "id"   => [1, 2, 3],
+        "name" => ["Alice", "Bob", "Carol"]
+    )?;
+
+    // .show() executes and prints to stdout — returns () (no data handle)
+    df.clone().show().await?;
+    // +----+-------+
+    // | id | name  |
+    // +----+-------+
+    // | 1  | Alice |
+    // | 2  | Bob   |
+    // | 3  | Carol |
+    // +----+-------+
+
+    // .collect() returns data — you can process, test, or pass it to other code
+    let batches = df.collect().await?;
+
+    assert_batches_eq!([
+        "+----+-------+",
+        "| id | name  |",
+        "+----+-------+",
+        "| 1  | Alice |",
+        "| 2  | Bob   |",
+        "| 3  | Carol |",
+        "+----+-------+",
+    ], &batches);
+
+    Ok(())
+}
+```
+
+The key difference: `.show()` executes and outputs to stdout (returns `()`), `.collect()` executes and returns data to RAM (returns `Vec<RecordBatch>`). That explains the different return types and the representation as comment and the use of the [`.assert_batches_eq!`] macro.
+
+> **Memory note:** These methods load all results into memory (RAM). For datasets larger than available RAM, see [Partitioned & Streaming Execution](#partitioned--streaming-execution) below.
+
+### Choosing Between Collect and Stream
+
+**Before calling `.collect()`, consider whether your results will fit in memory—and whether you need parallelism or streaming.**
+
+DataFusion offers four execution methods that combine two **orthogonal concepts**:
+
+| Concept          | Controls    | About                                                   |
+| ---------------- | ----------- | ------------------------------------------------------- |
+| **Partitioning** | Parallelism | How data is _divided_ for parallel processing           |
+| **Streaming**    | Memory      | How results are _consumed_ (incremental vs all-at-once) |
+
+The four combinations represented as the following:
+
+```text
+                    │ Merged output      │ Partitioned output
+────────────────────┼────────────────────┼─────────────────────────
+Buffered (all RAM)  │ .collect()         │ .collect_partitioned()
+────────────────────┼────────────────────┼─────────────────────────
+Streaming (batch)   │ .execute_stream()  │ .execute_stream_partitioned()
+```
+
+To get an overview of the four combinations, the following table can be used:
+
+| Method                            | Returns                          | Partitions | Memory    |
+| --------------------------------- | -------------------------------- | ---------- | --------- |
+| [`.collect()`]                    | `Vec<RecordBatch>`               | Merged     | All RAM   |
+| [`.collect_partitioned()`]        | `Vec<Vec<RecordBatch>>`          | Preserved  | All RAM   |
+| [`.execute_stream()`]             | `SendableRecordBatchStream`      | Merged     | Streaming |
+| [`.execute_stream_partitioned()`] | `Vec<SendableRecordBatchStream>` | Preserved  | Streaming |
+
+Each method suits different scenarios:
+
+- **[`.collect()`]**: Simple cases, small data, need random access to all results
+- **[`.collect_partitioned()`]**: Parallel post-processing, preserve partition structure
+- **[`.execute_stream()`]**: Large data, bounded memory, backpressure support
+- **[`.execute_stream_partitioned()`]**: Maximum throughput with parallel consumers
+
+**SQL equivalent:** <br>
+Traditional SQL clients buffer all results with no partition visibility. Partitioned and streaming execution is a DataFrame API advantage—you control memory and parallelism explicitly.
+
+#### Estimating Memory Requirements
+
+**Not sure if your data fits in memory? When in doubt, use streaming.**
+
+Streaming ([`.execute_stream()`]) works for any data size with bounded memory. Start there for production workloads, and use [`.collect()`] when you know your results are small or need random access.
+
+For more precise decisions, you can estimate memory usage:
+
+- **Before execution:** Use [`df.clone().count().await?`][`.count()`] to get row count, then multiply by average row size from your schema.
+- **After execution:** Use [`get_record_batch_memory_size()`] on collected batches to measure actual usage and calibrate future estimates.
+
+**What happens if memory runs out?**
+
+Your source data is always safe—DataFusion reads in a read-only fashion. Only intermediate results being computed are affected. What happens next depends on your configuration:
+
+| Configuration            | Behavior                                                     | Outcome                 |
+| ------------------------ | ------------------------------------------------------------ | ----------------------- |
+| **Default**              | OS terminates process when system memory exhausted           | Process crash           |
+| **With [`MemoryPool`]**  | DataFusion returns `ResourcesExhausted` error before OS acts | Graceful error handling |
+| **With [`DiskManager`]** | Some operators (sort, joins) spill to disk automatically     | Continues with disk I/O |
+
+Most developers use [`.collect()`] during development, then switch to streaming when data grows. For critical pipelines, default to streaming from the start.
+
+### Partitioned & Streaming Execution
+
+**This section shows how to use the partitioned and streaming methods introduced above.**
+
+**Partitioned collection** maintains partition boundaries for parallel processing:
 
 ```rust
 use datafusion::prelude::*;
@@ -84,55 +293,23 @@ use datafusion::error::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
+    let df = dataframe!(
+        "id"   => [1, 2, 3, 4, 5, 6],
+        "name" => ["A", "B", "C", "D", "E", "F"]
+    )?;
 
-    // Create a DataFrame with inline data (self-contained example)
-    let df = ctx.sql("SELECT * FROM (VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Carol')) AS t(id, name)").await?;
+    // Collect results preserving partition structure
+    let partitions: Vec<Vec<_>> = df.collect_partitioned().await?;
 
-    // Collect all results into memory (executes the query)
-    let batches: Vec<_> = df.collect().await?;
-
-    // Process the results
-    for batch in &batches {
-        println!("Batch has {} rows", batch.num_rows());
+    for (i, partition_batches) in partitions.iter().enumerate() {
+        println!("Partition {}: {} batches", i, partition_batches.len());
     }
 
     Ok(())
 }
 ```
 
-> **Memory Warning**: [`.collect()`] loads **all results** into memory. For datasets larger than available RAM, use [`.execute_stream()`] to process batches incrementally.
-
-**[`.show()`] pretty-prints results to stdout**—ideal for debugging and exploration:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.sql("SELECT * FROM (VALUES (1, 'Alice'), (2, 'Bob')) AS t(id, name)").await?;
-
-    // Pretty-print all results
-    df.clone().show().await?;
-
-    // Pretty-print only first 10 rows (more memory-efficient for large results)
-    df.clone().show_limit(10).await?;
-
-    // Get string representation for logging or custom display
-    let output = df.to_string().await?;
-    println!("Query results:\n{}", output);
-
-    Ok(())
-}
-```
-
-### Streaming Execution
-
-**For large or unbounded results, streaming execution provides backpressure-aware processing** without loading everything into memory.
-
-[`.execute_stream()`] returns a single merged stream:
+**Streaming execution** processes batches incrementally with backpressure:
 
 ```rust
 use datafusion::prelude::*;
@@ -141,10 +318,10 @@ use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    // Create a DataFrame (in production, this might be a large Parquet file)
-    let df = ctx.sql("SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(id, val)").await?;
+    let df = dataframe!(
+        "id"  => [1, 2, 3],
+        "val" => ["a", "b", "c"]
+    )?;
 
     // Stream results with backpressure
     let mut stream = df.execute_stream().await?;
@@ -166,7 +343,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-**[`.execute_stream_partitioned()`] preserves partition boundaries**—useful for parallel processing:
+**Partitioned streaming** combines both—parallel streams for maximum throughput:
 
 ```rust
 use datafusion::prelude::*;
@@ -174,8 +351,9 @@ use datafusion::error::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.sql("SELECT * FROM (VALUES (1), (2), (3)) AS t(id)").await?;
+    let df = dataframe!(
+        "id" => [1, 2, 3]
+    )?;
 
     let streams = df.execute_stream_partitioned().await?;
     println!("Processing {} partitions in parallel", streams.len());
@@ -192,9 +370,19 @@ async fn main() -> Result<()> {
 
 > **Production Pattern**: For services, wrap stream processing with `tokio::time::timeout` to handle hung queries, and use `tokio::select!` for cancellation support.
 
-### Caching and Reuse
+### Caching Results: [`.cache()`]
 
-**[`.cache()`] materializes results and wraps them in a new `DataFrame`**—useful when you need to reuse expensive computation results multiple times.
+**[`.cache()`] materializes results and wraps them in a new `DataFrame`—useful when you need to reuse expensive computation results multiple times.**
+
+The cached DataFrame can be filtered, projected, or aggregated further without re-executing the original computation.
+
+**SQL equivalent:** <br>
+Similar to `CREATE TEMP TABLE AS SELECT ...`, but in-memory only.
+
+> **Trade-off: .cache() vs write-then-read**
+>
+> - **`.cache()` shines**: Fast access, no I/O overhead, great for iterative analysis
+> - **Write-then-read shines**: Results persist across sessions, handles data larger than RAM, enables sharing between processes
 
 ```rust
 use datafusion::prelude::*;
@@ -203,14 +391,10 @@ use datafusion::functions_aggregate::sum::sum;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    // Create source data
-    let df = ctx.sql("
-        SELECT * FROM (VALUES
-            ('A', 10), ('A', 20), ('B', 30), ('B', 40)
-        ) AS t(grp, value)
-    ").await?;
+    let df = dataframe!(
+        "grp"   => ["A", "A", "B", "B"],
+        "value" => [10, 20, 30, 40]
+    )?;
 
     // Expensive computation: aggregate by group
     let aggregated_df = df.aggregate(vec![col("grp")], vec![sum(col("value"))])?;
@@ -229,93 +413,27 @@ async fn main() -> Result<()> {
 }
 ```
 
-> **Trade-off: .cache() vs write-then-read**
->
-> - **`.cache()` shines**: Fast access, no I/O overhead, great for iterative analysis
-> - **Write-then-read shines**: Results persist across sessions, handles data larger than RAM, enables sharing between processes
+### Common Patterns
 
-### Plan Inspection Without Execution
-
-**[`.create_physical_plan()`] builds the execution plan without running it**—valuable for debugging, metrics collection, or custom execution strategies:
+**Efficient counting**—don't collect just to count rows:
 
 ```rust
 use datafusion::prelude::*;
 use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.sql("SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS t(id, name)").await?;
-
-    // Build the physical plan without executing
-    let physical_plan = df.clone().create_physical_plan().await?;
-
-    // Inspect plan properties
-    println!("Output partitioning: {:?}", physical_plan.output_partitioning());
-
-    // For human-readable plan output, use .explain() instead:
-    df.explain(true, true)?.show().await?;
-
-    Ok(())
-}
-```
-
-### Advanced: Partitioned Collection
-
-For parallel post-processing while maintaining partition structure:
-
-```rust
-use std::sync::Arc;
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::physical_plan::collect_partitioned;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.sql("SELECT * FROM (VALUES (1), (2), (3)) AS t(id)").await?;
-
-    // Get state and plan separately for advanced control
-    let (state, plan) = df.into_parts();
-    let physical = state.create_physical_plan(&plan).await?;
-    let task_ctx = Arc::new(state.task_ctx());
-
-    // Collect each partition independently
-    let partitions = collect_partitioned(physical, task_ctx).await?;
-
-    for (i, partition_batches) in partitions.iter().enumerate() {
-        println!("Partition {}: {} batches", i, partition_batches.len());
-    }
-
-    Ok(())
-}
-```
-
-### Efficient Counting and Existence Checks
-
-Don't use [`.collect()`] just to count rows or check for existence—use optimized patterns:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::arrow::array::Int64Array;
 use datafusion::functions_aggregate::count::count;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.sql("SELECT * FROM (VALUES (1), (2), (3), (4), (5)) AS t(id)").await?;
+    let df = dataframe!(
+        "id" => [1, 2, 3, 4, 5]
+    )?;
 
-    // Efficient row count (optimizer pushes COUNT to source when possible)
-    let count_df = df.clone().aggregate(vec![], vec![count(lit(1))])?;
-    let batches = count_df.collect().await?;
-    let row_count = batches[0]
-        .column(0)
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .unwrap()
-        .value(0);
-    println!("Total rows: {}", row_count);
+    // Use COUNT aggregation (optimizer can push to source)
+    let count_result = df.clone()
+        .aggregate(vec![], vec![count(lit(1))])?
+        .collect().await?;
+
+    println!("Row count: {:?}", count_result);
 
     // Check existence efficiently (stops after first row)
     let exists = !df.limit(0, Some(1))?.collect().await?.is_empty();
@@ -324,6 +442,27 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+---
+
+<!-- New references to sort -->
+
+[`MemoryPool`]: https://docs.rs/datafusion/latest/datafusion/execution/memory_pool/trait.MemoryPool.html
+[`DiskManager`]: https://docs.rs/datafusion/latest/datafusion/execution/disk_manager/struct.DiskManager.html
+[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`get_record_batch_memory_size()`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/spill/fn.get_record_batch_memory_size.html
+
+<!-- Datafusion methods -->
+
+[`.clone()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.clone
+[`.explain()`]: ../../user-guide/explain-usage.md
+[`.create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
+
+<!-- External Datafusion documentation -->
+
+[Architecture Guide]: https://docs.rs/datafusion/latest/datafusion/#architecture
+[SIGMOD 2024 Paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
+[How Query Engines Work]: https://howqueryengineswork.com/00-introduction.html
 
 ## Writing DataFrames (Persistent Storage)
 
@@ -345,6 +484,8 @@ async fn main() -> Result<()> {
 
 ### Choosing a File Format
 
+**Choose the output format based on downstream consumers and schema needs.** Parquet is the default choice for analytics; CSV and JSON are useful for interoperability and debugging.
+
 | Format      | Type     | Schema Preservation | Compression | Best For                        |
 | ----------- | -------- | ------------------- | ----------- | ------------------------------- |
 | **Parquet** | Columnar | Strong (embedded)   | Excellent   | Analytics, data lakes, archives |
@@ -353,17 +494,23 @@ async fn main() -> Result<()> {
 
 ### DataFrameWriteOptions
 
-All write methods accept `DataFrameWriteOptions` to control output behavior:
+**Write options control output layout (files, partitions, and sorting).** All write methods accept `DataFrameWriteOptions` to control output behavior:
 
 ```rust
 use datafusion::prelude::*;
 use datafusion::dataframe::DataFrameWriteOptions;
+use datafusion::error::Result;
 
-// Configure write options (can be reused across writes)
-let options = DataFrameWriteOptions::new()
-    .with_single_file_output(true)      // Force single file (default: one per partition)
-    .with_partition_by(vec!["year".to_string(), "month".to_string()])  // Hive-style partitioning
-    .with_sort_by(vec![col("timestamp").sort(true, false)]);           // Sort within files
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Configure write options (can be reused across writes)
+    let _options = DataFrameWriteOptions::new()
+        .with_single_file_output(true)      // Force single file (default: one per partition)
+        .with_partition_by(vec!["year".to_string(), "month".to_string()])  // Hive-style partitioning
+        .with_sort_by(vec![col("timestamp").sort(true, false)]);           // Sort within files
+
+    Ok(())
+}
 ```
 
 | Option                       | Effect                                             | Default |
@@ -380,15 +527,13 @@ let options = DataFrameWriteOptions::new()
 ```rust
 use datafusion::prelude::*;
 use datafusion::dataframe::DataFrameWriteOptions;
-use parquet::basic::Compression;
-use parquet::file::properties::WriterProperties;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
     // Create sample data
-    let df = ctx.sql("
+    let sales_df = ctx.sql("
         SELECT * FROM (VALUES
             (1, 'East', 100),
             (2, 'West', 200),
@@ -400,23 +545,22 @@ async fn main() -> datafusion::error::Result<()> {
     let temp_dir = tempfile::tempdir()?;
 
     // Basic write (single file)
-    let output_path = temp_dir.path().join("data.parquet");
-    df.clone().write_parquet(
-        output_path.to_str().unwrap(),
+    let output_path = temp_dir.path().join("sales.parquet");
+    let output_path = output_path.to_string_lossy();
+    sales_df.clone().write_parquet(
+        output_path.as_ref(),
         DataFrameWriteOptions::new().with_single_file_output(true),
-        None,
+        None,  // Use default parquet options
     ).await?;
 
-    // With compression (ZSTD provides excellent compression ratios)
-    let compressed_path = temp_dir.path().join("compressed.parquet");
-    df.write_parquet(
-        compressed_path.to_str().unwrap(),
-        DataFrameWriteOptions::new().with_single_file_output(true),
-        Some(
-            WriterProperties::builder()
-                .set_compression(Compression::ZSTD(Default::default()))
-                .build()
-        ),
+    // Write to directory (multiple files, better for parallel reads)
+    let dir_path = temp_dir.path().join("sales_parquet_dir");
+    std::fs::create_dir_all(&dir_path)?;
+    let dir_path = dir_path.to_string_lossy();
+    sales_df.write_parquet(
+        dir_path.as_ref(),
+        DataFrameWriteOptions::new(),
+        None,
     ).await?;
 
     Ok(())
@@ -424,6 +568,8 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 ### Writing to CSV
+
+**CSV is a row-oriented interchange format.** Use it for exports to tools like spreadsheets; prefer Parquet for analytics and stable schemas.
 
 ```rust
 use datafusion::prelude::*;
@@ -436,20 +582,21 @@ async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
     // Create sample data
-    let df = ctx.sql("
+    let sales_df = ctx.sql("
         SELECT * FROM (VALUES
-            (1, 'Alice', 95.5),
-            (2, 'Bob', 87.3),
-            (3, 'Carol', 92.1)
-        ) AS t(id, name, score)
+            (1, 'East', 100),
+            (2, 'West', 200),
+            (3, 'East', 150)
+        ) AS t(id, region, amount)
     ").await?;
 
     // Write to temp file with custom delimiter (tab) and compression
     let temp_dir = tempfile::tempdir()?;
-    let output_path = temp_dir.path().join("output.tsv.gz");
+    let output_path = temp_dir.path().join("sales.tsv.gz");
+    let output_path = output_path.to_string_lossy();
 
-    df.write_csv(
-        output_path.to_str().unwrap(),
+    sales_df.write_csv(
+        output_path.as_ref(),
         DataFrameWriteOptions::new().with_single_file_output(true),
         Some(
             CsvOptions::default()
@@ -476,28 +623,29 @@ async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
     // Create sample data
-    let df = ctx.sql("
+    let sales_df = ctx.sql("
         SELECT * FROM (VALUES
-            (1, 'Alice', '2024-01-15'),
-            (2, 'Bob', '2024-01-16'),
-            (3, 'Carol', '2024-01-17')
-        ) AS t(id, name, created_at)
+            (1, 'East', 100),
+            (2, 'West', 200),
+            (3, 'East', 150)
+        ) AS t(id, region, amount)
     ").await?;
 
     // Write to temp file as NDJSON
     let temp_dir = tempfile::tempdir()?;
-    let output_path = temp_dir.path().join("users.ndjson");
+    let output_path = temp_dir.path().join("sales.ndjson");
+    let output_path = output_path.to_string_lossy();
 
-    df.write_json(
-        output_path.to_str().unwrap(),
+    sales_df.write_json(
+        output_path.as_ref(),
         DataFrameWriteOptions::new().with_single_file_output(true),
         None,
     ).await?;
 
     // Output format (one JSON object per line):
-    // {"id":1,"name":"Alice","created_at":"2024-01-15"}
-    // {"id":2,"name":"Bob","created_at":"2024-01-16"}
-    // {"id":3,"name":"Carol","created_at":"2024-01-17"}
+    // {"id":1,"region":"East","amount":100}
+    // {"id":2,"region":"West","amount":200}
+    // {"id":3,"region":"East","amount":150}
 
     Ok(())
 }
@@ -508,121 +656,66 @@ async fn main() -> datafusion::error::Result<()> {
 **[`.write_table()`] inserts DataFrame contents into a registered table**—useful for ETL pipelines and incremental updates:
 
 ```rust
-use std::sync::Arc;
 use datafusion::prelude::*;
-use datafusion::dataframe::{DataFrameWriteOptions, InsertOp};
+use datafusion::dataframe::DataFrameWriteOptions;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
     let temp_dir = tempfile::tempdir()?;
-    let table_path = temp_dir.path().join("events");
+    let table_path = temp_dir.path().join("sales");
+    std::fs::create_dir_all(&table_path)?;  // Must exist as directory
 
-    // Create target table (external Parquet table)
+    // Create target table (external Parquet table pointing to a directory)
     ctx.sql(&format!(
-        "CREATE EXTERNAL TABLE events (id INT, event TEXT)
+        "CREATE EXTERNAL TABLE sales (id INT, region TEXT, amount INT)
          STORED AS PARQUET LOCATION '{}'",
         table_path.display()
     )).await?.collect().await?;
 
-    // Prepare new data to insert
-    let new_events = ctx.sql("
-        SELECT * FROM (VALUES
-            (1, 'login'),
-            (2, 'purchase'),
-            (3, 'logout')
-        ) AS t(id, event)
+    // Prepare new data to insert (cast to match table schema)
+    let new_sales = ctx.sql("
+        SELECT
+            CAST(id AS INT) AS id,
+            region,
+            CAST(amount AS INT) AS amount
+        FROM (VALUES
+            (1, 'East', 100),
+            (2, 'West', 200),
+            (3, 'East', 150)
+        ) AS t(id, region, amount)
     ").await?;
 
-    // Append to table
-    new_events.write_table(
-        "events",
-        DataFrameWriteOptions::new()
-            .with_insert_operation(InsertOp::Append),
+    // Append to table (default behavior)
+    new_sales.write_table(
+        "sales",
+        DataFrameWriteOptions::new(),
     ).await?;
 
     // Verify the data was written
-    ctx.table("events").await?.show().await?;
+    ctx.table("sales").await?.show().await?;
 
     Ok(())
 }
 ```
 
-| InsertOp    | Behavior                                    |
-| ----------- | ------------------------------------------- |
-| `Append`    | Add rows to existing data (default)         |
-| `Overwrite` | Replace all existing data                   |
-| `Replace`   | Upsert semantics (if supported by provider) |
+Write options include `with_single_file_output()`, `with_partition_by()`, and `with_sort_by()` for controlling output format.
 
-## Execution Best Practices
+## Execution Quick Reference
 
-**Production-ready DataFrame execution requires attention to memory, timeouts, and error handling.** The patterns below help you avoid common pitfalls when moving from development to production workloads.
+<!-- TODO: Update link once best-practices.md is finalized -->
 
-### Quick Reference Checklist
+**For production-ready patterns including error handling, logging, memory management, and timeouts, see [Best Practices § Robust Execution](best-practices.md#robust-execution).**
+
+This quick reference summarizes key execution patterns:
 
 - **Project early, filter early**: Select only needed columns and apply filters before expensive operations
 - **Prefer streaming for large results**: Use [`.execute_stream()`] over [`.collect()`] for datasets > 1GB
 - **Avoid `.show()` in production**: Use [`.execute_stream()`] with explicit formatting and error handling
 - **Verify execution plans**: Use `.explain(true, true)` to confirm pushdown and optimization
-- **Handle timeouts**: Wrap long-running queries with `tokio::time::timeout`
-- **Configure memory limits**: Set `RuntimeEnv::with_memory_pool` to prevent OOM on large aggregations
+- **Handle timeouts**: Wrap long-running queries with `tokio::time::timeout` <!-- TODO: verify anchor -->
+- **Configure memory limits**: Set `RuntimeEnv::with_memory_pool` to prevent OOM <!-- TODO: verify anchor -->
 - **Use `.cache()` wisely**: Only for genuinely reused intermediate results; it consumes memory
-
-### Memory Management
-
-```rust
-use std::sync::Arc;
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::execution::runtime_env::RuntimeEnvBuilder;
-use datafusion::execution::memory_pool::FairSpillPool;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Configure memory limits to prevent OOM (1GB limit)
-    let runtime = RuntimeEnvBuilder::default()
-        .with_memory_pool(Arc::new(FairSpillPool::new(1024 * 1024 * 1024)))
-        .build_arc()?;
-
-    // Create session with memory-limited runtime
-    let config = SessionConfig::new();
-    let ctx = SessionContext::new_with_config_rt(config, runtime);
-
-    // Queries will now respect the memory limit
-    let df = ctx.sql("SELECT 1 as id").await?;
-    df.show().await?;
-
-    Ok(())
-}
-```
-
-### Cancellation and Timeouts
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use tokio::time::{timeout, Duration};
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-    let df = ctx.sql("SELECT * FROM (VALUES (1), (2), (3)) AS t(id)").await?;
-
-    // Wrap execution with timeout (30 seconds)
-    let result = timeout(
-        Duration::from_secs(30),
-        df.collect()
-    ).await;
-
-    match result {
-        Ok(Ok(batches)) => println!("Success: {} batches", batches.len()),
-        Ok(Err(e)) => eprintln!("Query error: {}", e),
-        Err(_) => eprintln!("Query timed out after 30s"),
-    }
-
-    Ok(())
-}
-```
 
 ---
 
@@ -633,10 +726,10 @@ async fn main() -> Result<()> {
 >
 > **Next Steps**:
 >
-> - [Best Practices](best-practices.md) — Performance tuning and optimization
-> - [Advanced Topics](dataframes-advance.md) — Custom execution, S3/remote storage
-
-TODO: Add example for writing to S3: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/dataframe-to-s3.rs
+> <!-- TODO: Update links once these documents are finalized -->
+>
+> - [Best Practices](best-practices.md) — Error handling, logging, memory management, performance tuning
+> - [Advanced Topics](dataframes-advance.md) — Custom execution, object store integration (S3, Azure, GCS)
 
 <!-- Core type references -->
 
@@ -655,12 +748,14 @@ TODO: Add example for writing to S3: https://github.com/apache/datafusion/blob/m
 
 <!-- Execution action references -->
 
+[`.assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
 [`.collect_partitioned()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect_partitioned
 [`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
 [`.execute_stream_partitioned()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream_partitioned
 [`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
 [`.show_limit(n)`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show_limit
+[`.show_limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show_limit
 [`.to_string()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.to_string
 [`.cache()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.cache
 [`.create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan

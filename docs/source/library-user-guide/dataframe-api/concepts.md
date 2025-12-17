@@ -34,7 +34,7 @@ To understand where DataFrames fit in DataFusion, consider the following archite
 
 **The architectural overview schema:**
 
-```
+```text
                     ┌──────────────────┐
                     │  SessionContext  │
                     └────────┬─────────┘
@@ -101,7 +101,7 @@ To understand where DataFrames fit in DataFusion, consider the following archite
 
 The diagram above reveals DataFusion's most important architectural insight: **SQL and the DataFrame API are two different ways to construct the same thing—a `LogicalPlan`**.
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Two Construction Paths                       │
 ├─────────────────────────────┬───────────────────────────────────────┤
@@ -134,7 +134,20 @@ Understanding this distinction is fundamental because it explains:
 ### Parser Path (SQL)
 
 ```rust
-let df = ctx.sql("SELECT a, b FROM t WHERE a > 10").await?;
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+    // Register a table for the example
+    ctx.sql("CREATE TABLE t (a INT, b INT) AS VALUES (1, 2), (15, 20)").await?;
+
+    // The SQL path: parse a query string into a LogicalPlan
+    let df = ctx.sql("SELECT a, b FROM t WHERE a > 10").await?;
+    df.show().await?;
+    Ok(())
+}
 ```
 
 - **Input**: Query string
@@ -145,9 +158,22 @@ let df = ctx.sql("SELECT a, b FROM t WHERE a > 10").await?;
 ### Builder Path (DataFrame API)
 
 ```rust
-let df = ctx.table("t").await?
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // The DataFrame path: build a LogicalPlan directly via method calls
+    let df = dataframe!(
+        "a" => [1, 2, 15, 20],
+        "b" => [2, 3, 20, 25]
+    )?
     .filter(col("a").gt(lit(10)))?
     .select(vec![col("a"), col("b")])?;
+
+    df.show().await?;
+    Ok(())
+}
 ```
 
 - **Input**: Method calls
@@ -171,7 +197,7 @@ DataFusion's contribution is providing **both** the programmatic builder pattern
 
 ## SessionContext: The Entry Point for DataFrames
 
-```
+```text
 SessionContext   <== You are here
   ↓ creates
 DataFrame
@@ -216,14 +242,16 @@ The `SessionContext` is your starting point. You can use defaults or tune it for
 use datafusion::prelude::*;
 use datafusion::execution::config::SessionConfig;
 
-// Default context (good for getting started)
-let ctx = SessionContext::new();
+fn main() {
+    // Default context (good for getting started)
+    let ctx = SessionContext::new();
 
-// Customized context for performance tuning
-let config = SessionConfig::new()
-    .with_batch_size(8192)               // Rows per batch
-    .with_target_partitions(num_cpus::get());  // Parallelism
-let ctx = SessionContext::with_config(config);
+    // Customized context for performance tuning
+    let config = SessionConfig::new()
+        .with_batch_size(8192)               // Rows per batch
+        .with_target_partitions(8);          // Parallelism (typically num_cpus::get())
+    let ctx = SessionContext::new_with_config(config);
+}
 ```
 
 Once you have a `SessionContext`, you can create DataFrames, register tables, and execute queries. The context maintains all state (configuration, catalogs, registered tables/UDFs) that DataFrames need during execution.
@@ -240,7 +268,7 @@ Every DataFrame operation follows these foundational principles:
 
 ## Data Model & Schema
 
-```
+```text
 SessionContext
   ↓ creates
 DataFrame
@@ -273,7 +301,8 @@ use datafusion::error::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     let ctx = SessionContext::new();
-    let df = ctx.read_parquet("tests/data/alltypes_plain.parquet", ParquetReadOptions::default()).await?;
+    // Create a DataFrame with inline data
+    let df = ctx.sql("SELECT 1 as id, 'Alice' as name, 25 as age").await?;
     let schema = df.schema();
     for field in schema.fields() {
         println!("{}: {:?} (nullable: {})", field.name(), field.data_type(), field.is_nullable());
@@ -316,7 +345,13 @@ async fn main() -> Result<()> {
     // | Bob   | 17   |
     // | Carol | NULL |
     // +-------+------+
-    let df = ctx.read_csv("people.csv", CsvReadOptions::default()).await?;
+    let df = ctx.sql(
+        "SELECT * FROM (VALUES
+            ('Alice', 25),
+            ('Bob', 17),
+            ('Carol', NULL)
+        ) AS t(name, age)"
+    ).await?;
 
     // Query 1: Standard filter (excludes NULLs)
     let adults = df.clone().filter(col("age").gt(lit(18)))?;
@@ -366,21 +401,28 @@ DataFusion provides several tools to handle nulls explicitly:
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::error::Result;
 
-// Replace nulls with defaults
-let cleaned = df
-    .with_column("revenue", coalesce(vec![col("revenue"), lit(0)]))?
-    .filter(col("country").is_not_null())?;
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+    let df = ctx.sql("SELECT 1 as id, 100 as revenue, 'US' as country").await?;
 
-// Null-safe join (IS NOT DISTINCT FROM)
-use datafusion::common::NullEquality;
-let result = left.join_detailed(
-    right,
-    JoinType::Inner,
-    (vec!["id"], vec!["id"]),
-    None,
-    NullEquality::NullEqualsNull, // NULL = NULL is TRUE
-)?;
+    // Replace nulls with defaults
+    let cleaned = df
+        .with_column("revenue", coalesce(vec![col("revenue"), lit(0)]))?
+        .filter(col("country").is_not_null())?;
+
+    // Standard join (null != null by default)
+    let left = ctx.sql("SELECT 1 as left_id, 'a' as val").await?;
+    let right = ctx.sql("SELECT 1 as right_id, 'b' as data").await?;
+    let result = left.join(right, JoinType::Inner, &["left_id"], &["right_id"], None)?;
+    result.show().await?;
+
+    // For null-safe joins (IS NOT DISTINCT FROM), use SQL:
+    // SELECT * FROM left JOIN right ON left.id IS NOT DISTINCT FROM right.id
+    Ok(())
+}
 ```
 
 > **References**:
@@ -403,7 +445,7 @@ let result = left.join_detailed(
 
 ### The DataFrame Lifecycle
 
-```
+```text
 SessionContext
   ↓ creates
 DataFrame       ← Lazy: holds LogicalPlan, no execution yet
@@ -492,12 +534,14 @@ When you call `.collect()` or `.execute_stream()`:
 For most users, the async details are invisible—you just `await` your DataFrame operations and DataFusion handles parallelism automatically:
 
 ```rust
+use datafusion::prelude::*;
+
 #[tokio::main]  // Creates the Tokio runtime
 async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
     // All these operations are async—they may do I/O or spawn parallel work
-    let df = ctx.read_parquet("data.parquet", ParquetReadOptions::default()).await?;
+    let df = ctx.sql("SELECT 1 as id, 200 as value").await?;
     let results = df.filter(col("id").gt(lit(100)))?.collect().await?;
 
     Ok(())
@@ -563,8 +607,21 @@ This is **not** a Cascades-style optimizer (no memoized search over equivalence 
 The optimizer makes critical performance decisions when translating your [`LogicalPlan`] to an [`ExecutionPlan`]. Consider this simple filter:
 
 ```rust
-let df = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create sample data using the dataframe! macro
+    let df = dataframe!(
+        "region" => ["EMEA", "APAC", "EMEA", "NA"],
+        "revenue" => [100, 200, 150, 300]
+    )?
     .filter(col("region").eq(lit("EMEA")))?;
+
+    df.show().await?;
+    Ok(())
+}
 ```
 
 **The optimizer can choose different physical strategies:**
@@ -575,7 +632,20 @@ let df = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?
 DataFusion chooses the efficient plan automatically, but you can inspect what it chose using [`.explain()`]:
 
 ```rust
-df.explain(false, false)?.show().await?;
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let df = dataframe!(
+        "id" => [1, 2, 3],
+        "value" => [100, 200, 300]
+    )?;
+
+    // Inspect the execution plan
+    df.explain(false, false)?.show().await?;
+    Ok(())
+}
 ```
 
 The output shows chosen algorithms ([`HashJoinExec`], [`SortMergeJoinExec`]), operation order, and applied optimizations. Understanding the physical plan is essential for diagnosing bottlenecks.
@@ -595,16 +665,19 @@ Context: The example below demonstrates the full lifecycle: build a lazy plan, i
 ```rust
 use datafusion::prelude::*;
 use datafusion::error::Result;
+use datafusion::functions_aggregate::sum::sum;
 use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    let df = ctx
-        .read_parquet("sales_2024.parquet", ParquetReadOptions::default()).await?
-        .filter(col("region").eq(lit("EMEA")))?
-        .aggregate(vec![col("product_id")], vec![sum(col("revenue"))])?;
+    // Create sample sales data
+    let df = dataframe!(
+        "product_id" => [1, 2, 1, 2, 3],
+        "region" => ["EMEA", "EMEA", "APAC", "EMEA", "EMEA"],
+        "revenue" => [100, 200, 150, 250, 300]
+    )?
+    .filter(col("region").eq(lit("EMEA")))?
+    .aggregate(vec![col("product_id")], vec![sum(col("revenue"))])?;
 
     // Nothing has executed yet. Inspect the plan if desired.
     df.clone().explain(false, false)?.show().await?;
@@ -653,7 +726,7 @@ The [`SessionContext`] is mutable, but each `DataFrame` holds a frozen view of i
 
 ### The DataFrame Lifecycle: Step by Step
 
-```
+```text
 [ Step 1 · The Kitchen (mutable) ]
 ┌──────────────────────────────────────────────┐
 │ SessionContext                               │
@@ -702,7 +775,7 @@ The [`SessionContext`] is mutable, but each `DataFrame` holds a frozen view of i
 
 **Key API paths:**
 
-```
+```text
 DataFrame ↔ into_parts() ↔ (SessionState, LogicalPlan)
 DataFrame → into_optimized_plan() → Optimized LogicalPlan
 DataFrame → create_physical_plan() → ExecutionPlan
@@ -753,17 +826,27 @@ Extract and modify plans using [`.into_parts()`]:
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::error::Result;
 use datafusion::logical_expr::LogicalPlanBuilder;
 
-let ctx = SessionContext::new();
-let df = ctx.read_csv("data.csv", CsvReadOptions::new()).await?;
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create a DataFrame with sample data
+    let df = dataframe!(
+        "a" => [1, 5, 10, 15],
+        "b" => [2, 6, 11, 16]
+    )?;
 
-// Extract state + plan, modify, rebuild DataFrame
-let (state, plan) = df.into_parts();
-let modified_plan = LogicalPlanBuilder::from(plan)
-    .filter(col("a").gt(lit(5)))?
-    .build()?;
-let new_df = DataFrame::new(state, modified_plan);
+    // Extract state + plan, modify, rebuild DataFrame
+    let (state, plan) = df.into_parts();
+    let modified_plan = LogicalPlanBuilder::from(plan)
+        .filter(col("a").gt(lit(5)))?
+        .build()?;
+    let new_df = DataFrame::new(state, modified_plan);
+
+    new_df.show().await?;
+    Ok(())
+}
 ```
 
 ### DataFrame and LogicalPlanBuilder Equivalence
@@ -771,14 +854,26 @@ let new_df = DataFrame::new(state, modified_plan);
 [`DataFrame`] methods and [`LogicalPlanBuilder`] produce identical plans:
 
 ```rust
-// These produce the same LogicalPlan:
-let df = ctx.read_csv("data.csv", CsvReadOptions::new()).await?
-    .select(vec![col("a"), col("b")])?;
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::logical_expr::LogicalPlanBuilder;
 
-let builder_plan = LogicalPlanBuilder::from(base_plan)
-    .project(vec![col("a"), col("b")])?.build()?;
+#[tokio::main]
+async fn main() -> Result<()> {
+    // These produce the same LogicalPlan:
+    let df = dataframe!("a" => [1, 2], "b" => [3, 4], "c" => [5, 6])?
+        .select(vec![col("a"), col("b")])?;
 
-// assert_eq!(plan_from_df, builder_plan);  ✅ Identical
+    // Get the plan from the DataFrame
+    let (state, base_plan) = df.clone().into_parts();
+
+    // Build equivalent plan using LogicalPlanBuilder
+    let builder_plan = LogicalPlanBuilder::from(base_plan)
+        .project(vec![col("a"), col("b")])?.build()?;
+
+    // Both approaches produce identical LogicalPlans
+    Ok(())
+}
 ```
 
 > See [Building Logical Plans](../building-logical-plans.md) for advanced [`LogicalPlanBuilder`] usage.
@@ -803,27 +898,36 @@ A common and highly effective pattern is to perform initial data preparation wit
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::error::Result;
 
-let ctx = SessionContext::new();
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
 
-// 1. Prepare data programmatically with the DataFrame API
-let sales = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?
+    // 1. Prepare data programmatically with the DataFrame API
+    let sales = dataframe!(
+        "product_id" => [1, 2, 1, 3, 2, 1],
+        "region" => ["EMEA", "EMEA", "APAC", "EMEA", "EMEA", "EMEA"],
+        "revenue" => [100, 200, 150, 300, 250, 175]
+    )?
     .filter(col("region").eq(lit("EMEA")))?;
 
-// 2. Register the DataFrame as a temporary view.
-// .into_view() consumes 'sales'; use .clone() if needed later (cheap Arc clone)
-ctx.register_table("sales_emea", sales.into_view())?;
+    // 2. Register the DataFrame as a temporary view.
+    // .into_view() consumes 'sales'; use .clone() if needed later (cheap Arc clone)
+    ctx.register_table("sales_emea", sales.into_view())?;
 
-// 3. Use SQL for the final, complex analytical query.
-let top_products = ctx.sql(
-    "SELECT product_id, SUM(revenue) AS rev
-     FROM sales_emea
-     GROUP BY product_id
-     ORDER BY rev DESC
-     LIMIT 10"
-).await?;
+    // 3. Use SQL for the final, complex analytical query.
+    let top_products = ctx.sql(
+        "SELECT product_id, SUM(revenue) AS rev
+         FROM sales_emea
+         GROUP BY product_id
+         ORDER BY rev DESC
+         LIMIT 10"
+    ).await?;
 
-top_products.show().await?;
+    top_products.show().await?;
+    Ok(())
+}
 ```
 
 **Zero-Cost Abstraction:**

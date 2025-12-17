@@ -17,15 +17,21 @@
   under the License.
 -->
 
+<!-- TODO; Implement Error handling -->
+
+<!-- TODO: Parse for other TODOs -->
+
 # Creating and Executing DataFrames
 
 Creating a DataFrame is the foundational first step for building any query pipeline in DataFusion. It's the entry point to the query engine. True to the flexible, interoperable spirit of Apache Arrow, DataFusion offers a rich set of methods for ingesting data, which is the focus of this guide.
 
 This document is designed for developers and data engineers of all levels. It covers every method for creating DataFrames—from reading a simple CSV file for an ad-hoc query to configuring high-performance connectors for production data pipelines in cloud storage. You will learn not just how to create DataFrames, but also why to choose one method over another, ensuring your application is both correct and efficient.
 
-> **For Advanced Topics**: This guide covers the foundational API calls for creating DataFrames. For a deeper dive into production-level concerns like schema management, error handling, connecting to S3, Arrow Flight, Kafka, custom providers, and performance tuning, please see our dedicated guide to [Advanced Creation Topics](dataframe-advance.md) .
+**For Advanced Topics**:<br>
+This guide covers the foundational API calls for creating DataFrames. For a deeper dive into production-level concerns like schema management, error handling, connecting to S3, Arrow Flight, Kafka, custom providers, and performance tuning, please see our dedicated guide to [Advanced Creation Topics](dataframe-advance.md) .
 
-> **Style Note:** In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+> **Style Note:** <br>
+> In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
 
 ```{contents}
 :local:
@@ -34,47 +40,50 @@ This document is designed for developers and data engineers of all levels. It co
 
 To situate DataFrames in the overall architecture, here is a brief recap from [Concepts](concepts.md): a high‑level diagram showing where DataFusion DataFrames sit in the query pipeline.
 
-```
-                +------------------+
-                |  SessionContext  |
-                +------------------+
-                         |
-                         | creates
-                         v
-     +-----------+                 +-------------+
-     |   SQL     |                 | DataFrame   |
-     |  ctx.sql  |                 |   API (lazy)|
-     +-----------+                 +-------------+
-             \                         /
-              \                       /
-               v                     v
-             +-----------------------------+
-             |         LogicalPlan         |
-             +-----------------------------+
-                         |
-                         | optimize (rules: projection/predicate pushdown, etc.)
-                         v
-             +-----------------------------+
-             |     Optimized LogicalPlan   |
-             +-----------------------------+
-                         |
-                         | plan (physical planner)
-                         v
-             +-----------------------------+
-             |     ExecutionPlan (Physical)|
-             +-----------------------------+
-                         |
-                         | optimize (physical optimizer)
-                         v
-             +-----------------------------+
-             |   Optimized ExecutionPlan   |
-             +-----------------------------+
-                         |
-                         | execute (Tokio + CPU runtimes)
-                         v
-             +-----------------------------+
-             |     RecordBatch streams     |
-             +-----------------------------+
+```text
+                    ┌──────────────────┐
+                    │  SessionContext  │
+                    └────────┬─────────┘
+                             │
+               ┌─────────────┴─────────────┐
+               │ creates                   │ creates
+               ▼                           ▼
+        ┌─────────────┐             ┌─────────────┐
+        │     SQL     │             │  DataFrame  │
+        │   ctx.sql   │             │  API (lazy) │
+        └──────┬──────┘             └──────┬──────┘
+               │                           │
+               │ produces                  │ produces
+               │                           │
+               └─────────--──┬─────────────┘
+                             ▼
+               ┌───────────────────────────┐
+               │        LogicalPlan        │
+               └─────────────┬─────────────┘
+                             │
+                             │ optimize (projection/predicate pushdown, etc.)
+                             ▼
+               ┌───────────────────────────┐
+               │   Optimized LogicalPlan   │
+               └─────────────┬─────────────┘
+                             │
+                             │ plan (physical planner)
+                             ▼
+               ┌───────────────────────────┐
+               │ ExecutionPlan (Physical)  │
+               └─────────────┬─────────────┘
+                             │
+                             │ optimize (physical optimizer)
+                             ▼
+               ┌───────────────────────────┐
+               │  Optimized ExecutionPlan  │
+               └─────────────┬─────────────┘
+                             │
+                             │ execute (Tokio + CPU runtimes)
+                             ▼
+               ┌───────────────────────────┐
+               │    RecordBatch streams    │
+               └───────────────────────────┘
 ```
 
 > **How to read this**
@@ -98,7 +107,7 @@ To situate DataFrames in the overall architecture, here is a brief recap from [C
 > - Transformations: [`transformations.md`](transformations.md)
 > - DataFrame Execution (later in this guide)
 
-> **📚 About the examples in this guide**
+> **About the examples in this guide**
 >
 > Throughout this document, you'll see examples using [`assert_batches_eq!`] to verify DataFrame outputs. This isn't just for testing—it's a learning tool! When you see:
 >
@@ -121,7 +130,7 @@ The [`SessionContext`][SessionContext] is the main entry point for creating Data
 
 Think of DataFusion's `SessionContext` as a workspace. Inside this workspace, you organize your data sources into a clean, three-level hierarchy, just like a traditional database:
 
-```
+```text
 SessionContext
 └── Catalog ("datafusion")
     └── Schema ("public")
@@ -206,7 +215,7 @@ When you create a DataFrame, you're either:
 
 The second approach uses DataFusion's catalog system—a three-level hierarchy that stores [`TableProvider`]s (objects that know how to scan your data sources). For a deeper look at how catalogs, schemas, and tables relate, see the [Catalogs Guide](../catalogs.md#general-concepts):
 
-```
+```text
 SessionContext (your workspace)
 └── Catalog ("datafusion" by default)
     └── Schema ("public" by default)  <-- NOT the same as table schema!
@@ -352,7 +361,7 @@ async fn main() -> Result<()> {
 
 Once you register tables, they become part of the `SessionContext`'s catalog. This enables discovery and inspection, which is essential for interactive exploration and debugging. DataFusion organizes this information in a hierarchy:
 
-```
+```text
 SessionContext
 └── Catalog: datafusion (default)
     ├── Schema: public (default)
@@ -439,7 +448,7 @@ use datafusion::error::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = SessionContext::with_config(SessionConfig::new().with_information_schema(true));
+    let ctx = SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
     let df = ctx.sql(
         "SELECT table_name, column_name, data_type\n\
          FROM information_schema.columns\n\
@@ -1249,7 +1258,7 @@ Avoid this for normal data processing (use SQL/DataFrame), or for new sources (u
 
 #### Relationship: how everything fits
 
-```
+```text
 +----------+       +-----------+
 |  SQL     |       | DataFrame |
 | ctx.sql  |       |   API     |
@@ -1909,11 +1918,11 @@ use datafusion::error::Result;
 async fn main() -> Result<()> {
     // Small batch size - lower memory, more overhead
     let config_small = SessionConfig::new().with_batch_size(1024);
-    let ctx_small = SessionContext::with_config(config_small);
+    let ctx_small = SessionContext::new_with_config(config_small);
 
     // Large batch size - higher memory, better throughput
     let config_large = SessionConfig::new().with_batch_size(65536);
-    let ctx_large = SessionContext::with_config(config_large);
+    let ctx_large = SessionContext::new_with_config(config_large);
 
     // Compare performance
     let df_small = ctx_small.read_parquet("large.parquet", ParquetReadOptions::default()).await?;
@@ -2025,7 +2034,7 @@ async fn main() -> datafusion::error::Result<()> {
         .build()?;
 
     let runtime_config = RuntimeConfig::new();
-    let runtime = Arc::new(RuntimeEnv::new(runtime_config)?);
+    let runtime = Arc::new(RuntimeEnv::try_new(runtime_config)?);
 
     // Register S3 store
     runtime.register_object_store(
@@ -2595,3 +2604,4 @@ For more debugging and profiling techniques, see [Best Practices § Debugging Te
 [`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
 [`catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
 [information_schema]: ../../user-guide/sql/information_schema.md
+[`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
