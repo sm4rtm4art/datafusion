@@ -242,7 +242,7 @@ Both APIs produce identical plans, so choose based on ergonomics:
 | Security matters (no SQL injection by construction)      | Query comes from config files or user input         |
 | IDE refactoring and autocomplete matter                  | Team is SQL-fluent, Rust is secondary               |
 
-Neither is "better"—they're tools for different situations. And since you can [mix them freely](#mixing-sql-and-dataframes), you don't have to choose just one.
+Neither is "better"—they're tools for different situations. Since both compile to the same [`LogicalPlan`], you can mix them freely: use [`.into_view()`] to register any DataFrame as a table for SQL queries.
 
 > **Further reading**:<br>
 > This dual-API architecture follows principles established in the broader data science ecosystem. For the theoretical foundation, see [Towards Scalable Dataframe Systems][dataframe-paper].
@@ -631,12 +631,12 @@ The [`SessionContext`] is mutable and evolves over your session, but each `DataF
 
 The concepts might come clearer with an everyday analogy of a kitchen.
 
-| Concept            | Cooking Analogy    | What it holds                                       |
-| ------------------ | ------------------ | --------------------------------------------------- |
-| [`SessionContext`] | Kitchen (mutable)  | Tools, ingredients, configuration—changes over time |
-| [`LogicalPlan`]    | Recipe (immutable) | Step-by-step instructions—what to compute           |
-| [`SessionState`]   | Kitchen snapshot   | Photo of the kitchen at recipe start—frozen in time |
-| [`DataFrame`]      | Recipe + snapshot  | Everything needed to cook the dish reproducibly     |
+| Concept            | Cooking Analogy    | What it holds                                               |
+| ------------------ | ------------------ | ----------------------------------------------------------- |
+| [`SessionContext`] | Kitchen (mutable)  | Tools, ingredients, configuration—_changes over time_       |
+| [`LogicalPlan`]    | Recipe (immutable) | Step-by-step instructions—_what to compute_                 |
+| [`SessionState`]   | Kitchen State      | Given setup of the kitchen at recipe start—_frozen in time_ |
+| [`DataFrame`]      | Recipe + snapshot  | Everything needed to cook the dish reproducibly             |
 
 The [`SessionState`] defines the enviroment the data are processed in: if you add new tools to the kitchen after starting a dish, the dish-in-progress still uses the original setup. This prevents surprises ("where did my UDF go?") and ensures reproducibility.
 
@@ -694,15 +694,30 @@ Here's how this flows through the system in a nutshell:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-<!--NOTICE TO THE PCM, CONTRIBUTER: OR Who ever!
-I'm really tempted to add a image of alphabet soup here like
+Unlike a single plate, the meal arrives in **RecordBatches**—sliced like a Sunday roast 🍖, one portion at a time. This streaming approach lets DataFusion handle datasets much larger than memory.
+
+<!-- NOTICE TO PCM/CONTRIBUTORS: Tempted to add alphabet soup image here for the "meal" metaphor!
+
+Inspiration:
 
 https://media.istockphoto.com/id/1210366546/de/foto/tomatensuppe-mit-buchstabennudeln-auf-l%C3%B6ffel.jpg?s=2048x2048&w=is&k=20&c=SaZ0yj4WLabqvd41RKJZlS7dRgZw_A-jVtuGrfGgvZo=
 
 Of cause without copyright etc. !
 -->
 
-**Key API paths:**
+**The snapshot guarantees reproducibility:**
+
+| What's given                              | Why it matters                                            |
+| ----------------------------------------- | --------------------------------------------------------- |
+| Config (batch size, partitions, timezone) | Same performance even if global settings change           |
+| UDFs and registered tables                | Queries don't fail if dependencies are deregistered later |
+| Query start timestamp                     | Functions like [`.now()`] return consistent values        |
+
+> **Best practice:** <br>
+> Register UDFs and tables **before** creating DataFrames that depend on them. <br> > **Mid-processing?** <br>
+> If you need a new UDF or table, register it on the `SessionContext`, then create a **new DataFrame**—existing DataFrames keep their original snapshots.
+
+**Key API paths for advanced use:**
 
 ```text
 DataFrame ↔ into_parts() ↔ (SessionState, LogicalPlan)
@@ -710,23 +725,58 @@ DataFrame → into_optimized_plan() → Optimized LogicalPlan
 DataFrame → create_physical_plan() → ExecutionPlan
 ```
 
-### Why the Snapshot Matters
-
-**The frozen `SessionState` provides guarantees that matter for production workloads.**
-
-| Guarantee                         | What it means                                       | Why it matters                                                            |
-| --------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------- |
-| **Configuration Reproducibility** | Batch size, partitions, timezone frozen at creation | Same performance characteristics even if you change global settings later |
-| **Resource Safety**               | Catalogs, tables, UDFs preserved from creation time | Queries don't fail because a dependency was deregistered                  |
-| **Point-in-Time Consistency**     | Query start timestamp captured in snapshot          | Functions like [`.now()`] return the same value every execution           |
-
-**Practical implications:**
-
-- **Reproducibility** — re-running a DataFrame happens in the exact same context (critical for debugging)
-- **Safety** — you can modify the [`SessionContext`] without breaking existing DataFrames
-- **Best practice** — always register UDFs and tables **before** creating DataFrames that rely on them
-
 > **Learn more:** See [SessionContext and SessionState relationship][SessionContext and SessionState] for implementation details.
+
+### DataFrame vs. LogicalPlanBuilder
+
+[`DataFrame`] methods are thin wrappers around [`LogicalPlanBuilder`]—they produce identical plans:
+
+| DataFrame method           | LogicalPlanBuilder equivalent       |
+| -------------------------- | ----------------------------------- |
+| [`DataFrame::select()`]    | [`LogicalPlanBuilder::project()`]   |
+| [`DataFrame::filter()`]    | [`LogicalPlanBuilder::filter()`]    |
+| [`DataFrame::aggregate()`] | [`LogicalPlanBuilder::aggregate()`] |
+| [`DataFrame::join()`]      | [`LogicalPlanBuilder::join()`]      |
+
+This means you can mix approaches—use DataFrame for convenience, drop to LogicalPlanBuilder when you need fine-grained control, then wrap back in a DataFrame for execution:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::logical_expr::LogicalPlanBuilder;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Start with: a=[1,2,3], b=[4,5,6]
+    let df = dataframe!("a" => [1, 2, 3], "b" => [4, 5, 6])?;
+
+    // Decompose into parts
+    let (state, plan) = df.into_parts();
+
+    // Use LogicalPlanBuilder for fine-grained control:
+    // 1. Filter rows where a > 1  (keeps a=2,3)
+    // 2. Project only column b    (drops column a)
+    let modified = LogicalPlanBuilder::from(plan)
+        .filter(col("a").gt(lit(1)))?
+        .project(vec![col("b")])?
+        .build()?;
+
+    // Wrap back into DataFrame for execution
+    let new_df = DataFrame::new(state, modified);
+
+    new_df.show().await?;
+    // +---+
+    // | b |
+    // +---+
+    // | 5 |
+    // | 6 |
+    // +---+
+    Ok(())
+}
+```
+
+> **Further reading:** <br>
+> See [Building Logical Plans](../building-logical-plans.md) for advanced [`LogicalPlanBuilder`] usage.
 
 ### Advanced: Converting Between `DataFrame` and `LogicalPlan`
 
@@ -742,6 +792,8 @@ Sometimes you need direct [`LogicalPlan`] access—custom optimizer rules, query
 
 **Extract and modify plans using [`.into_parts()`]:**
 
+[`.into_parts()`] consumes the DataFrame and returns `(SessionState, LogicalPlan)`—the frozen environment and the query recipe as separate values. You can then modify the plan and wrap it back into a DataFrame:
+
 ```rust
 use datafusion::prelude::*;
 use datafusion::error::Result;
@@ -749,17 +801,23 @@ use datafusion::logical_expr::LogicalPlanBuilder;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Create a DataFrame with sample data
     let df = dataframe!(
         "a" => [1, 5, 10, 15],
         "b" => [2, 6, 11, 16]
     )?;
 
-    // Extract state + plan, modify, rebuild DataFrame
+    // Decompose: DataFrame → (SessionState, LogicalPlan)
     let (state, plan) = df.into_parts();
+    // state: frozen config, catalog, UDFs
+    // plan:  TableScan("datafusion.public.?table?")
+
+    // Modify the plan using LogicalPlanBuilder
     let modified_plan = LogicalPlanBuilder::from(plan)
         .filter(col("a").gt(lit(5)))?
         .build()?;
+    // plan now: Filter(a > 5) → TableScan(...)
+
+    // Recompose: (SessionState, LogicalPlan) → DataFrame
     let new_df = DataFrame::new(state, modified_plan);
 
     new_df.show().await?;
@@ -767,42 +825,10 @@ async fn main() -> Result<()> {
 }
 ```
 
-### DataFrame vs. LogicalPlanBuilder
-
-[`DataFrame`] methods are thin wrappers around [`LogicalPlanBuilder`]—they produce identical plans:
-
-| DataFrame method | LogicalPlanBuilder equivalent |
-| ---------------- | ----------------------------- |
-| `.select()`      | `.project()`                  |
-| `.filter()`      | `.filter()`                   |
-| `.aggregate()`   | `.aggregate()`                |
-| `.join()`        | `.join()`                     |
-
-This means you can mix approaches—use DataFrame for convenience, drop to LogicalPlanBuilder when you need fine-grained control, then wrap back in a DataFrame for execution:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::logical_expr::LogicalPlanBuilder;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let df = dataframe!("a" => [1, 2, 3], "b" => [4, 5, 6])?;
-
-    // Extract plan, modify with builder, wrap back in DataFrame
-    let (state, plan) = df.into_parts();
-    let modified = LogicalPlanBuilder::from(plan)
-        .filter(col("a").gt(lit(1)))?
-        .project(vec![col("b")])?
-        .build()?;
-    let new_df = DataFrame::new(state, modified);
-
-    new_df.show().await?;
-    Ok(())
-}
-```
-
-> **Further reading:** See [Building Logical Plans](../building-logical-plans.md) for advanced [`LogicalPlanBuilder`] usage.
+> **Further reading:**
+>
+> - [Building Logical Plans](../building-logical-plans.md) — advanced [`LogicalPlanBuilder`] usage
+> - [`LogicalPlanBuilder` API docs][LogicalPlanBuilder] — full method reference
 
 ## Execution Model: Actions vs. Transformations
 
@@ -925,7 +951,7 @@ async fn main() -> Result<()> {
 
 > **Re-execution note:** Each action re-runs the full plan from source data. If you need to reuse computed results across multiple actions, materialize them first with [`.cache()`] or write to storage, then run subsequent actions on the materialized output.
 
-### The Async Runtime: Understanding Tokio
+### The Tokio Async Runtime: Understanding Tokio
 
 **Datafusion uses Tokio as an async runtime for CPU-bound work.**
 
@@ -950,7 +976,7 @@ When you call `.collect()` or `.execute_stream()`:
 2. **Work Stealing**:<br>
    Tokio's scheduler distributes work across threads—if one thread finishes early, it "steals" work from others
 3. **Cooperative Scheduling**: <br>
-   Each operator yields control after processing a batch, preventing any single task from monopolizing a thread (see [Cooperative scheduling module])
+   Each operator yields control after processing a batch, preventing any single task from monopolizing a thread. This enables **query cancellation**—when you press Ctrl+C, DataFusion can stop gracefully because operators regularly yield control back to Tokio (see [Cooperative scheduling module])
 
 ```text
 ┌─────────────┐           ┏━━━━━━━━━━━━━━━━━━━┓┏━━━━━━━━━━━━━━━━━━━┓
@@ -998,6 +1024,7 @@ async fn main() -> Result<()> {
 > **Further reading:** <br>
 >
 > - [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks] — why async works for compute
+> - [Using Rust async for Query Execution][async-blog] — deep dive into cooperative scheduling and query cancellation
 > - [Thread Scheduling documentation] — complete technical details
 
 ### What Happens During Execution?
@@ -1229,119 +1256,11 @@ How DataFrames defer work until an action, why [`.clone()`] appears everywhere, 
 - [`SessionContext`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html) — entry point
 - [`LogicalPlan`](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html) — plan structure
 
-<!-- TODO: To be sorted references -->
+---
 
-[Tokio]: https://tokio.rs
-[`Stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
-[`target_partitions`]: ../../user-guide/configs.md#target_partitions
-[Cooperative scheduling module]: https://docs.rs/datafusion-physical-plan/latest/datafusion_physical_plan/coop/index.html
-[Thread Scheduling documentation]: https://docs.rs/datafusion/latest/datafusion/index.html#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
-[Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks]: https://www.influxdata.com/blog/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/
-[SessionContext and SessionState]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#relationship-between-sessioncontext-sessionstate-and-taskcontext
-[blog: Parquet Pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
-[blog: Filter Pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
-[Rayon]: https://docs.rs/rayon/latest/rayon/
-[`dataframe!]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
-[optimizers_index]: https://docs.rs/datafusion/latest/datafusion/optimizer/index.html
-[`.explain()` examples]: ../../user-guide/explain-usage.md
-[Parquet Pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
-[PruningPredicate Boolean Tri-state logic section]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html#background
-[nulls via a bitmap]: https://arrow.apache.org/docs/format/Columnar.html#validity-bitmaps
-[`PruningPredicate`]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html
-[`datafusion::common::NullEquality`]: https://docs.rs/datafusion-common/latest/datafusion_common/enum.NullEquality.html
-[`GroupsAccumulator::accumulate`]: https://docs.rs/datafusion-functions-aggregate-common/latest/datafusion_functions_aggregate_common/aggregate/groups_accumulator/fn.accumulate.html
-[`DataFrame::sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
-[configuration]: ../../user-guide/configs.md#default-null-ordering
-[`Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
-[field-level metadata]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html#method.metadata
-[with_metadata]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html#method.with_metadata
-[dataframe-paper]: https://arxiv.org/abs/2001.00888
-[`sqlparser`]: https://crates.io/crates/sqlparser
-[configurable dialect]: https://docs.rs/datafusion/latest/datafusion/common/config/enum.Dialect.html
-[Architecture section]: https://docs.rs/datafusion/latest/datafusion/#architecture
-[Abstract Syntax Tree (AST)]: https://en.wikipedia.org/wiki/Abstract_syntax_tree
+## The Bigger Picture: The LLVM of Data—Origins and Outlook
 
-<!-- TODO: Core methods and types -->
-
-[`ConfigOptions`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.ConfigOptions.html
-
-<!-- TODO: Functional  methods -->
-
-[`is_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.is_null.html
-[`is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.is_not_null.html
-[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.coalesce.html
-[`nullif()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.nullif.html
-[`nvl()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.nvl.html
-[`ifnull()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.ifnull.html
-
-<!-- TODO: Dataframe creation and manipulation methods -->
-
-[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
-[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
-[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
-[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
-[`.deregister_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.deregister_table
-[`.with_config()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.with_config
-[`.state()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.state
-[`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
-[`.catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
-[`.register_udf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udf
-[`.register_udaf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udaf
-[`.register_table_provider()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table_provider
-
-<!-- TODO: Add something about the execution plan and how Dataframe affec this ! -->
-
-<!-- TODO: THink of  removint this or adding content to the ### In Practice: Two Paths, One Result
-  -->
-
-### Mixing SQL and DataFrames
-
-Since both APIs produce the same [`LogicalPlan`], you can freely combine them. A common pattern: prepare data with the DataFrame API, then register the result as a view for SQL queries.
-
-**When to use each:**
-
-- **DataFrame API**: Dynamic query building, conditional logic, integration with Rust code
-- **SQL**: Complex analytics (window functions, CTEs), user-provided queries, readable aggregations
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    // 1. Prepare data programmatically with the DataFrame API
-    let sales = dataframe!(
-        "product_id" => [1, 2, 1, 3, 2, 1],
-        "region" => ["EMEA", "EMEA", "APAC", "EMEA", "EMEA", "EMEA"],
-        "revenue" => [100, 200, 150, 300, 250, 175]
-    )?
-    .filter(col("region").eq(lit("EMEA")))?;
-
-    // 2. Register the DataFrame as a temporary view.
-    // .into_view() consumes 'sales'; use .clone() if needed later (clones the plan handle, not the data)
-    ctx.register_table("sales_emea", sales.into_view())?;
-
-    // 3. Use SQL for the final, complex analytical query.
-    let top_products = ctx.sql(
-        "SELECT product_id, SUM(revenue) AS rev
-         FROM sales_emea
-         GROUP BY product_id
-         ORDER BY rev DESC
-         LIMIT 10"
-    ).await?;
-
-    top_products.show().await?;
-    Ok(())
-}
-```
-
-> **Tip:** Use [`.into_view()`] to register any DataFrame as a table for SQL queries. The optimizer sees the combined pipeline as one plan.
-
-## Historical Context & Future Direction
+**DataFusion stands on the shoulders of giants—and is actively shaping the future of data systems.**
 
 Understanding where DataFusion comes from—and where it's going—helps you make informed architectural decisions. This section covers the execution model heritage, DataFusion's role in the broader ecosystem, and the active roadmap.
 
@@ -1349,25 +1268,23 @@ Understanding where DataFusion comes from—and where it's going—helps you mak
 
 DataFusion implements a **vectorized Volcano model**, combining the classic iterator-based execution with modern batch processing. As described in the [DataFusion blog on repartitioning][volcano-blog]:
 
-> "DataFusion implements a vectorized Volcano Model, similar to other state of the art engines such as ClickHouse. The Volcano Model is built on the idea that each operation is abstracted into an operator, and a DAG can represent an entire query. Each operator implements a `next()` function that returns a batch of tuples."
+DataFusion implements a **vectorized Volcano model**, combining the classic iterator-based execution with modern batch processing. Like other high-performance engines (ClickHouse, DuckDB), each operation is an operator in a DAG, and execution proceeds by calling `poll_next()` to pull batches through the pipeline.
 
-**The evolution:**
+**The evolution (historical background):**
 
-| Era   | Model                      | Characteristics                                                   |
-| ----- | -------------------------- | ----------------------------------------------------------------- |
-| 1990s | Volcano (Graefe)           | Pull-based iterators, single-tuple `next()` calls                 |
-| 2010s | Vectorized                 | Batch processing (1000+ rows), SIMD, cache efficiency             |
-| Today | Vectorized Volcano + Async | Batches (8192 rows default) + Tokio work-stealing for parallelism |
+| Era   | Model                      | Data Flow  | Characteristics                                             |
+| ----- | -------------------------- | ---------- | ----------------------------------------------------------- |
+| 1990s | Volcano (Graefe)           | Pull       | Parent calls `next()` on child, single-tuple iteration      |
+| 2010s | Vectorized                 | Pull       | Batch processing (1000+ rows), SIMD, cache efficiency       |
+| Today | Vectorized Volcano + Async | Async-Pull | Parent polls child; child yields if not ready (cooperative) |
 
-DataFusion's hybrid approach provides:
+DataFusion's hybrid approach provides (see [SIGMOD paper Section 5.5][sigmod-paper] for benchmarks):
 
 - **Composability**: Operators form a DAG; each calls `poll_next()` on children
 - **Vectorized efficiency**: Processing batches enables SIMD and cache locality
 - **Async concurrency**: Tokio's work-stealing scheduler parallelizes across partitions
 
-This is why all DataFrame actions are `async fn`—they participate in cooperative scheduling rather than blocking threads.
-
-[volcano-blog]: https://datafusion.apache.org/blog/2025/12/15/avoid-consecutive-repartitions/#parallel-execution-in-datafusion
+This is why all DataFrame actions are `async fn`—they participate in cooperative scheduling rather than blocking threads. For a deep dive into how this enables query cancellation, see [Using Rust async for Query Execution][async-blog].
 
 ### The LLVM Parallel: Ecosystem Role
 
@@ -1375,7 +1292,7 @@ The [SIGMOD 2024 paper][sigmod-paper] draws a parallel between DataFusion and LL
 
 > "Just as LLVM's modular design catalyzed the development of system programming languages, DataFusion catalyzes the development of data systems."
 
-**The transformation:**
+**The transformation (Compiler vs Data Systems Worlds):**
 
 | Aspect      | Compiler World                                           | Data Systems World                                                                   |
 | ----------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -1384,50 +1301,99 @@ The [SIGMOD 2024 paper][sigmod-paper] draws a parallel between DataFusion and LL
 | **Benefit** | Language authors focus on language features              | Data system authors focus on domain-specific features                                |
 
 **What this enables:** <br>
-Query engine authors can focus on value-added, domain-specific features while DataFusion provides SQL parsing, plan representations, optimizations, storage format support, and standard relational operators.
+Query engine developers can focus on value-added, domain-specific features while DataFusion provides SQL parsing, plan representations, optimizations, storage format support, and standard relational operators.
 
 **What this is NOT:** <br>
 DataFusion does not use LLVM IR or JIT compilation internally. The parallel is about the role DataFusion plays as reusable infrastructure—like LLVM is for compilers, DataFusion is for query engines.
 
-[sigmod-paper]: https://dl.acm.org/doi/10.1145/3626246.3653368
-
 ### Future Roadmap
+
+<!--Risky implementations, needs potentially updates!-->
 
 DataFusion is actively evolving. Key initiatives include:
 
-- **[Epic #12723: Reliable Foundation][epic-12723]** — Separating Frontend (SQL, DataFrame API) from Core (dialect-agnostic IR, optimizers) from Execution (physical planning). This layering makes DataFusion more reusable as infrastructure.
+- **[Epic #12723: Reliable Foundation][epic-12723]** <br>
+  Separating Frontend (SQL, DataFrame API) from Core (dialect-agnostic IR, optimizers) from Execution (physical planning). This layering makes DataFusion more reusable as infrastructure.
 
-- **[Epic #12644: Extension Types][epic-12644]** — User-defined types that flow through the entire query lifecycle, enabling domain-specific type systems.
+- **[Epic #12644: Extension Types][epic-12644]** <br>
+  User-defined types that flow through the entire query lifecycle, enabling domain-specific type systems.
 
-- **Logical/Physical Type Decoupling** — Separating logical types (what the query describes) from physical types (how data is stored), enabling runtime-adaptive execution.
+- **Logical/Physical Type Decoupling** _(under discussion)_ <br>
+  Separating logical types (what the query describes) from physical types (how data is stored), enabling runtime-adaptive execution.
 
 For the complete roadmap and quarterly planning discussions, see the [Contributor Guide: Roadmap][roadmap].
 
-[epic-12723]: https://github.com/apache/datafusion/issues/12723
-[epic-12644]: https://github.com/apache/datafusion/issues/12644
-[roadmap]: https://datafusion.apache.org/contributor-guide/roadmap.html
+**Putting it all together:**<br>
+The following diagram shows how these concepts connect—multiple frontends feed into a common logical layer, which executes via the vectorized Volcano engine:
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         THE DATAFUSION PLATFORM                              │
+│                (The "LLVM" of Data: Modular & Composable)                    │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                │
+        [ FRONTENDS ]           ▼          [ INTERFACES ]
+  ┌──────────────────┐    ┌────────────┐    ┌──────────────────┐
+  │  SQL / DataFusion│    │  Python /  │    │   Substrait /    │
+  │     DataFrame    │    │   Flight   │    │     Custom       │
+  └─────────┬────────┘    └─────┬──────┘    └────────┬─────────┘
+            │                   │                    │
+            └───────────────────┼────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    COMMON LOGICAL INTERMEDIATE LAYER                         │
+│         (Dialect-Agnostic IR, Logical Plans & Global Optimizers)             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  FUTURE: Separated Frontend/Core (Epic #12723)                               │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    VECTORIZED VOLCANO EXECUTION                              │
+│       (Async Task Runner + Physical Planning + Extension Points)             │
+├───────────────────────────────┬──────────────────────────────────────────────┤
+│    [ EXTENSION TYPES ]        │        [ CUSTOM OPTIMIZERS ]                 │
+│      (Epic #12644)            │         (Domain-Specific)                    │
+└───────────────────────────────┼──────────────────────────────────────────────┘
+                                │
+                                ▼  poll_next() ──▶ [RecordBatch]
+                                ▼  poll_next() ──▶ [RecordBatch]
+
+                  ┌───────────────────────────────────────────┐
+                  │        STREAMING ARROW DATA OUTPUT        │
+                  │       (High-Performance, Data-Driven)      │
+                  └───────────────────────────────────────────┘
+```
 
 ## Architectural Fit: When to Use DataFusion
 
-DataFusion excels at **analytical workloads** over large, immutable datasets—the OLAP (Online Analytical Processing) pattern. Understanding when it's the right tool prevents architectural mismatches.
+**The right tool for the right job—knowing DataFusion's sweet spot saves you from architectural dead-ends.**
+
+DataFusion is a **query engine foundation** optimized for read-heavy, scan-oriented workloads over columnar data. This includes OLAP analytics, but also data lakehouse engines, ETL pipelines, and embedded query execution. The key distinction is **OLAP vs OLTP**:
+
+| Aspect             | OLAP (DataFusion's strength) | OLTP (Consider alternatives) |
+| ------------------ | ---------------------------- | ---------------------------- |
+| **Pattern**        | Scan many rows, aggregate    | Find/update single rows      |
+| **Data model**     | Immutable, append-only       | Mutable, transactional       |
+| **Latency target** | Milliseconds-seconds OK      | Sub-millisecond required     |
+| **Indexing**       | Column statistics, pruning   | B-tree, hash indexes         |
 
 **DataFusion shines when:**
 
 - Scanning and aggregating millions to billions of rows
-- Queries touch many columns (star schemas, data warehousing)
-- Data is immutable or append-only (Parquet, Delta Lake, Iceberg)
+- Building data lakehouse query layers (Parquet, Delta Lake, Iceberg)
+- ETL and data transformation pipelines
 - You need embeddable query execution (edge analytics, custom databases)
 - Building domain-specific query engines on reusable infrastructure
 
 **Consider alternatives when:**
 
-| Use Case                  | Why DataFusion May Not Fit                 | Better Alternatives                                        |
-| ------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
-| Single-row lookups by key | Columnar format overhead; no index support | PostgreSQL, DynamoDB, Redis                                |
-| Sub-millisecond latency   | Query planning overhead (~1-10ms minimum)  | Pre-compiled queries, KV stores                            |
-| Heavy UPDATE/DELETE       | Designed for immutable, append-only data   | OLTP database, or lakehouse format (Delta, Iceberg) on top |
-| Small datasets for EDA    | Simpler APIs may suffice                   | pandas, Polars                                             |
-| Real-time streaming       | Batch-oriented execution model             | Kafka Streams, Flink, RisingWave                           |
+| Use Case                    | Why DataFusion May Not Fit                 | Better Alternatives                                        |
+| --------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
+| Single-row lookups by key   | Columnar format overhead; no index support | PostgreSQL, DynamoDB, Redis                                |
+| Sub-millisecond latency     | Query planning overhead (~1-10ms minimum)  | Pre-compiled queries, KV stores                            |
+| Heavy UPDATE/DELETE         | Designed for immutable, append-only data   | OLTP database, or lakehouse format (Delta, Iceberg) on top |
+| Small datasets (<100K rows) | Works fine, but simpler APIs exist         | pandas, Polars (less setup)                                |
+| Real-time streaming         | Batch-oriented execution model             | Kafka Streams, Flink, RisingWave                           |
 
 > **Rule of thumb:** <br>
 > "Find one row by ID" → use a database with indexes. <br>
@@ -1436,13 +1402,14 @@ DataFusion excels at **analytical workloads** over large, immutable datasets—t
 **The OLAP sweet spot:** <br>
 DataFusion is optimized for read-heavy analytical queries where you scan large amounts of data, filter aggressively, and aggregate results. If your workload involves frequent small writes, point lookups, or requires sub-millisecond response times, a different architecture is likely a better fit.
 
-## Summary: The Big Picture
+## Summary: A Small Conclusion
 
 The DataFusion DataFrame is more than just a table—it's a powerful recipe for computation. By understanding its core principles, you can build complex, efficient, and predictable data pipelines:
 
 - **Stay lazy & immutable** – build a [`LogicalPlan`] first; nothing executes until an action
 - **Execute reproducibly** – every DataFrame carries its own [`SessionState`] snapshot
 - **Mix APIs freely** – SQL and DataFrame compile to the _same_ [`LogicalPlan`], so interop is zero-cost
+- **Extend with TableProviders** – query OLTP databases, APIs, or custom sources alongside your lakehouse data
 
 Together these properties let you write declarative SQL for clarity, drop to Rust for control, and still get one optimized execution pipeline.
 
@@ -1456,18 +1423,19 @@ With these concepts understood, you're ready to build data pipelines:
 
 ### Advanced Reference: API Cheat-Sheet
 
-For experienced users, this quick reference helps you pick the right method for advanced tasks:
+Know what you want? Find the method here:
 
-| Goal                         | Primary API(s)                              | Keeps SessionState? | Typical Follow-up                                   |
-| ---------------------------- | ------------------------------------------- | :-----------------: | --------------------------------------------------- |
-| **Re-use plan later**        | [`.into_parts()`]                           |         ✅          | mutate plan → [`.create_physical_plan()`] → execute |
-| **Inspect optimizer output** | [`.explain()`], [`.into_optimized_plan()`]  |         ⚠️          | check pushdown/pruning, join choice                 |
-| **Inspect unoptimized plan** | [`.into_unoptimized_plan()`]                |         ⚠️          | verify pre-optimization structure                   |
-| **Mix SQL & DataFrame**      | [`.into_view()`] + [`.sql()`]               |         ✅          | iterate between SQL & DF, then [`.collect()`]       |
-| **Stream large result**      | [`.execute_stream()`], [`.write_parquet()`] |         ✅          | pipe to Parquet/CSV, Kafka, etc.                    |
-| **Quick interactive result** | [`.collect()`], [`.show()`]                 |         ✅          | debug, notebooks, CLI                               |
+| Goal                         | Primary API(s)                              | Keeps SessionState? | Typical Follow-up                                        |
+| ---------------------------- | ------------------------------------------- | :-----------------: | -------------------------------------------------------- |
+| **Re-use plan later**        | [`.into_parts()`]                           |         ✅          | mutate plan → [`.create_physical_plan()`] → execute      |
+| **Inspect optimizer output** | [`.explain()`], [`.into_optimized_plan()`]  |         ⚠️          | check pushdown/pruning, join choice                      |
+| **Inspect unoptimized plan** | [`.into_unoptimized_plan()`]                |         ⚠️          | verify pre-optimization structure                        |
+| **Multi-language queries**   | [`.into_view()`] + [`.sql()`]               |         ✅          | clean with DataFrame → query with SQL (window fns, CTEs) |
+| **Stream large result**      | [`.execute_stream()`], [`.write_parquet()`] |         ✅          | pipe to Parquet/CSV, Kafka, etc.                         |
+| **Quick interactive result** | [`.collect()`], [`.show()`]                 |         ✅          | debug, notebooks, CLI                                    |
 
-> **SessionState matters**: Methods marked ⚠️ drop the snapshot. They're great for inspection, but to execute later use [`.into_parts()`] to preserve deterministic semantics (timestamps, timezone, config, UDF catalog). See "Re-use plan later" in the cheat-sheet for the safest way to extract and modify a plan.
+> **SessionState matters**: <br>
+> Methods marked ⚠️ drop the snapshot. They're great for inspection, but to execute later use [`.into_parts()`] to preserve deterministic semantics (timestamps, timezone, config, UDF catalog). See "Re-use plan later" in the cheat-sheet for the safest way to extract and modify a plan.
 
 ## References
 
@@ -1496,130 +1464,158 @@ For experienced users, this quick reference helps you pick the right method for 
 
 - External
 
-  - Apache Arrow DataFusion (SIGMOD 2024): [Apache Arrow DataFusion: A Fast, Embeddable, Modular Analytic Query Engine](https://dl.acm.org/doi/10.1145/3626246.3653368)
-  - How Query Engines Work — DataFrames: https://howqueryengineswork.com/06-dataframe.html
+  - [Apache Arrow DataFusion: A Fast, Embeddable, Modular Analytic Query Engine](https://dl.acm.org/doi/10.1145/3626246.3653368) — SIGMOD 2024 paper
+  - [How to Avoid Consecutive Repartitions](https://datafusion.apache.org/blog/2025/12/15/avoid-consecutive-repartitions/) — Volcano model and parallel execution
+  - [Using Rust async for Query Execution](https://datafusion.apache.org/blog/2025/06/30/cancellation/) — async execution and query cancellation
+  - [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks](https://thenewstack.io/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/) — why async works for compute
+  - [How Parquet Pruning Works](https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/) — file/row-group skipping
+  - [Filter Pushdown in Parquet](https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/) — late materialization
+  - [How Query Engines Work — DataFrames](https://howqueryengineswork.com/06-dataframe.html) — conceptual background
 
-- Functions mentioned in this guide
-  - SessionContext
-    - [`with_config`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.with_config)
-    - [`state`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.state)
-    - [`read_parquet`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet)
-    - [`read_csv`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv)
-    - [`read_json`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json)
-    - [`sql`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql)
-    - [`table`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table)
-    - [`register_table`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table)
-    - [`register_parquet`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet)
-    - [`register_udf`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udf)
-    - [`register_udaf`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udaf)
-    - [`register_table_provider`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table_provider)
-    - [`catalog`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog)
-    - [`catalog_names`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names)
-  - DataFrame
-    - [`select`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select)
-    - [`filter`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter)
-    - [`aggregate`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate)
-    - [`join`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join)
-    - [`limit`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit)
-    - [`sort`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort)
-    - [`with_column`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column)
-    - [`schema`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema)
-    - [`collect`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect)
-    - [`show`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show)
-    - [`explain`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain)
-    - [`execute_stream`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream)
-    - [`write_parquet`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_parquet)
-    - [`write_csv`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_csv)
-    - [`write_json`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_json)
-    - [`write_table`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_table)
-    - [`into_parts`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts)
-    - [`into_unoptimized_plan`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_unoptimized_plan)
-    - [`into_optimized_plan`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_optimized_plan)
-    - [`create_physical_plan`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan)
-    - [`into_view`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view)
+> **Note:** Individual method links (e.g., `.filter()`, `.collect()`) are clickable throughout this guide via reference-style links. For the complete API, see the docs.rs links above.
 
-[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`LogicalPlan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
-[`ExecutionPlan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
-[`RecordBatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+<!-- TODO: To be sorted references (tomorrow task was yesterday ;) ) -->
+
+<!-- ==========================================================================
+     REFERENCE-STYLE LINKS
+     Keep alphabetized within each section for maintainability
+     ========================================================================== -->
+
+<!-- External Resources & Blogs -->
+
+[Abstract Syntax Tree (AST)]: https://en.wikipedia.org/wiki/Abstract_syntax_tree
+[Architecture section]: https://docs.rs/datafusion/latest/datafusion/#architecture
+[Arrow Columnar Format]: https://arrow.apache.org/docs/format/Columnar.html
 [Arrow Introduction]: ../../user-guide/arrow-introduction.md
-[Arrow Columnar Format]: https://arrow.apache.org/docs/format/Intro.html#arrow-columnar-format
+[async-blog]: https://datafusion.apache.org/blog/2025/06/30/cancellation/
+[blog: Filter Pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
+[blog: Parquet Pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
+[Cooperative scheduling module]: https://docs.rs/datafusion-physical-plan/latest/datafusion_physical_plan/coop/index.html
+[dataframe-paper]: https://arxiv.org/abs/2001.00888
+[epic-12644]: https://github.com/apache/datafusion/issues/12644
+[epic-12723]: https://github.com/apache/datafusion/issues/12723
+[nulls via a bitmap]: https://arrow.apache.org/docs/format/Columnar.html#validity-bitmaps
 [optimizer-rules]: https://github.com/apache/datafusion/blob/main/datafusion/optimizer/src/optimizer.rs#L230-L257
 [physical-rules]: https://github.com/apache/datafusion/blob/main/datafusion/physical-optimizer/src/optimizer.rs#L86-L162
-[`PushDownFilter`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/push_down_filter/struct.PushDownFilter.html
-[`OptimizeProjections`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/optimize_projections/index.html
-[`CommonSubexprEliminate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/common_subexpr_eliminate/struct.CommonSubexprEliminate.html
-[`SimplifyExpressions`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/simplify_expressions/struct.SimplifyExpressions.html
-[`JoinSelection`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/join_selection/struct.JoinSelection.html
-[`HashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html
-[`SortMergeJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html
-[`SymmetricHashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html
-[`ParquetExec`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/struct.ParquetExec.html
-[`EnforceDistribution`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_distribution/struct.EnforceDistribution.html
-[`EnforceSorting`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_sorting/struct.EnforceSorting.html
-[`FairSpillPool`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/memory_pool/struct.FairSpillPool.html
-[`DiskManager`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/disk_manager/struct.DiskManager.html
-[`CoalesceBatches`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/coalesce_batches/struct.CoalesceBatches.html
-[config-dynamic]: ../../user-guide/configs.md#enable_join_dynamic_filter_pushdown
+[Rayon]: https://docs.rs/rayon/latest/rayon/
+[roadmap]: https://datafusion.apache.org/contributor-guide/roadmap.html
+[sigmod-paper]: https://dl.acm.org/doi/10.1145/3626246.3653368
+[Thread Scheduling documentation]: https://docs.rs/datafusion/latest/datafusion/index.html#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
+[Tokio]: https://tokio.rs
+[Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks]: https://www.influxdata.com/blog/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/
+[volcano-blog]: https://datafusion.apache.org/blog/2025/12/15/avoid-consecutive-repartitions/#parallel-execution-in-datafusion
+
+<!-- Internal Guide Links -->
+
+[`.explain()` examples]: ../../user-guide/explain-usage.md
+[configuration]: ../../user-guide/configs.md#default-null-ordering
 [config-partitions]: ../../user-guide/configs.md#target_partitions
-[`EliminateJoin`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/eliminate_join/struct.EliminateJoin.html
-[`ExtractEquijoinPredicate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/extract_equijoin_predicate/struct.ExtractEquijoinPredicate.html
+[`target_partitions`]: ../../user-guide/configs.md#target_partitions
 
-# Reference-style links for methods and types used above
+<!-- Core Types (with backticks for inline code style) -->
 
-# Types
-
-[SessionContext]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[SessionState]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`ConfigOptions`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.ConfigOptions.html
+[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`ExecutionPlan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+[`LogicalPlan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`LogicalPlanBuilder`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html
+[`RecordBatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
 [`SessionConfig`]: https://docs.rs/datafusion/latest/datafusion/config/struct.SessionConfig.html
-[DataFrame]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[LogicalPlan]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
-[LogicalPlanBuilder]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html
-[ExecutionPlan]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
-[TableProvider]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`sqlparser`]: https://crates.io/crates/sqlparser
+[`Stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
 
-# SessionContext methods
+<!-- SessionContext Methods -->
 
-[`with_config()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.with_config
-[`state()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.state
-[`read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
-[`read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
-[`sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
-[`table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
-[`register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
-[`register_udf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udf
-[`register_udaf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udaf
-[`register_table_provider()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table_provider
-[`catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
-[`catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
+[`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
+[`.catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
+[`.deregister_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.deregister_table
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`.register_table_provider()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table_provider
+[`.register_udaf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udaf
+[`.register_udf()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_udf
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`.state()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.state
+[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
+[`.with_config()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.with_config
 
-# DataFrame methods
+<!-- DataFrame Methods -->
 
-[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
 [`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
-[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
-[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
-[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
-[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`.logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.logical_plan
-[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
-[`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
-[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
 [`.cache()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.cache
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`.create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
+[`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
 [`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
-[`.write_parquet()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_parquet
-[`.write_csv()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_csv
-[`.write_json()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_json
-[`.write_table()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_table
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.into_optimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_optimized_plan
 [`.into_parts()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts
 [`.into_unoptimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_unoptimized_plan
-[`.into_optimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_optimized_plan
-[`.create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
 [`.into_view()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
+[`.logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.logical_plan
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.write_csv()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_csv
+[`.write_json()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_json
+[`.write_parquet()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_parquet
+[`.write_table()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_table
+
+<!-- Null Handling Functions -->
+
+[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.coalesce.html
+[`ifnull()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.ifnull.html
+[`is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.is_not_null.html
+[`is_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.is_null.html
+[`nullif()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.nullif.html
+[`nvl()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.nvl.html
+[`datafusion::common::NullEquality`]: https://docs.rs/datafusion-common/latest/datafusion_common/enum.NullEquality.html
+
+<!-- Optimizer Rules -->
+
+[`CommonSubexprEliminate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/common_subexpr_eliminate/struct.CommonSubexprEliminate.html
+[`EliminateJoin`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/eliminate_join/struct.EliminateJoin.html
+[`EnforceDistribution`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_distribution/struct.EnforceDistribution.html
+[`EnforceSorting`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_sorting/struct.EnforceSorting.html
+[`ExtractEquijoinPredicate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/extract_equijoin_predicate/struct.ExtractEquijoinPredicate.html
+[`OptimizeProjections`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/optimize_projections/index.html
+[`PushDownFilter`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/push_down_filter/struct.PushDownFilter.html
+[`SimplifyExpressions`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/simplify_expressions/struct.SimplifyExpressions.html
+
+<!-- Physical Plan Operators -->
+
+[`CoalesceBatches`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/coalesce_batches/struct.CoalesceBatches.html
+[`HashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html
+[`JoinSelection`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/join_selection/struct.JoinSelection.html
+[`ParquetExec`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/struct.ParquetExec.html
+[`SortMergeJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html
+[`SymmetricHashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html
+
+<!-- Execution Infrastructure -->
+
+[`DiskManager`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/disk_manager/struct.DiskManager.html
+[`FairSpillPool`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/memory_pool/struct.FairSpillPool.html
+[`PruningPredicate`]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html
+
+<!-- DataFrame vs LogicalPlanBuilder Comparison -->
+
+[`DataFrame::aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`DataFrame::filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`DataFrame::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`DataFrame::select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`DataFrame::sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[`LogicalPlanBuilder::aggregate()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.aggregate
+[`LogicalPlanBuilder::filter()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.filter
+[`LogicalPlanBuilder::join()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.join
+[`LogicalPlanBuilder::project()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.project
