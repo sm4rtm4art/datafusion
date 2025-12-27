@@ -17,18 +17,13 @@
   under the License.
 -->
 
-<!-- TODO; Implement Error handling -->
+# Creating DataFrames
 
-<!-- TODO: Parse for other TODOs -->
+**The "birth" phase of the DataFrame lifecycle: from data source to lazy query plan.**
 
-# Creating and Executing DataFrames
+Every query starts with data. Whether you're reading Parquet from S3, executing SQL, receiving Arrow batches from a Flight stream, or constructing plans programmatically—all paths converge to a lazy [`DataFrame`][DataFrame] backed by a [`LogicalPlan`][LogicalPlan]. This guide covers the _when_ and _how_ of each creation method.
 
-Creating a DataFrame is the foundational first step for building any query pipeline in DataFusion. It's the entry point to the query engine. True to the flexible, interoperable spirit of Apache Arrow, DataFusion offers a rich set of methods for ingesting data, which is the focus of this guide.
-
-This document is designed for developers and data engineers of all levels. It covers every method for creating DataFrames—from reading a simple CSV file for an ad-hoc query to configuring high-performance connectors for production data pipelines in cloud storage. You will learn not just how to create DataFrames, but also why to choose one method over another, ensuring your application is both correct and efficient.
-
-**For Advanced Topics**:<br>
-This guide covers the foundational API calls for creating DataFrames. For a deeper dive into production-level concerns like schema management, error handling, connecting to S3, Arrow Flight, Kafka, custom providers, and performance tuning, please see our dedicated guide to [Advanced Creation Topics](dataframe-advance.md) .
+In the [DataFrame lifecycle](./index.md#the-dataframe-lifecycle), creation is where you bind a data source to a query plan. The DataFrame doesn't execute yet—it's a recipe waiting to run. For the conceptual model, see [Concepts](./concepts.md). For what happens next: [Transform](./transformations.md) → [Write](./writing-dataframes.md).
 
 > **Style Note:** <br>
 > In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
@@ -38,535 +33,424 @@ This guide covers the foundational API calls for creating DataFrames. For a deep
 :depth: 2
 ```
 
-To situate DataFrames in the overall architecture, here is a brief recap from [Concepts](concepts.md): a high‑level diagram showing where DataFusion DataFrames sit in the query pipeline.
+## Introduction
+
+**DataFusion provides multiple pathways to create a DataFrame—each optimized for different data sources, yet all converging on a single, powerful abstraction.**
+
+To understand _how_ to create a DataFrame, we must first understand _what_ we are creating. DataFusion is not just a library for reading files; it is a high-performance query engine built on the **Apache Arrow** columnar format. It brings the safety and concurrency of **Rust** to analytical workloads.
+
+### The Philosophy of Convergence
+
+**All creation methods normalize to the same lazy `LogicalPlan`, regardless of whether you start with SQL or the DataFrame API.**
+
+Whether you read a CSV from disk, stream Arrow batches from a network socket, or parse a SQL query, DataFusion normalizes them all into the same structure: a lazy [`DataFrame`][DataFrame] backed by a [`LogicalPlan`][LogicalPlan].
+
+- **The Universal Adapter**:<br>
+  The DataFrame API decouples _storage_ from _compute_. You can join a Parquet file from S3 with an in-memory Arrow batch and a PostgreSQL table (via [`TableProvider`]) in a single query.
+- **The "Lazy" Contract**:<br>
+  Creating a DataFrame is a **metadata-only operation**. When you call `read_parquet`, DataFusion reads only the file footer (schema/statistics), not the data. This means you can safely define DataFrames over petabytes of data on a laptop.
+- **Safety by Design**: <br>
+  Leveraging Rust’s ownership model, DataFrames are **immutable**. Every transformation (like `.filter()` or `.select()`) consumes the old handle and produces a new one, ensuring that your query plans are side-effect free and thread-safe.
+
+### Architecture: Bringing Compute to Data
+
+**All DataFrame creation paths route through `SessionContext`, which resolves sources (via `TableProvider`s) into a single `LogicalPlan`.**
+
+**How to read this diagram:** <br>
+Start at **Sources**, follow the arrows to the corresponding **`TableProvider`**, then into **`SessionContext`** (the catalog + configuration hub). Both **SQL** and **DataFrame** APIs build the same **`LogicalPlan`**. **Actions consume the `DataFrame` handle** and either stream ([`.execute_stream()`]), buffer ([`.collect()`]), or persist (`.write_*()`) results.
 
 ```text
-                    ┌──────────────────┐
-                    │  SessionContext  │
-                    └────────┬─────────┘
-                             │
-               ┌─────────────┴─────────────┐
-               │ creates                   │ creates
-               ▼                           ▼
-        ┌─────────────┐             ┌─────────────┐
-        │     SQL     │             │  DataFrame  │
-        │   ctx.sql   │             │  API (lazy) │
-        └──────┬──────┘             └──────┬──────┘
-               │                           │
-               │ produces                  │ produces
-               │                           │
-               └─────────--──┬─────────────┘
-                             ▼
-               ┌───────────────────────────┐
-               │        LogicalPlan        │
-               └─────────────┬─────────────┘
-                             │
-                             │ optimize (projection/predicate pushdown, etc.)
-                             ▼
-               ┌───────────────────────────┐
-               │   Optimized LogicalPlan   │
-               └─────────────┬─────────────┘
-                             │
-                             │ plan (physical planner)
-                             ▼
-               ┌───────────────────────────┐
-               │ ExecutionPlan (Physical)  │
-               └─────────────┬─────────────┘
-                             │
-                             │ optimize (physical optimizer)
-                             ▼
-               ┌───────────────────────────┐
-               │  Optimized ExecutionPlan  │
-               └─────────────┬─────────────┘
-                             │
-                             │ execute (Tokio + CPU runtimes)
-                             ▼
-               ┌───────────────────────────┐
-               │    RecordBatch streams    │
-               └───────────────────────────┘
+DATAFRAME CREATION PATHWAYS
+────────────────────────────────────────────────────────────────────────────
+
+[ SOURCES ]                      (All roads lead to TableProvider)
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌─────────────────────┐
+│ Files/Stores │ │ In-Memory    │ │ External DBs │ │ Catalogs / Formats  │
+│(Parquet/CSV) │ │ (Batches)    │ │ & Streaming  │ │ (Iceberg, Delta,...)│
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────────┬──────────┘
+       ▼                ▼                ▼                    ▼
+┌──────────────┐ ┌───────────────┐┌──────────────┐ ┌─────────────────────┐
+│ ListingTable │ │   MemTable    ││ Custom Table │ │ CatalogProvider /   │
+│ (File Scan + │ │ (In-Memory    ││ Provider     │ │ SchemaProvider ➔    │
+│ Statistics)  │ │  Batches)     ││ (Pushdown?)  │ │ TableProvider(s)    │
+└──────┬───────┘ └──────┬────────┘└──────┬───────┘ └──────────┬──────────┘
+       └────────────────┴───────┬────────┴────────────────────┘
+                                │ (Registered / Resolved)
+                                │
+[ THE HUB ]                     ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                            SessionContext                            │
+│ ┌──────────────────────────────────────────────────────────────────┐ │
+│ │                           SessionState                           │ │
+│ │Catalog/Schema · Config · RuntimeEnv · UDFs · Optimizer · Planner │ │
+│ └────────────────────────────┬─────────────────────────────────────┘ │
+└──────────────────────────────┼───────────────────────────────────────┘
+                                │
+                    Resolves Tables/Functions/Types
+                                │
+                ┌───────────────┴───────────────┐
+                ▼                               ▼
+        ┌───────────────┐               ┌───────────────┐
+        │    SQL API    │               │ DataFrame API │
+        ├───────────────┤               ├───────────────┤
+        │ ctx.sql("..") │               │ ctx.table(..) │
+        └───────┬───────┘               └───────┬───────┘
+                │ parse                         │ build plan
+                ▼  + plan                       ▼
+         ┌════════════════════════════════════════════┐
+         ║      LogicalPlan (Same Representation)     ║
+         ╘══════════════════════╤═════════════════════┘
+                                │
+                                ▼
+                 ┌─────────────────────────────┐
+                 │          DataFrame          │
+                 │  (Immutable, Lazy Handle)   │
+                 ├─────────────────────────────┤
+                 │ 1. LogicalPlan              │
+                 │ 2. SessionState (snapshot)  │
+                 └──────────────┬──────────────┘
+                                │
+    ════════════════════════════╪════════════════════════════════
+                                │          ACTIONS (.collect/etc.)
+                                ▼
+                 ┌─────────────────────────────┐
+                 │   Planning + Optimization   │
+                 │ (Logical ➔ Physical ➔ Exec) │
+                 └──────────────┬──────────────┘
+                                │
+                                ▼
+                    [ RecordBatchStream Output ]
 ```
 
-> **How to read this**
->
-> - [`SessionContext`][SessionContext] holds catalogs, configuration, and runtime; both SQL and the DataFrame API resolve names from the same session catalog
-> - [`ctx.sql("...")`][`.sql()`] parses SQL, resolves tables/views in the same catalog, and returns a lazy DataFrame
-> - [`ctx.table("name")`][`.table()`] references a registered table by logical name for programmatic DataFrame building
-> - Both APIs compile to the same [`LogicalPlan`][LogicalPlan]; the optimizer sees the entire pipeline (SQL + DataFrame) and applies pushdown/projection rules
-> - Nothing executes until an action (`.collect()`, `.show()`, `.execute_stream()`) is called (see: [Excecution DataFrame]("../creating-dataframes.md#Executing DataFrames") )
->   ; results are Arrow [`RecordBatch`] streams
->
-> SQL specifics
->
-> - Name resolution uses the session catalog (default `datafusion.public`); you can use fully qualified `catalog.schema.table` names when needed
-> - You can mix APIs via temporary views, for example: `ctx.register_table("prep", df.into_view())?` then `ctx.sql("SELECT ... FROM prep")`
-> - Prefer one API per stage for readability: express complex set logic in SQL; use DataFrame API for dynamic, type-safe Rust logic
->
-> **See also**
->
-> - Concepts: [`concepts.md`](./concepts.md)
-> - Transformations: [`transformations.md`](transformations.md)
-> - DataFrame Execution (later in this guide)
+**Key Architectural features enabling this:**
 
-> **About the examples in this guide**
->
-> Throughout this document, you'll see examples using [`assert_batches_eq!`] to verify DataFrame outputs. This isn't just for testing—it's a learning tool! When you see:
->
-> ```rust
-> let batches = df.collect().await?;
-> assert_batches_eq!(&[...], &batches);
-> ```
->
-> You're seeing both **what the code does** and **what result it produces**. This pattern will help you understand DataFusion's behavior as you read through the examples.
+- **Async Native**:<br>
+  DataFusion runs CPU-bound operators as async `RecordBatch` streams scheduled on Tokio runtimes (work-stealing thread pools). See [Thread scheduling in DataFusion][tokio_runtimes].
+- **Vectorized Execution**:<br>
+  All data flows as Arrow arrays, enabling SIMD optimizations and zero-copy integration with the broader Arrow ecosystem.
+- **Extensibility**:<br>
+  Through the [`TableProvider`] trait, you can teach DataFusion to read from _any_ custom source (Kafka, Delta Lake, or proprietary APIs). This extensibility even opens the door for hardware acceleration (like GPUs via [Comet]).
 
-<!-- TODO: add reference-->
+**This guide covers:**
+
+| Creation Method            | Best For                          | Section                                                     |
+| -------------------------- | --------------------------------- | ----------------------------------------------------------- |
+| **From Files**             | Production data, cloud storage    | [Section 1](#1-from-files)                                  |
+| **From Registered Tables** | Reuse across queries, SQL interop | [Section 2](#2-from-a-registered-table)                     |
+| **From SQL**               | Complex relational logic, CTEs    | [Section 3](#3-from-sql-queries)                            |
+| **From RecordBatches**     | Arrow ecosystem, zero-copy        | [Section 4](#4-from-arrow-recordbatches-the-native-pathway) |
+| **From Inline Data**       | Tests, examples, prototyping      | [Section 5](#5-from-inline-data-using-the-dataframe-macro)  |
+| **From Custom Sources**    | External DBs, APIs, streaming     | [Advanced Topics](dataframes-advance.md#tableprovider)      |
+
+> **About the examples** <br>
+> Examples use [`assert_batches_eq!`] to verify outputs—you see both the code and its result. This pattern ensures examples are tested and teaches DataFusion's behavior.
 
 ## Before Creating a DataFrame
 
-DataFusion provides a comprehensive set of methods for creating DataFrames, each designed to fit a specific use case. This flexibility is intentional: as a query engine, DataFusion integrates into diverse environments—from large-scale data pipelines to interactive SQL queries and embedded applications.
+**Before you pick a creation method, understand how `SessionContext` organizes and resolves data sources.**
 
-The [`SessionContext`][SessionContext] is the main entry point for creating DataFrames. It maintains session state (catalogs, tables, configuration) and is where every DataFrame journey begins. Both the DataFrame API and SQL API compile to the same [`LogicalPlan`][LogicalPlan], which DataFusion then optimizes and executes identically. For architectural details, see [Concepts](concepts.md) or [Mixing SQL and DataFrames](transformations.md#mixing-sql-and-dataframes).
+DataFusion is an "out of the box" query engine, but for a working query engine and optimal results _query engines have rules_: data sources must be registered or scanned, names must be resolved, and schemas must align. This section covers the catalog model that makes these rules work.
+
+[`SessionContext`][SessionContext] is the entry point for creating DataFrames—it owns the catalog (registered tables), configuration, and runtime. When you create a [`DataFrame`], it captures a snapshot of this state, which is why SQL and the DataFrame API seamlessly interoperate.
+
+> **Already familiar with DataFusion's catalog?** <br>
+> Skip to [How to create a DataFrame](#how-to-create-a-dataframe).<br>
+> For architecture, see [Concepts](concepts.md).
 
 ### Understanding DataFusion's Data Organization
 
-Think of DataFusion's `SessionContext` as a workspace. Inside this workspace, you organize your data sources into a clean, three-level hierarchy, just like a traditional database:
+**`SessionContext` is your session-local catalog: it maps names to `TableProvider`s.**
+
+Tables live under a three-level hierarchy (**Catalog → Schema → Table**), which keeps queries readable and enables SQL interoperability and metadata discovery.
+
+DataFusion always has a default catalog (`datafusion`) and schema (`public`). When you register a table, you choose its name (for example `"sales"` or `"warehouse.analytics.metrics"`), and that name determines where the `TableProvider` is stored. The following schema illustrates the default namespace with "sales" as target table.
 
 ```text
 SessionContext
 └── Catalog ("datafusion")
-    └── Schema ("public")
+    └── Schema ("public")              ← Namespace schema (organizes tables)
         └── Table ("sales")
+            └── Arrow Schema           ← Data schema (columns + types)
 ```
 
-Adopting this structure offers three key advantages:
+> **Disambiguation: "Schema" has two meanings in DataFusion**
+>
+> 1. **Namespace schema** (like PostgreSQL): A container for organizing tables (e.g., `"public"`)
+> 2. **Arrow schema**: The columns and types of a table (e.g., `id: Int32, name: Utf8`)
+>
+> ```text
+> ctx.table("public.sales").await?;   // "public" = namespace schema
+> let arrow_schema = df.schema();      // Arrow schema: columns + types
+> ```
 
-- **Performance**: When you register a table (e.g., a Parquet file), DataFusion analyzes its schema and metadata once. Every subsequent query that uses that table is faster because it skips this expensive step.
-- **Clarity**: Instead of passing file paths around your code, you refer to data with logical names like `"sales"` or `"fact_orders"`. This makes your queries cleaner and easier to maintain.
-- **Interoperability**: A registered table is available to both the DataFrame API and SQL. You can register a source with one API and immediately query it from the other.
+**Adopting this structure offers three key advantages:**
+
+- **Performance**:<br>
+  When you register a table (e.g., a Parquet file), DataFusion analyzes its schema and metadata once. Every subsequent query that uses that table is faster because it skips this expensive step.
+- **Clarity**:<br>
+  Instead of passing file paths around your code, you refer to data with logical names like `"sales"` or `"fact_orders"`. This makes your queries cleaner and easier to maintain.
+- **Interoperability**:<br>
+  A registered table is available to both the DataFrame API and SQL. You can register a source with one API and immediately query it from the other.
 
 The core pattern is simple: **register once, query many times**.
 
+```text
+ctx.register_parquet("sales", "data/sales/", ParquetReadOptions::default()).await?;
+let sales_df = ctx.table("sales").await?;           // DataFrame API
+let sales_sql = ctx.sql("SELECT * FROM sales").await?;  // SQL API
+```
+
 > **Choosing a Creation Method**
 >
-> | When to use                    | Method                                            | Learn more                                            |
-> | ------------------------------ | ------------------------------------------------- | ----------------------------------------------------- |
-> | Use files once                 | [`.read_parquet()`], [`.read_csv()`]              | [From Files](#1-from-files)                           |
-> | Reuse across queries or in SQL | [`.register_parquet()`] → [`.table()`]            | [From a Registered Table](#2-from-a-registered-table) |
-> | Inline data or tests           | [`.read_batch()`], [`dataframe!()`][`dataframe!`] | [From In-Memory Data](#4-from-in-memory-data)         |
-> | Explore what's registered      | [`.catalog_names()`], `SHOW TABLES`               | [Catalogs Guide](../catalogs.md)                      |
+> | When to use                    | Method                                 | Learn more                                                                 |
+> | ------------------------------ | -------------------------------------- | -------------------------------------------------------------------------- |
+> | Use files once                 | [`.read_parquet()`], [`.read_csv()`]   | [From Files](#1-from-files)                                                |
+> | Reuse across queries or in SQL | [`.register_parquet()`] → [`.table()`] | [From a Registered Table](#2-from-a-registered-table)                      |
+> | Arrow data already in memory   | [`.read_batch()`]                      | [From Arrow RecordBatches](#4-from-arrow-recordbatches-the-native-pathway) |
+> | Inline data or tests           | [`dataframe!`][`dataframe!`]           | [From Inline Data](#5-from-inline-data-using-the-dataframe-macro)          |
+> | Explore what's registered      | [`.catalog_names()`], `SHOW TABLES`    | [Catalogs Guide](../catalogs.md)                                           |
+>
+> **Trade-offs:**
+>
+> - **Registration:** Upfront metadata reads; requires refresh strategy if files change out-of-band.
+> - **Direct reads:** No catalog state; metadata re-derived per call; not discoverable via SQL.
+>
+> **Default rule:** Parquet, remote storage, or multi-file → register. Small, local, one-off → direct read.
 
-#### Key Concepts
+#### How Names Resolve
 
-**Default namespace**: For simple workflows, just use a table name like `"sales"`. DataFusion places it in the default location: `datafusion.public.sales`. The `"public"` schema is just a default namespace—it has no security implications.
+DataFusion resolves table names using **1-, 2-, or 3-part identifiers**:
 
-**Custom catalogs & schemas**: You can create your own catalogs for organization, multi-tenancy, or separating environments (prod vs staging):
+| Identifier                    | Resolves to                  | Use case              |
+| ----------------------------- | ---------------------------- | --------------------- |
+| `"sales"`                     | `datafusion.public.sales`    | Default (most common) |
+| `"analytics.sales"`           | `datafusion.analytics.sales` | Custom schema         |
+| `"warehouse.analytics.sales"` | Fully qualified              | Multi-catalog setups  |
+
+- **Default namespace:**<br>
+  Unqualified names land in `datafusion.public`. The `"public"` schema is just a convention—no security implications.
+- **Lifetime:**<br>
+  Registrations are in-memory, scoped to the [`SessionContext`][SessionContext]. For persistence, implement a custom [`CatalogProvider`].
+- **Case sensitivity:**<br>
+  Unquoted identifiers fold to lowercase; quote to preserve case (`"Sales"`).
+
+> **Working with cloud storage?** <br>
+> Register an object store before using `s3://`, `gs://`, or `az://` paths. See the [CLI datasources guide](../../user-guide/cli/datasources.md) for configuration examples and [`datafusion::datasource::object_store`](https://docs.rs/datafusion/latest/datafusion/datasource/object_store/index.html) for the API.
+>
+> <!-- TODO: Create dedicated library-user-guide/object-stores.md covering programmatic ObjectStore registration (RuntimeEnv::register_object_store), credential handling, and S3/GCS/Azure setup. The CLI guide covers SQL; library users might need Rust examples. -->
+
+> **Performance note:**<br>
+> Registration caches schema and metadata (especially valuable for Parquet footers), so repeated queries plan faster.
+>
+> **See also:**
+>
+> - [Catalogs Guide](../catalogs.md)
+> - [Custom Table Providers](../custom-table-providers.md)
+
+<details>
+<summary><strong>Example: Fully-qualified namespace setup</strong></summary>
+
+Use multi-part names like `warehouse.analytics.metrics` to separate domains or environments:
 
 ```rust
-use datafusion::catalog::MemoryCatalogProvider;
-use datafusion::catalog::MemorySchemaProvider;
 use std::sync::Arc;
 
-let catalog = MemoryCatalogProvider::new();
-let schema = MemorySchemaProvider::new();
-catalog.register_schema("analytics", Arc::new(schema))?;
-ctx.register_catalog("warehouse", Arc::new(catalog));
-
-// Now register tables in custom locations
-ctx.register_table("warehouse.analytics.metrics", provider)?;
-```
-
-> See also:
-
-- [Catalogs, Schemas, and Tables](../catalogs.md#general-concepts)
-- [Implementing `MemoryCatalogProvider`](../catalogs.md#implementing-memorycatalogprovider)
-- For table scan internals, see [Custom Table Providers](../custom-table-providers.md).
-
-**Name resolution**: Identifiers can be 1-, 2-, or 3-part:
-
-- `"sales"` → `datafusion.public.sales` (default catalog + schema)
-- `"analytics.sales"` → `datafusion.analytics.sales` (default catalog)
-- `"warehouse.analytics.sales"` → explicit catalog + schema + table
-
-Quote to preserve case: `"SELECT * FROM \"Sales\""`.
-
-**Object stores**: Files can live on local disk or any object store (S3, GCS, Azure) configured in the [`RuntimeEnv`]. See [Object Store Configuration](../../user-guide/configs.md#object-store).
-
-**Lifetime & persistence**: Registrations are in-memory and scoped to the [`SessionContext`][sessionContext] lifetime. For persistent catalogs, plug in a custom [`CatalogProvider`]. See the [Catalogs Guide](../catalogs.md) for designs and examples.
-
-**Case sensitivity**: Table and column identifiers are folded to lowercase unless quoted:
-
-```rust
-ctx.table("Sales").await?;   // Resolves to "sales"
-ctx.table("SALES").await?;   // Also resolves to "sales"
-
-// SQL with quotes preserves case:
-ctx.sql("SELECT * FROM \"Sales\"").await?;  // Looks for "Sales" (case-sensitive)
-```
-
-> **Performance note**: Registration caches schema and file metadata so subsequent DataFrames avoid re-inferring schemas and re-reading file footers. This is especially valuable for Parquet files where metadata parsing can be expensive. For advanced performance techniques, see [Advanced Topics](dataframe-advance.md#performance-optimizations).
->
-> **For advanced topics** (information_schema, dynamic file catalogs, custom providers), see the [Catalogs Guide](../catalogs.md).
-
-### Creating DataFrames: Direct Reads vs. Registered Tables
-
-When you create a DataFrame, you're either:
-
-1. **Reading data directly** from files (one-time use, no catalog involved)
-2. **Accessing a registered table** from the catalog (reusable across queries)
-
-The second approach uses DataFusion's catalog system—a three-level hierarchy that stores [`TableProvider`]s (objects that know how to scan your data sources). For a deeper look at how catalogs, schemas, and tables relate, see the [Catalogs Guide](../catalogs.md#general-concepts):
-
-```text
-SessionContext (your workspace)
-└── Catalog ("datafusion" by default)
-    └── Schema ("public" by default)  <-- NOT the same as table schema!
-        └── Table ("sales")
-            └── Table Schema (columns: id, amount, date...)  <-- The actual structure
-```
-
-#### The Two Meanings of "Schema"
-
-> ⚠️ **Confusing terminology alert**: The word "schema" has two completely different meanings in DataFusion:
->
-> 1. **Schema as namespace** (like PostgreSQL schemas): A container for organizing tables
->
->    - Example: `"public"` schema contains your tables
->    - This is just for organization, like folders for files
->
-> 2. **Schema as structure** (Arrow schema): The columns and types of a table
->    - Example: `(id: Int32, name: Utf8, amount: Float64)`
->    - This defines what data the table actually contains
->
-> ```rust
-> // "public" here is a namespace schema (meaning #1)
-> ctx.table("public.sales").await?;
->
-> // This returns the table's structure schema (meaning #2)
-> let arrow_schema = df.schema();  // Fields: [(id, Int32), (name, Utf8), ...]
-> ```
-
-#### Why This Matters for DataFrame Creation
-
-The catalog system impacts creation and access patterns: direct reads are ideal for one-off scans; registered tables shine when you need reuse, SQL interop, discovery, or multi-file/remote performance. Use the decision guide below to choose.
-
-**Without registration (direct read):**
-
-```rust
-// Creates a new DataFrame each time, re-analyzes the file
-let df1 = ctx.read_parquet("sales.parquet", options).await?;
-let df2 = ctx.read_parquet("sales.parquet", options).await?; // Reads metadata again!
-```
-
-**With registration (catalog approach):**
-
-```rust
-// Register once - analyzes file metadata and stores it
-ctx.register_parquet("sales", "sales.parquet", options).await?;
-
-// Create DataFrames many times - uses cached metadata
-let df1 = ctx.table("sales").await?;  // Fast!
-let df2 = ctx.table("sales").await?;  // Fast!
-```
-
-##### Decision Guide: Register vs. Direct Read
-
-| Scenario                                          | Prefer      | Rationale                                                                                                            | References                                                                                                                                                                     |
-| ------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Multiple queries or SQL/discovery are anticipated | Register    | Reuses cached metadata; enables SQL ([`ctx.sql()`][`.sql()`]), `SHOW TABLES`, and `information_schema` introspection | [Catalogs Guide](../catalogs.md#general-concepts), [information_schema](../../user-guide/sql/information_schema.md)                                                            |
-| Remote object stores or many files/partitions     | Register    | Amortizes metadata I/O and improves pruning across files                                                             | [Parquet pruning](https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/), [External indexes](https://datafusion.apache.org/blog/2025/08/15/external-parquet-indexes/) |
-| One-off, small, local scans (e.g., CSV/NDJSON)    | Direct read | No catalog state or refresh policy required; minimal startup cost                                                    | —                                                                                                                                                                              |
-
-**Trade-offs**
-
-- Registration: upfront metadata reads and minimal catalog memory; requires a refresh strategy if files change out-of-band.
-- Direct reads: no catalog state; metadata/schema re-derived per call; not discoverable via SQL or catalogs.
-
-> **Default rule (when uncertain)**
->
-> - Parquet, remote storage, or multi-file inputs → prefer registering.
-> - Small, local, one-off reads → prefer direct reads.
-
-#### Working with the Catalog System
-
-For most use cases, you can ignore the catalog hierarchy and just use table names:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    // Simple: Just use a table name (goes into datafusion.public.sales)
-    ctx.register_csv("sales", "sales.csv", CsvReadOptions::new()).await?;
-    let df = ctx.table("sales").await?;
-
-    // Advanced: Use custom catalog/schema for organization (covered in advanced guide)
-    // ctx.register_csv("warehouse.analytics.sales", "sales.csv", ...).await?;
-
-    Ok(())
-}
-```
-
-> **Best practice**: Use SQL for complex relational logic (joins/aggregations), then switch to the DataFrame API for programmatic steps. Avoid alternating APIs step-by-step; both compile to the same optimized plan and execute columnar in DataFusion, with supported pushdown delegated to connectors when available.
-
-#### The Performance Advantage of Registration
-
-Here's why registration matters in practice:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    // ❌ Inefficient: Reading the same file multiple times
-    let df1 = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?;
-    // ... later in your code ...
-    let df2 = ctx.read_parquet("sales.parquet", ParquetReadOptions::default()).await?;
-    // Each read_parquet() call:
-    // - Opens the file
-    // - Reads Parquet metadata (can be expensive for large files)
-    // - Infers the schema
-    // - Creates a new logical plan
-
-    // ✅ Efficient: Register once, use many times
-    ctx.register_parquet(
-        "sales",                          // Table name (you choose this)
-        "sales.parquet",                  // File path
-        ParquetReadOptions::default()
-    ).await?;
-
-    let df3 = ctx.table("sales").await?;  // Access by the registered name
-    // ... later in your code ...
-    let df4 = ctx.table("sales").await?;  // Same name, reuses cached metadata
-    // Each table() call:
-    // - Looks up cached metadata (microseconds)
-    // - Reuses the same schema
-    // - Creates a new logical plan with cached info
-
-    Ok(())
-}
-```
-
-**Additional benefits of registration:**
-
-- **SQL interoperability**: Once registered, you can query the table with SQL
-- **Discoverability**: Tables show up in [`information_schema`]
-- **Consistency**: Everyone uses the same table with the same schema
-
-#### Inspecting the Catalog
-
-Once you register tables, they become part of the `SessionContext`'s catalog. This enables discovery and inspection, which is essential for interactive exploration and debugging. DataFusion organizes this information in a hierarchy:
-
-```text
-SessionContext
-└── Catalog: datafusion (default)
-    ├── Schema: public (default)
-    │   ├── sales      (table)
-    │   └── users      (table)
-    └── Schema: information_schema
-        ├── tables     (view)
-        └── columns    (view)
-```
-
-You can explore this catalog either programmatically using Rust or by executing SQL queries.
-
-##### Programmatic Inspection
-
-List schemas and tables with the API:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    ctx.register_csv("sales", "sales.csv", CsvReadOptions::new()).await?;
-    ctx.register_parquet("users", "users.parquet", ParquetReadOptions::default()).await?;
-
-    // Default catalog ("datafusion") and schema ("public")
-    let catalog = ctx.catalog("datafusion").unwrap();
-    let schema = catalog.schema("public").unwrap();
-
-    // List registered tables
-    let table_names = schema.table_names();
-    println!("Tables: {:?}", table_names); // Tables: ["sales", "users"]
-    Ok(())
-}
-```
-
-##### SQL Inspection
-
-For quick exploration, SQL is often more convenient.
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
 use datafusion::assert_batches_eq;
+use datafusion::catalog::{CatalogProvider,
+                          MemoryCatalogProvider,
+                          MemorySchemaProvider};
+use datafusion::error::Result;
+use datafusion::prelude::*;
 
-#[tokio::test]
-async fn test_show_tables() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let ctx = SessionContext::new();
 
-    ctx.register_csv("sales", "sales.csv", CsvReadOptions::new()).await?;
-    ctx.register_parquet("users", "users.parquet", ParquetReadOptions::default()).await?;
+    // 1. Register a catalog + schema: warehouse.analytics
+    let warehouse_catalog = Arc::new(MemoryCatalogProvider::new());
+    ctx.register_catalog("warehouse", warehouse_catalog.clone());
+    warehouse_catalog.register_schema("analytics", Arc::new(MemorySchemaProvider::new()))?;
 
-    // SHOW TABLES for a quick overview
-    let df = ctx.sql("SHOW TABLES").await?;
+    // 2. Register a table into that namespace: warehouse.analytics.metrics
+    let metrics_df = dataframe!(
+        "metric" => ["latency"],
+    )?;
+    ctx.register_table("warehouse.analytics.metrics", metrics_df.into_view())?;
 
-    // Verify the registered tables appear in the catalog
-    let batches = df.collect().await?;
+    // 3. Resolve the fully-qualified name and execute
+    let results = ctx.table("warehouse.analytics.metrics").await?.collect().await?;
     assert_batches_eq!(
         &[
-            "+------------+",
-            "| table_name |",
-            "+------------+",
-            "| sales      |",
-            "| users      |",
-            "+------------+",
+            "+---------+",
+            "| metric  |",
+            "+---------+",
+            "| latency |",
+            "+---------+",
         ],
-        &batches
+        &results
     );
 
     Ok(())
 }
 ```
 
-> **Testing pattern**: Using [`assert_batches_eq!`] verifies the exact output. This is more robust than visual inspection with `.show()` and is the recommended pattern for examples that demonstrate expected results.
+</details>
 
-For detailed metadata (columns and types), enable [`information_schema`] and query it:
+### References
 
-```rust
-use datafusion::prelude::*;
-use datafusion::execution::config::SessionConfig;
-use datafusion::error::Result;
+**DataFusion Documentation:**
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
-    let df = ctx.sql(
-        "SELECT table_name, column_name, data_type\n\
-         FROM information_schema.columns\n\
-         WHERE table_schema = 'public'"
-    ).await?;
-    df.show().await?;
-    Ok(())
-}
+- [Catalogs Guide](../catalogs.md) — Deep dive into catalog hierarchy and custom providers
+- [Custom Table Providers](../custom-table-providers.md) — Implementing your own data sources
+- [`SessionContext` API](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html) — Entry point for all DataFrame operations
+- [`TableProvider` trait](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html) — Interface for custom data sources
+
+**Arrow Ecosystem:**
+
+- [Arrow Schema](https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html) — Column names and types definition
+- [Apache Arrow Format](https://arrow.apache.org/docs/format/Columnar.html) — Columnar memory layout
+
+**Background Reading:**
+
+- [Apache DataFusion: A Fast, Embeddable, Modular Analytic Query Engine (Section 5.2)][sigmod-paper][— SIGMOD 2024 paper on DataFusion's architecture]
+
+---
+
+## How to Create a DataFrame
+
+**DataFusion binds to data wherever it lives—multiple entry points, one destination—unifying files, streams, and catalogs into a single, lazy DataFrame.**
+
+The [previous section](#before-creating-a-dataframe) established how DataFusion organizes data: `SessionContext` owns the catalog, tables are accessed through [`TableProvider`], and names resolve through the catalog hierarchy. Now we put that foundation to work.
+
+Creating a DataFrame does not load data—it constructs a [`LogicalPlan`][LogicalPlan] describing _what_ to compute. The actual bytes flow only when you call an action (`.collect()`, `.show()`). This lazy model lets DataFusion optimize your entire query before touching any data.
+
+Because every creation method compiles to the same `LogicalPlan`, you can:
+
+- Read files directly for ad-hoc analysis
+- Register tables for SQL interoperability
+- Mix both approaches in the same pipeline
+
+**Choose based on where your data lives and how you'll access it:**
+
+| Category        | Method                                                             | Best for                                          | Avoid if                                  |
+| --------------- | ------------------------------------------------------------------ | ------------------------------------------------- | ----------------------------------------- |
+| **Direct Read** | [1. Files](#1-from-files)                                          | Ad-hoc analysis, ETL pipelines, one-off scripts   | You need SQL access to the table          |
+| **Catalog**     | [2. Registered Table](#2-from-a-registered-table)                  | SQL interoperability, shared schemas, multi-query | One-shot queries (overhead of naming)     |
+| **Hybrid**      | [3. SQL Queries](#3-from-sql-queries)                              | Complex joins, CTEs, window functions             | Dynamic logic, strong typing requirements |
+| **Native**      | [4. RecordBatches](#4-from-arrow-recordbatches-the-native-pathway) | Arrow Flight, IPC, inter-process communication    | Starting from scratch                     |
+| **Testing**     | [5. Inline Data](#5-from-inline-data-using-the-dataframe-macro)    | Unit tests, reproducible bug reports              | Data > 10K rows                           |
+| **Advanced**    | [6. LogicalPlan](#6-advanced-constructing-from-a-logicalplan)      | Custom DSLs, federation, optimizer testing        | Higher-level methods (1–5) suffice        |
+
+#### The Big Picture
+
+DataFusion operates as a hub connecting physical data sources to logical query plans:
+
+```text
+DATAFRAME CREATION PATHWAYS
+════════════════════════════════════════════════════════════════════════════
+
+[ 1. DATA SOURCES ]              (Where the data lives)
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────────────┐
+│ Files/Stores │ │ In-Memory    │ │ External DBs │ │ Catalogs / Formats    │
+│(Parquet/CSV) │ │ (Batches)    │ │ & Streaming  │ │ (Iceberg, Delta, ...) │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────────┬────────────┘
+       │                │                │                    │
+       ▼                ▼                ▼                    ▼
+[ 2. ADAPTERS ]                  (The "TableProvider" implementations)
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────────────┐
+│ ListingTable │ │   MemTable   │ │ Custom Table │ │ CatalogProvider /     │
+│ (File Scan)  │ │  (Batches)   │ │ Provider     │ │ SchemaProvider        │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────────┬────────────┘
+       │                │                │                    │
+       └────────────────┴────────┬───────┴────────────────────┘
+                                 ▼
+[ 3. ACCESS PATTERN ]     (How you introduce it to the Session)
+            ┌────────────────────┴────────────────────┐
+            │                                         │
+   ┌────────▼─────────┐                      ┌────────▼─────────┐
+   │  A. DIRECT READ  │                      │   B. REGISTER    │
+   │  (Anonymous)     │                      │   (Named)        │
+   │                  │                      │                  │
+   │ ctx.read_parquet │                      │ ctx.register_*   │
+   │ ctx.read_csv     │                      │ ctx.register_udf │
+   │ ctx.read_batch   │                      │                  │
+   └────────┬─────────┘                      └────────┬─────────┘
+            │                                         │
+            │ (Ephemeral Plan)                        │ (Stored in Catalog)
+            ▼                                         ▼
+[ 4. THE HUB ]                                  [ CATALOG ]
+┌─────────────────────────────────────────────────────▼────────────────────┐
+│                             SessionContext                               │
+│ ┌──────────────────────────────────────────────────────────────────────┐ │
+│ │  SessionState: Config · RuntimeEnv · Optimizer · Planner · Catalog   │ │
+│ │                                                                      │ │
+│ │  ┌─────────────────┐                     ┌────────────────────────┐  │ │
+│ │  │ Anonymous Table │ <──(Resides in)───> │ Registered Tables      │  │ │
+│ │  └─────────────────┘      Memory         │ "sales", "metrics"...  │  │ │
+│ └───────────┬───────────────────────────────────────┬──────────────────┘ │
+└─────────────┼───────────────────────────────────────┼────────────────────┘
+              │                                       │
+              │ (Direct Return)                       │ (ctx.table("sales"))
+              │                                       │ (ctx.sql("..."))
+              ▼                                       ▼
+       ┌─────────────────────────────────────────────────────┐
+       │                      DataFrame                      │
+       │           (LogicalPlan + State Snapshot)            │
+       └─────────────────────────────────────────────────────┘
 ```
 
-Commonly used methods in this section: [`ctx.catalog_names()`][`.catalog_names()`], [`ctx.catalog()`][`.catalog()`], [`catalog.schema_names()`][`.schema_names()`], [`catalog.schema()`][`schema()`], [`schema.table_names()`][`.table_names()`]:, [`ctx.table()`][`.table()`], [`ctx.sql()`][`.sql()`]. Examples use [`.unwrap()`] for brevity; handle errors as appropriate.
-
-> For advanced catalog operations, see the [Catalogs Guide](../catalogs.md).
-
-**See also:**
-
-- DataFusion
-  - [Catalogs, Schemas, and Tables](../catalogs.md)
-  - [information_schema](../../user-guide/sql/information_schema.md)
-  - [Transformations: Mixing SQL and DataFrames](transformations.md#mixing-sql-and-dataframes)
-  - [Advanced: Performance Optimizations](dataframe-advance.md#performance-optimizations)
-- Spark (query engine + DataFrame API + discovery)
-  - [Spark SQL and DataFrames Guide][spark guide]
-  - [SHOW TABLES](https://spark.apache.org/docs/latest/sql-ref-syntax-aux-show-tables.html)
-  - [SparkSession Catalog API (PySpark)](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Catalog.html)
-- Flink (Table API + SQL catalogs)
-  - [Flink Table/SQL: Catalogs](https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/table/catalogs/)
-- Trino (SQL query engine with catalogs)
-  - [Concepts: Catalogs and Schemas](https://trino.io/docs/current/overview/concepts.html#catalogs-and-schemas)
-- DuckDB (discovery & information_schema)
-  - [SHOW statements](https://duckdb.org/docs/sql/statements/show)
-  - [information_schema](https://duckdb.org/docs/stable/sql/meta/information_schema)
-- ANSI-style metadata
-  - [PostgreSQL information_schema](https://www.postgresql.org/docs/current/information-schema.html)
-  - [MySQL information_schema](https://dev.mysql.com/doc/mysql-infoschema-excerpt/8.0/en/information-schema-introduction.html)
+> **Understanding the layers:**
+>
+> - **Layer 1 (Data Sources)**: Where bytes live (S3, disk, RAM).
+> - **Layer 2 (Adapters)**: [`TableProvider`] traits that translate bytes to Arrow.
+> - **Layer 3 (Access Pattern)**:
+>   - **Anonymous (Direct Read)**: The table exists only inside the returned DataFrame.
+>   - **Named (Registered)**: The table is stored in `SessionContext`, accessible via SQL.
+> - **Layer 4 (The Hub)**: `SessionContext` holds configuration and catalogs—the factory for all DataFrames.
 
 ---
 
-## How to create a Dataframe
-
-This section shows the practical ways to construct a `DataFrame` in DataFusion: from files, registered tables, SQL, in‑memory data, inline data, and from a [`LogicalPlan`][LogicalPlan]. All approaches compile to the same [`LogicalPlan`][LogicalPlan], so you can freely mix SQL and the DataFrame API. By this you achive the best of both worlds. Choose based on where the data lives and whether you'll reuse it (see the decision guide above).
-
-### DataFrame Creation Methods
-
-Now that you understand how DataFusion organizes data, let's look at the different ways to create DataFrames. Choose your method based on where your data lives and how you'll use it:
-
-1. **From files**: Read Parquet, CSV, JSON, Avro, or Arrow files — [From Files](#1-from-files)
-
-   - **Best for**: Production data pipelines, large datasets, cloud storage
-   - **Avoid if**: Data is already in memory or < 1000 rows like test cases (use inline data instead)
-
-2. **From a registered table**: Access tables by name — [From a Registered Table](#2-from-a-registered-table)
-
-   - **Best for**: Reusing data across multiple queries, mixing SQL and DataFrame operations
-   - **Avoid if**: You're only using the data once (just read directly)
-
-3. **From SQL queries**: Execute SQL and get a DataFrame — [From SQL Queries](#3-from-sql-queries)
-
-   - **Best for**: Complex joins/aggregations, leveraging SQL expertise, migrating SQL codebases
-   - **Avoid if**: You need programmatic column names or dynamic transformations
-
-4. **From in-memory data**: Create from Arrow RecordBatches — [From In-Memory Data](#4-from-in-memory-data)
-
-   - **Best for**: Integrating with Arrow ecosystem (Flight, other systems), processing existing batches
-   - **Avoid if**: Starting from scratch (use inline data or files)
-
-5. **From inline data**: Quick examples and tests with the macro — [From Inline Data](#5-from-inline-data-using-the-dataframe-macro)
-
-   - **Best for**: Unit tests, prototypes, examples, learning
-   - **Avoid if**: Data exceeds ~10K rows or comes from external sources
-
-6. **Advanced**: Construct directly from a LogicalPlan — [Constructing from a LogicalPlan](#6-advanced-constructing-from-a-logicalplan)
-   - **Best for**: Custom query builders, Substrait integration, optimizer testing
-   - **Avoid if**: Higher-level methods (1-5) meet your needs
-
----
+<!-- Link references -->
 
 ### 1. From Files
 
-Reading from files is the most common and powerful way to load data into DataFusion DataFrames. It is the primary entry point for production workloads—whether you're querying a partitioned data lake, processing ETL batches from cloud storage (S3/GCS/Azure), or analyzing a local file.
+**Read files directly into a lazy `DataFrame`. Format choice determines optimization potential—Parquet enables predicate pushdown; other formats (CSV and JSON) require full scans.**
 
-DataFusion is designed for efficient file scans:
+Files are a common entry point—data lakes, ETL pipelines, local analysis—but DataFusion's strength is **fusion**: the same query can join a Parquet file with a PostgreSQL table or a streaming source. This section covers file-based access.
 
-- **Lazy & streaming** – reads data in batches and only when an action runs, keeping memory usage low and handling datasets larger than RAM.
-- **Optimized by default** – applies predicate and projection pushdown, reading only the rows and columns you need.
+All file reads are **lazy**: DataFusion builds a query plan without loading data until you call an action ([`.collect()`], [`.show()`]).
 
-Basic pattern: `ctx.read_<format>(path, options).await?`
+**Basic pattern:** `ctx.read_<format>(path, options).await?`
 
-- Note: For options use the representative builders
-- **Exception** : CSV options differes! Use the builder: [`CsvReadOptions::new()`][CsvReadOptions] (not `default()`, `new()` is for common cases, default() pro minimal, base configuration)
+| Parameter   | Type                  | Description                                                       |
+| ----------- | --------------------- | ----------------------------------------------------------------- |
+| `path`      | `impl DataFilePaths`  | Single file, `Vec<&str>`, glob pattern, or cloud URL (`s3://...`) |
+| `options`   | `<Format>ReadOptions` | Format-specific configuration (schema, compression, etc.)         |
+| **Returns** | `Result<DataFrame>`   | Lazy DataFrame                                                    |
 
-> **Scan, not read**: The `read_*` methods build a lazy file scan—no bytes are loaded until an action runs ([`.collect()`], [`.show()`], [`.execute_stream()`]). Data is streamed in batches during execution.
+> **Warning: Cloud Storage (S3, GCS, Azure)** <br>
+> DataFusion does not bundle cloud connectors by default. To use `s3://`, `gs://`, or `az://` paths, you must first register the corresponding `ObjectStore` with your `SessionContext`.
+> See [**Advanced: Object Store Configuration**](dataframes-advance.md#object-store-configuration) for setup details.
+
+As an example, here's how to read a Parquet file:
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::error::Result;
+use datafusion::test_util::parquet_test_data;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
-    // Read a Parquet file into a DataFrame
-    // Parquet with custom options
-let df_parquet = ctx.read_parquet(
-    "data.parquet",
-    ParquetReadOptions::new()
-        // .schema(&schema)                 // override embedded schema
-        // .parquet_pruning(true)           // enable row group pruning (default: true)
-        // .skip_metadata(true)             // skip file metadata to avoid conflicts
-        // .file_extension(".parquet")      // custom file extension filter
-        // .table_partition_cols(vec![      // specify partition columns for pruning
-        //     ("year".to_string(), DataType::Int32),
-        //     ("month".to_string(), DataType::Int32),
-        // ])
-        // .file_sort_order(vec![...])      // indicate known sort order
-).await?;
+    // Use DataFusion's test data (parquet-testing submodule)
+    let testdata = parquet_test_data();
 
-    // Data is streamed; nothing loads until an action
+    // Read a Parquet file — lazy scan, nothing loads until an action
+    let df = ctx.read_parquet(
+        &format!("{testdata}/alltypes_plain.parquet"),
+        ParquetReadOptions::default()
+    ).await?;
+
     df.show().await?;
     Ok(())
 }
@@ -574,139 +458,824 @@ let df_parquet = ctx.read_parquet(
 
 #### Choosing a File Format
 
-DataFusion supports several common formats. Storage layout (columnar vs row-oriented) strongly affects performance.
+DataFusion supports five file formats. Storage layout (columnar vs row-oriented) strongly affects query performance:
 
-| Format                            | Layout   | Memory | Startup  | Predicate Pushdown | Best For                         |
-| --------------------------------- | -------- | ------ | -------- | ------------------ | -------------------------------- |
-| **Parquet** ([`.read_parquet()`]) | Columnar | Low    | Low      | Yes (statistics)   | Production analytics, large data |
-| **Arrow IPC** ([`.read_arrow()`]) | Columnar | Low    | Very Low | No                 | Arrow ecosystem, zero-copy       |
-| **Avro** ([`.read_avro()`])       | Row      | Medium | Low      | Limited            | Kafka, schema evolution          |
-| **CSV** ([`.read_csv()`])         | Row      | Medium | High     | No                 | Simple exchange, imports         |
-| **NDJSON** ([`.read_json()`])     | Row      | Medium | Medium   | No                 | Semi-structured logs/APIs        |
+| Format                              | Layout   | Startup Cost                | Predicate Pushdown  | Best For                         |
+| ----------------------------------- | -------- | --------------------------- | ------------------- | -------------------------------- |
+| **Parquet** <br>[`.read_parquet()`] | Columnar | **Low** (metadata only)     | ✅ Yes (statistics) | Production analytics, large data |
+| **Arrow IPC** <br>[`.read_arrow()`] | Columnar | **Instant** (zero-copy)     | ❌ No               | Arrow ecosystem, zero-copy       |
+| **Avro**<br> [`.read_avro()`]       | Row      | **Low** (header schema)     | ⚠️ Limited          | Kafka, schema evolution          |
+| **CSV**<br> [`.read_csv()`]         | Row      | **High** (inference scan)   | ❌ No               | Simple exchange, imports         |
+| **NDJSON** <br> [`.read_json()`]    | Row      | **Medium** (inference scan) | ❌ No               | Semi-structured logs/APIs        |
 
-> For analytics, prefer columnar formats like **Parquet** or **Arrow IPC**. Columnar storage lets DataFusion read only the needed columns, drastically reducing I/O. Row-based formats (Avro, CSV, JSON) must read entire rows even when you need one field.
+> For analytics, prefer **columnar formats** (Parquet, Arrow IPC). Columnar storage lets DataFusion read only the needed columns, drastically reducing I/O. Row-based formats (Avro, CSV, JSON) must read entire rows even when you need one field.
 
-#### Common Reading Patterns and Schema Handling
+Each format has a dedicated section below with options, gotchas, and examples.
 
-Beyond reading a single file, two key areas to understand are how to read multiple files and how to manage schemas.
+---
 
-#### 1) Reading multiple files and customizing options
+### Parquet — The Analytical Standard
 
-DataFusion can read files with custom options and multiple files as a single `DataFrame` (via a list of paths or glob patterns) and lets you tune format-specific options.
+**The default choice for analytical workloads: columnar, compressed, self-describing, and optimized for selective reads.**
+
+[Apache Parquet](https://parquet.apache.org/) stores data **column-by-column** instead of row-by-row. This layout lets DataFusion read only the columns your query needs, skip irrelevant data using embedded statistics, and benefit from excellent compression ratios.
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::datasource::arrow::ArrowReadOptions;
+use datafusion::test_util::parquet_test_data;
 
-// CSV with custom options
-let df = ctx.read_csv(
-    "data.csv",
-    CsvReadOptions::new()
-        .schema(&schema)       // enforce canonical types
-        .has_header(true)      // file has a header row
-        .delimiter(b',')       // single-byte delimiter (e.g., b';' for semicolon)
-        // .quote(b'"')        // optional: quote character (default b'"')
-        // .comment(b'#')      // optional: ignore lines starting with '#'
-        // .truncated_rows(true) // optional: allow fewer columns and fill NULLs for nullable fields
-).await?;
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
 
-// NDJSON with custom options (newline-delimited JSON)
-let df_json = ctx.read_json(
-    "data.ndjson",
-    NdJsonReadOptions::default()
-        // .schema(&schema)                  // enforce schema (skips inference)
-        // .schema_infer_max_records(1000)   // rows to scan for inference (default: 1000)
-        // .file_extension(".jsonl")         // custom extension (default: ".json")
-        // .file_compression_type(           // handle compressed files
-        //     FileCompressionType::GZIP
-        // )
-        // .table_partition_cols(vec![...])  // partition columns for pruning
-        // .mark_infinite(true)              // for unbounded streams (FIFO files)
-        // .file_sort_order(vec![...])       // indicate known sort order
-).await?;
+    // Use DataFusion's test data (parquet-testing submodule)
+    let testdata = parquet_test_data();
+    let df = ctx.read_parquet(
+        &format!("{testdata}/alltypes_plain.parquet"),
+        ParquetReadOptions::default()
+    ).await?;
 
-// Multiple files (works for all formats)
-let df_multi = ctx.read_parquet(
-    vec!["data1.parquet", "data2.parquet"],
-    ParquetReadOptions::default()
-).await?;
-
-// Glob patterns to discover files (local or object stores)
-let df_glob = ctx.read_parquet(
-    "s3://bucket/data/year=2024/**/*.parquet",
-    ParquetReadOptions::default()
-).await?;
+    df.show().await?;
+    Ok(())
+}
 ```
 
-> **NDJSON**: Each line is a separate JSON object (efficient for streaming). Common extensions: `.ndjson`, `.jsonl` (sometimes `.json`).
+For typical analytical queries, Parquet is often **significantly faster** than CSV—not because of raw read speed, but because tools like DataFusion can skip reading large portions of data (row group pruning) and avoid reading unneeded columns (column pruning).
 
-> **Arrow IPC**: Arrow's native serialization format (a.k.a. Feather v2). Zero-copy in Arrow ecosystem and very fast to read.
+#### Parquet File Structure
 
-#### 2) Schema handling: inference vs explicit schema
+```text
+PARQUET FILE STRUCTURE & SCANNING LOGIC
+════════════════════════════════════════════════════════════════════════════
 
-> **Schema inference**: When no schema is provided, DataFusion inspects the first `schema_infer_max_records` rows/objects (default: 1000) to guess column names and data types. Parquet/Arrow/Avro embed schemas (no inference needed).
+  Query: SELECT "price" FROM table WHERE "date" = '2026-01-02'
 
-By default, DataFusion infers schemas:
+         (Physically stored on disk)        (DataFusion Reader Logic)
+┌──────────────────────────────────────────┐
+│             PARQUET FILE                 │  1. READ FOOTER FIRST
+│                                          │  (Load Schema & Stats)
+│  ┌────────────────────────────────────┐  │            │
+│  │           FILE FOOTER              │◄──────────────┘
+│  │ (Schema, Row Group Metadata, Stats)│  │
+│  └────────────────────────────────────┘  │
+│                                          │
+│  ┌────────────────────────────────────┐  │  2. ROW GROUP PRUNING
+│  │           ROW GROUP 1              │  │  Check Stats:
+│  │     (Rows 0 - 10,000)              │  │  "date" min: '2026-01-01'
+│  │                                    │  │  "date" max: '2026-01-01'
+│  │ ┌───────────┐  ┌───────────┐       │  │
+│  │ │ Col: date │  │ Col: price│       │  │  Result: SKIP ENTIRE GROUP
+│  │ └───────────┘  └───────────┘       │  │  (No IO for these columns)
+│  └────────────────────────────────────┘  │
+│                                          │
+│  ┌────────────────────────────────────┐  │  3. COLUMN PRUNING
+│  │           ROW GROUP 2              │  │  Check Stats:
+│  │     (Rows 10,001 - 20,000)         │  │  "date" min: '2026-01-02'
+│  │                                    │  │  "date" max: '2026-01-02'
+│  │ ┌───────────┐  ┌───────────┐       │  │  Result: MATCH!
+│  │ │ Col: date │  │ Col: price│◄──────┼─────Read only "price" column
+│  │ └───────────┘  └───────────┘       │  │  (Skip "date" data after
+│  └────────────────────────────────────┘  │   verifying stats)
+└──────────────────────────────────────────┘
+```
 
-- **Parquet/Avro/Arrow**: Schema embedded in file metadata (instant, accurate)
-- **CSV**: Scans the first [`schema_infer_max_records`][schema_infer_max_records_csv] rows (default: 1000)
-- **NDJSON**: Scans the first [`schema_infer_max_records`][schema_infer_max_records_json] objects (default: 1000)
+> **Why is metadata a footer at the bottom?** <br>
+> Parquet is a "write-once" format: statistics aren't known until all data is written, so the footer goes last. Parquet readers seek to the end of the file first—then they know where everything else is.
 
-For CSV/NDJSON in production, providing an **explicit schema is strongly recommended** to avoid inference overhead and mis-typed columns. Adding an expicit schema is shwon in the following:
+Parquet files organize data into **row groups** (horizontal partitions, typically 128MB) containing **column chunks**:
 
-<!-- TODO: Cross-link to a central "Schema Inference: behavior and limits" section in schema-management.md once finalized. -->
+| Component         | Description                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Row groups**    | Independent horizontal slices (~128MB each). Each can be read/skipped separately.                                      |
+| **Column chunks** | One per column per row group. **Stored contiguously on disk**—enables efficient seeks to read only the needed columns. |
+| **Statistics**    | Min/max values, null count per column chunk—enables row group pruning.                                                 |
+| **Footer**        | Schema + row group metadata. Read first to plan the query (~few KB).                                                   |
+
+For more details, see:
+
+- [Parquet File Format][parquet_docs] — Official documentation.
+- [Parquet rust crate][parquet_crate] documentation.
+- [Parquet Viewer][parquet_viewer] — Explore schema, row groups, and statistics visually.
+
+**Practical considerations:**
+
+- **Row group size** <br>
+  Commonly ~128MB (writer-dependent). Larger (512MB–1GB) improves sequential I/O; smaller improves pruning granularity.
+- **Schema evolution** <br>
+  Columns can be added but renaming/reordering is limited. Plan schema upfront.
+- **Compression** <br>
+  Set at write time (Snappy, Zstd, Gzip). Reader handles any compression automatically. See [Writing Parquet](writing-dataframes.md#writing-to-parquet) for compression options.
+
+#### Trade-offs
+
+| Parquet shines ✓                                       | Avoid Parquet ✗                                                   |
+| ------------------------------------------------------ | ----------------------------------------------------------------- |
+| Production analytics, repeated queries, large datasets | Write-heavy append logs → NDJSON / streaming-native systems       |
+| Selective reads (filters + column pruning)             | Human-editable debugging → CSV/JSON                               |
+| Efficient storage (compression + columnar layout)      | Very small datasets where metadata/compression overhead dominates |
+
+#### How Parquet Reads Work
+
+DataFusion uses **metadata-first scanning**:
+
+**When you call `read_parquet()`:**
+
+1. **Footer read** <br>
+   Reads the Parquet footer (~few KB) to learn schema and row group metadata (or uses an explicit schema if you provide one)
+2. **Plan creation** <br>
+   Creates a [`ListingTable`] and returns a lazy `DataFrame`
+3. **Zero data bytes** <br>
+   No column data loaded yet
+
+> **Note (startup cost vs pruning):** <br> > `read_parquet()` may collect per-file statistics during DataFrame creation (`datafusion.execution.collect_statistics = true` by default). This can add noticeable startup time for many files (especially on cloud object stores), but can speed up filtered queries. To prioritize startup time, disable it: `SessionConfig::new().with_collect_statistics(false)`.
+
+**When you call an action** (`.collect()`, `.show()`):
+
+4. **Row group pruning** <br> Skips row groups where statistics prove no match
+5. **Column pruning** <br>
+   Reads only columns referenced in your query
+6. **Streaming decode** <br>
+   Decodes in batches, keeping memory bounded
+
+#### ParquetReadOptions
+
+[`ParquetReadOptions`] provides builder methods for customization which means you can chain the desired options:
+
+| Option                                                                           | Default      | Description                                           | When to use                                                                             |
+| :------------------------------------------------------------------------------- | :----------- | :---------------------------------------------------- | :-------------------------------------------------------------------------------------- |
+| **[`.parquet_pruning(bool)`][`ParquetReadOptions::parquet_pruning()`]**          | `true`       | Skips row groups using min/max statistics.            | **Always**, especially for filtered queries (`WHERE id > 100`).                         |
+| **[`.table_partition_cols(Vec)`][`ParquetReadOptions::table_partition_cols()`]** | `[]`         | Maps directory paths to columns (e.g., `year=2025`).  | **Hive Partitioning**: When data is organized in folders by date/category.              |
+| **[`.file_extension(&str)`][`ParquetReadOptions::file_extension()`]**            | `".parquet"` | Filters input files by suffix.                        | **Mixed Directories**: If your folder contains `.crc`, `.json`, or temp files.          |
+| **[`.schema(&Schema)`][`ParquetReadOptions::schema()`]**                         | `None`       | Supplies the Parquet _file_ schema (skips inference). | **Production**: Avoid inference on large/multi-file datasets; enforce specific types.   |
+| **[`.skip_metadata(bool)`][`ParquetReadOptions::skip_metadata()`]**              | `true`       | Ignores embedded schema metadata to avoid conflicts.  | **Default**: Keep `true` for mixed producers; set `false` only if you rely on metadata. |
+| **[`.file_sort_order(Vec)`][`ParquetReadOptions::file_sort_order()`]**           | `[]`         | Tells the optimizer the data is pre-sorted.           | **Sorting**: To speed up merge-joins or `ORDER BY` queries without re-sorting.          |
+
+> **Note:** <br> > [`ParquetReadOptions::schema()`] here is a _builder method_ that sets the schema for reading. This differs from [`DataFrame::schema()`], which _returns_ the schema of an existing DataFrame.
+
+> **Key insight:** <br> > **Row group pruning is enabled by default** (`datafusion.execution.parquet.pruning = true`) and can be overridden per read with `.parquet_pruning(true/false)`. With pruning enabled, DataFusion compares your `WHERE` predicates against each row group's min/max statistics—if no rows can possibly match, the entire group is skipped without reading any data.
+
+<details>
+<summary><strong>Example: Partition-pruned read with custom extension</strong></summary>
+
+In the following example, it is shown how to apply custom options to the `read_parquet` method for Hive-partitioned data.
+
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // 1. Define the Parquet *file* schema (optional, but recommended for production).
+    // Partition columns (year/month) come from the directory structure via `table_partition_cols`.
+    let file_schema = Schema::new(vec![Field::new("product_id", DataType::Utf8, false)]);
+
+    // 2. Configure the reader
+    let options = ParquetReadOptions::default()
+        .file_extension(".parquet")             // Filter files
+        .table_partition_cols(vec![             // Define partition columns
+            ("year".into(), DataType::Int32),
+            ("month".into(), DataType::Int32)
+        ])
+        .parquet_pruning(true)   // Enable statistics pruning
+        .schema(&file_schema);   // Enforce file schema (excluding partitions)
+
+    // 3. Read Hive-partitioned directory (e.g., data/sales/year=2024/month=01/*.parquet)
+    let df = ctx.read_parquet("data/sales/", options).await?;
+    df.show().await?;
+    Ok(())
+}
+```
+
+</details>
+
+#### Parquet Pushdown — How DataFusion Skips Data
+
+DataFusion's Parquet reader exploits metadata at multiple levels to minimize I/O:
+
+| Level         | What's skipped             | How it works                                                   |
+| ------------- | -------------------------- | -------------------------------------------------------------- |
+| **Partition** | Entire directories         | Hive-style paths (`year=2024/`) matched against `WHERE` clause |
+| **Row group** | Groups of rows (~128MB)    | Min/max statistics compared to filter predicates               |
+| **Page**      | Pages within column chunks | Page-level indexes (if written by producer)                    |
+| **Column**    | Unreferenced columns       | Only columns in `SELECT` are read from disk                    |
+
+**Bloom filters** add another layer: if the file producer wrote Bloom filters, DataFusion can skip row groups that _definitely_ don't contain a value (useful for `WHERE id = 'abc123'`).
+
+For highly selective queries where built-in statistics aren't enough, DataFusion supports advanced indexing:
+
+- **User-defined indexes** — Embed custom indexes directly in Parquet file metadata
+- **External indexes** — Store sidecar index files alongside your Parquet data
+
+See the References section for deep dives on these techniques.
+
+#### References
+
+**DataFusion Blog (Deep Dives):**
+
+- [Parquet Pushdown](https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/) — How DataFusion exploits Parquet metadata
+- [User-Defined Parquet Indexes](https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/) — Embedding custom indexes
+- [External Parquet Indexes](https://datafusion.apache.org/blog/2025/08/15/external-parquet-indexes/) — Sidecar index files
+
+**Format & API:**
+
+- [Apache Parquet Documentation](https://parquet.apache.org/docs/) — Official specification
+- [`ParquetReadOptions` API](https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html) — All configuration options
+
+---
+
+### CSV — Tabular Exchange
+
+**Simple, human-readable, universal—the lowest common denominator for data exchange.**
+
+CSV is row-oriented text with no embedded schema. When you call `read_csv()`, DataFusion must:
+
+1. **Infer schema** <br>
+   By scanning the first N rows (default: 1000)—this happens _at DataFrame creation_, not lazily
+2. **Parse text → typed Arrow columns** <br>
+   Row by row—a row-to-columnar conversion cost
+
+This makes CSV ideal for _ingestion and interchange_—receiving data from upstream systems ( like mainframes, HL7 feeds, legacy batch jobs, vendor exports) or quick spreadsheet imports. For repeated analytical queries, convert CSV to Parquet once and query Parquet thereafter.
 
 ```rust
+use datafusion::prelude::*;
+use datafusion::test_util::arrow_test_data;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Use Arrow's test data (arrow-testing submodule)
+    let testdata = arrow_test_data();
+    let df = ctx.read_csv(
+        &format!("{testdata}/csv/aggregate_test_100.csv"),
+        CsvReadOptions::new()
+    ).await?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+**Practical considerations:**
+
+- **No embedded schema** <br>
+  DataFusion infers types from the first 1000 rows. Use `.schema_infer_max_records(n)` if early rows aren't representative, or provide an explicit schema in production.
+- **No predicate pushdown** <br>
+  Every byte must be read and parsed, even if filtered later.
+- **Projection reduces CPU, not I/O** <br>
+  DataFusion skips _materializing_ unused columns, but still scans the full file.
+- **Compression** <br>
+  Use `.csv.gz` or `.csv.zst` for transfer; DataFusion reads them directly via `.file_compression_type()`.
+
+#### Trade-offs
+
+| CSV Shines ✓                                         | Avoid CSV ✗                                     |
+| ---------------------------------------------------- | ----------------------------------------------- |
+| Data exchange with spreadsheets, legacy systems      | Analytics on large datasets → Parquet           |
+| Human inspection and quick debugging                 | Schema enforcement critical → Parquet/Avro      |
+| One-off exports, universal compatibility             | Storage efficiency matters (5–10x larger)       |
+| Small datasets where Parquet overhead isn't worth it | You need predicate pushdown (filter before I/O) |
+
+#### CsvReadOptions
+
+[`CsvReadOptions`] provides builder methods for customization. The most important ones for production use are [`CsvReadOptions::schema()`] (for explicit type control) and [`.delimiter()`][`CsvReadOptions::delimiter()`] (for non-comma separators like TSV).
+
+| Option                                                                             | Default        | Description                                           | When to use                                                                                            |
+| :--------------------------------------------------------------------------------- | :------------- | :---------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
+| **[`.has_header(bool)`][`CsvReadOptions::has_header()`]**                          | `true`         | Treats the first row as column names.                 | **Standard CSVs**: Set to `false` if the file starts immediately with data.                            |
+| **[`.delimiter(u8)`][`CsvReadOptions::delimiter()`]**                              | `b','`         | Sets the field separator character.                   | **Non-Standard**: Use `b'\t'` for TSV or `b';'` for European CSV.                                      |
+| **[`.schema(&Schema)`][`CsvReadOptions::schema()`]**                               | `None`         | Provides explicit column names and types.             | **Production**: Enforces strict types and avoids inference surprises.                                  |
+| **[`.schema_infer_max_records(n)`][`CsvReadOptions::schema_infer_max_records()`]** | `1000`         | Number of rows to scan to guess types.                | **Sparse Data**: Increase this if the first 1000 rows contain `nulls` in a column that later has data. |
+| **[`.quote(u8)`][`CsvReadOptions::quote()`]**                                      | `b'"'`         | Character used to quote fields containing delimiters. | **Custom Dialects**: If your file uses single quotes (`'`) or other wrappers.                          |
+| **[`.file_compression_type(...)`][`CsvReadOptions::file_compression_type()`]**     | `UNCOMPRESSED` | Sets the compression algorithm (GZIP, BZIP2, ZSTD).   | **Compressed Files**: Reading `.csv.gz` or `.csv.zst` directly.                                        |
+| **[`.newlines_in_values(bool)`][`CsvReadOptions::newlines_in_values()`]**          | `false`        | Allows newlines `\n` inside quoted fields.            | **Multi-line Text**: **Warning**: This disables parallel file scanning (slower).                       |
+| **[`.null_regex(str)`][`CsvReadOptions::null_regex()`]**                           | `None`         | Treats specific strings (e.g., `"NA"`) as null.       | **Data Cleaning**: When data uses non-standard null markers.                                           |
+| **[`.file_extension(&str)`][`CsvReadOptions::file_extension()`]**                  | `".csv"`       | Filters input files by extension.                     | **Mixed Directories**: To ignore metadata files in the same folder.                                    |
+
+> **Note:** [`CsvReadOptions::schema()`] here is a _builder method_ that sets the schema for reading. This differs from [`DataFrame::schema()`], which _returns_ the schema of an existing DataFrame.
+
+<details>
+<summary><strong>Example: Reading compressed CSV with explicit schema</strong></summary>
+
+This example shows how to read a GZIP-compressed CSV file with an explicit schema—a common pattern for log ingestion pipelines.
+
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // 1. Define schema upfront (skips inference, enforces types)
+    let schema = Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("timestamp", DataType::Timestamp(TimeUnit::Microsecond, None), false),
+    ]);
+
+    // 2. Configure reader for GZIP compressed files
+    let options = CsvReadOptions::new()
+        .schema(&schema)
+        .file_compression_type(FileCompressionType::GZIP);
+
+    // 3. Read — DataFusion decompresses on the fly
+    let df = ctx.read_csv("logs.csv.gz", options).await?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+</details>
+
+#### Production Tips
+
+- **Always provide explicit schema** <br>
+  Schema inference is risky: if row 1001 has a different type than rows 1–1000, your query fails at runtime.
+- **Use `.csv.gz`** for compressed transfer — DataFusion decompresses on the fly
+- **Set `.null_regex("NA|NULL|\\N")`** to handle common null markers
+- **Watch for empty strings vs nulls** — They're treated differently
+
+<details>
+<summary><strong>Example: Explicit schema for production</strong></summary>
+
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::{Schema, Field, DataType};
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    let schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("amount", DataType::Float64, true),
+    ]);
+
+    let df = ctx.read_csv(
+        "data.csv",
+        CsvReadOptions::new().schema(&schema)
+    ).await?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+</details>
+
+#### References
+
+- [`CsvReadOptions` API](https://docs.rs/datafusion/latest/datafusion/prelude/struct.CsvReadOptions.html) — All configuration options
+- [Example Usage (CSV with SQL and DataFrame)](../../user-guide/example-usage.md)
+
+---
+
+### NDJSON — Semi-Structured Logs
+
+**Newline-delimited JSON: one JSON object per line, ideal for logs and streaming data.**
+
+NDJSON (also called JSON Lines, `.jsonl`) is row-oriented text like CSV, but each line is a self-describing JSON object. When you call `read_json()`, DataFusion must:
+
+1. **Infer schema** <br>
+   By scanning the first N objects (default: 1000)—this happens _at DataFrame creation_, not lazily
+2. **Parse JSON → typed Arrow columns** <br>
+   Object by object—nested structures flatten to Arrow structs
+
+This makes NDJSON ideal for _data interchange_—log files, NoSQL database exports (MongoDB, Elasticsearch), streaming APIs, and message queue payloads. For repeated analytical queries, convert to Parquet.
+
+```rust,no_run
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Each line is a complete JSON object
+    let df = ctx.read_json(
+        "logs.ndjson",
+        NdJsonReadOptions::default()
+    ).await?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+**Practical considerations:**
+
+- **Schema inference scans first 1000 objects** <br>
+  Deeply nested or sparse fields may not be detected. Provide an explicit `.schema()` in production.
+- **Nested objects flatten to Arrow structs** <br>
+  `{"user": {"name": "Alice"}}` becomes a struct column accessible as `user.name`.
+- **No predicate pushdown** <br>
+  Every line must be parsed, even if filtered later—similar to CSV.
+- **File extension matters** <br>
+  Use `.file_extension(".jsonl")` or `.file_extension(".ndjson")` if your files don't end in `.json`.
+
+#### Trade-offs
+
+| NDJSON shines ✓                             | Avoid NDJSON ✗                                      |
+| ------------------------------------------- | --------------------------------------------------- |
+| Data interchange: logs, APIs, NoSQL exports | Production analytics on large datasets → Parquet    |
+| Semi-structured / evolving records          | Highly selective queries needing predicate pushdown |
+| Append-friendly, easy to generate           | Strict schema contracts → Avro or Parquet           |
+
+#### NdJsonReadOptions
+
+The [`NdJsonReadOptions`] builder configures the parser.
+
+| Option                                                                            | Default        | Description                       | When to use                                                                                      |
+| :-------------------------------------------------------------------------------- | :------------- | :-------------------------------- | :----------------------------------------------------------------------------------------------- |
+| **[`.schema(&Schema)`][`NdJsonReadOptions::schema()`]**                           | `None`         | Provides explicit schema.         | **Production**: Enforces strict types and avoids inference surprises.                            |
+| **[`.file_extension(&str)`][`NdJsonReadOptions::file_extension()`]**              | `".json"`      | Filters input files by extension. | **Mixed Directories**: Use `".jsonl"` or `".ndjson"` if you have other file types in the folder. |
+| **[`.file_compression_type(...)`][`NdJsonReadOptions::file_compression_type()`]** | `UNCOMPRESSED` | Sets the compression algorithm.   | **Compressed Logs**: Reading `.json.gz` or `.json.zst` directly.                                 |
+| **[`.table_partition_cols(Vec)`][`NdJsonReadOptions::table_partition_cols()`]**   | `[]`           | Maps directory paths to columns.  | **Hive Partitioning**: When data is stored in `year=2024/month=01/` folders.                     |
+
+> **Note:** To change schema inference depth (default: 1000 objects), set the field directly: <br> >
+> `NdJsonReadOptions { schema_infer_max_records: 5000, ..Default::default() }`
+
+> **Note:**<br> > [`NdJsonReadOptions::schema()`] here is a _builder method_ that sets the schema for reading. This differs from [`DataFrame::schema()`], which _returns_ the schema of an existing DataFrame.
+
+<details>
+<summary><strong>Example: Reading compressed NDJSON</strong></summary>
+
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    let options = NdJsonReadOptions::default()
+        .file_compression_type(FileCompressionType::GZIP)
+        .file_extension(".gz"); // Important: match the actual file extension
+
+    let df = ctx.read_json("logs/*.json.gz", options).await?;
+    df.show().await?;
+    Ok(())
+}
+```
+
+</details>
+
+---
+
+### Avro — Schema Evolution
+
+**Row-based format with embedded schema, popular in Kafka ecosystems for schema evolution.**
+
+Avro stores its schema in the file header, enabling forward/backward compatibility as schemas evolve. This makes it ideal for event streaming where producers and consumers may run different versions.
+
+> **Feature flag required:** <br> Add `datafusion = { features = ["avro"] }` to your `Cargo.toml`.
+
+```rust,no_run
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Requires: datafusion = { features = ["avro"] }
+    let df = ctx.read_avro("events.avro", AvroReadOptions::default()).await?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+**Practical considerations:**
+
+- **Embedded schema (no inference)** <br>
+  Avro files carry a writer schema in the header, so readers don't need schema inference.
+- **Row-based execution costs** <br>
+  Avro is row-oriented: DataFusion must decode full rows and then build Arrow columns. Expect limited pushdown compared to Parquet.
+- **Analytics workflow** <br>
+  Avro is great for interchange and event streams; for repeated analytical queries, convert to Parquet.
+
+#### Trade-offs
+
+| Advantage                      | Disadvantage                              |
+| ------------------------------ | ----------------------------------------- |
+| Embedded schema (no inference) | Row-based (reads entire rows)             |
+| Schema evolution support       | Less efficient than Parquet for analytics |
+| Compact binary format          | Limited predicate pushdown                |
+| Kafka ecosystem integration    | Requires `avro` feature flag              |
+
+#### AvroReadOptions
+
+[`AvroReadOptions`] provides builder methods for customization.
+
+| Option                                                                        | Default | Description                      | When to use                                                                  |
+| :---------------------------------------------------------------------------- | :------ | :------------------------------- | :--------------------------------------------------------------------------- |
+| **[`.schema(&Schema)`][`AvroReadOptions::schema()`]**                         | `None`  | Provides explicit schema.        | **Production**: Enforces strict types and avoids schema drift surprises.     |
+| **[`.table_partition_cols(Vec)`][`AvroReadOptions::table_partition_cols()`]** | `[]`    | Maps directory paths to columns. | **Hive Partitioning**: When data is stored in `year=2024/month=01/` folders. |
+
+> **Note:** `.schema()` here is a _builder method_ that sets the schema for reading. This differs from [`DataFrame::schema()`], which _returns_ the schema of an existing DataFrame.
+
+If you need to scan a directory that contains mixed file types, Avro files are selected by extension (default: `.avro`). `AvroReadOptions` does not expose a builder for this—set the field directly using struct update syntax:
+
+`AvroReadOptions { file_extension: ".avrodata", ..Default::default() }`
+
+<details>
+<summary><strong>Example: Hive-style partitioning for Avro files</strong></summary>
+
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::DataType;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    let options = AvroReadOptions::default().table_partition_cols(vec![
+        ("year".into(), DataType::Int32),
+        ("month".into(), DataType::Int32),
+    ]);
+
+    // Example layout: events/year=2024/month=01/*.avro
+    let df = ctx.read_avro("events/", options).await?;
+    df.show().await?;
+    Ok(())
+}
+```
+
+</details>
+
+---
+
+### Arrow IPC — Zero-Copy Native
+
+**Arrow's native serialization format (Feather v2): zero-copy reads, fastest startup, perfect for inter-process communication.**
+
+Arrow IPC preserves Arrow's in-memory layout on disk. No deserialization needed—data maps directly into memory. Ideal for passing data between processes or caching intermediate results.
+
+```rust,no_run
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    let df = ctx.read_arrow("data.arrow", ArrowReadOptions::default()).await?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+**Practical considerations:**
+
+- **Fastest startup** <br>
+  Arrow IPC preserves Arrow's in-memory layout on disk, so DataFusion avoids expensive deserialization.
+- **No predicate pushdown** <br>
+  Arrow IPC does not provide Parquet-style statistics for pruning; DataFusion must read and decode batches to apply filters.
+- **File extension matters** <br>
+  DataFusion selects Arrow IPC files by extension (default: `.arrow`). If your files use a different extension (e.g., `.feather`), set the `file_extension` field in `ArrowReadOptions`.
+
+#### When to Use Arrow IPC
+
+| Use Case                     | Arrow IPC Fits?                          |
+| ---------------------------- | ---------------------------------------- |
+| Inter-process communication  | ✅ Excellent                             |
+| Caching intermediate results | ✅ Excellent                             |
+| Same-machine data sharing    | ✅ Excellent                             |
+| Long-term storage            | ⚠️ Consider Parquet (better compression) |
+| Cross-language exchange      | ✅ Arrow is language-agnostic            |
+
+#### Trade-offs
+
+| Advantage                     | Disadvantage              |
+| ----------------------------- | ------------------------- |
+| Zero deserialization cost     | No predicate pushdown     |
+| Fastest startup time          | Larger files than Parquet |
+| Preserves Arrow types exactly | Less ecosystem tooling    |
+| Columnar layout               | No statistics for pruning |
+
+#### ArrowReadOptions
+
+[`ArrowReadOptions`] provides builder methods for customization.
+
+| Option                                                                         | Default | Description                      | When to use                                                                                  |
+| :----------------------------------------------------------------------------- | :------ | :------------------------------- | :------------------------------------------------------------------------------------------- |
+| **[`.schema(&Schema)`][`ArrowReadOptions::schema()`]**                         | `None`  | Provides explicit schema.        | **Schema control**: Normalize schema across multiple files or override/standardize metadata. |
+| **[`.table_partition_cols(Vec)`][`ArrowReadOptions::table_partition_cols()`]** | `[]`    | Maps directory paths to columns. | **Hive Partitioning**: When data is stored in `year=2024/month=01/` folders.                 |
+
+> **Note:** `.schema()` here is a _builder method_ that sets the schema for reading. This differs from [`DataFrame::schema()`], which _returns_ the schema of an existing DataFrame.
+
+If you need to scan a directory that contains mixed file types, Arrow IPC files are selected by extension (default: `.arrow`). `ArrowReadOptions` does not expose a builder for this—set the field directly using struct update syntax:
+
+`ArrowReadOptions { file_extension: ".feather", ..Default::default() }`
+
+---
+
+### Reading Multiple Files
+
+DataFusion can read multiple files as a single `DataFrame` using explicit paths or glob patterns:
+
+```rust,no_run
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // Multiple explicit paths
+    let df = ctx.read_parquet(
+        vec!["data/part-000.parquet", "data/part-001.parquet"],
+        ParquetReadOptions::default(),
+    ).await?;
+
+    // Glob patterns — works with local paths and cloud storage
+    let df = ctx.read_parquet("data/**/*.parquet", ParquetReadOptions::default()).await?;
+
+    // Cloud storage (after registering object store)
+    let df = ctx.read_parquet("s3://bucket/data/*.parquet", ParquetReadOptions::default()).await?;
+
+    Ok(())
+}
+```
+
+> **Cloud storage**: Register an object store before using `s3://`, `gs://`, or `az://` paths. See [Object Store Configuration](../../user-guide/cli/datasources.md) for setup.
+
+All file readers support the same path patterns:
+
+- **Single file:** `"data.parquet"`
+- **Multiple files:** `vec!["a.parquet", "b.parquet"]`
+- **Glob patterns:** `"data/**/*.parquet"` (recursive), `"data/*.csv"` (single directory)
+- **Cloud URLs:** `"s3://bucket/prefix/*.parquet"` (after object store registration)
+
+<details>
+<summary><strong>Advanced: ListingTable + read_table() for more control</strong></summary>
+
+The `read_<format>()` helpers (such as `read_parquet()`, `read_csv()`, `read_json()`) are the simplest way to scan files. If you need more control (custom `ListingOptions`, multi-path tables, schema management, etc.), build a `ListingTable` and then create a `DataFrame` with `SessionContext::read_table()`.
+
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::datasource::file_format::parquet::ParquetFormat;
+use datafusion::datasource::listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    let table_path = ListingTableUrl::parse("data/")?;
+    let listing_options = ListingOptions::new(Arc::new(ParquetFormat::default()));
+
+    let config = ListingTableConfig::new(table_path)
+        .with_listing_options(listing_options)
+        .infer_schema(&ctx.state())
+        .await?;
+
+    let provider = Arc::new(ListingTable::try_new(config)?);
+    let df = ctx.read_table(provider)?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+</details>
+
+---
+
+<!-- Other references -->
+
+[parquet_docs]: https://parquet.apache.org/docs/file-format/
+[parquet_crate]: https://docs.rs/parquet/latest/parquet/
+[parquet_viewer]: https://github.com/XiangpengHao/parquet-viewer
+[`DataFrame::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+
+<!-- json read options -->
+
+[`NdJsonReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
+[`NdJsonReadOptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema
+[`NdJsonReadOptions::file_extension()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.file_extension
+[`NdJsonReadOptions::file_compression_type()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.file_compression_type
+[`NdJsonReadOptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.table_partition_cols
+
+<!-- avro read options -->
+
+[`AvroReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html
+[`AvroReadOptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html#method.schema
+[`AvroReadOptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html#method.table_partition_cols
+
+<!-- arrow read options -->
+
+[`ArrowReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html
+[`ArrowReadOptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html#method.schema
+[`ArrowReadOptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html#method.table_partition_cols
+
+<!-- parquet read options -->
+
+[`ParquetReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
+[`ParquetReadOptions::parquet_pruning()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.parquet_pruning
+[`ParquetReadOptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.table_partition_cols
+[`ParquetReadOptions::file_extension()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.file_extension
+[`ParquetReadOptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.schema
+[`ParquetReadOptions::skip_metadata()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.skip_metadata
+[`ParquetReadOptions::file_sort_order()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.file_sort_order
+
+<!-- csv read options -->
+
+[`CsvReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
+[`CsvReadOptions::has_header()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.has_header
+[`CsvReadOptions::delimiter()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.delimiter
+[`CsvReadOptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema
+[`CsvReadOptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`CsvReadOptions::quote()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.quote
+[`CsvReadOptions::file_compression_type()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.file_compression_type
+[`CsvReadOptions::newlines_in_values()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.newlines_in_values
+[`CsvReadOptions::null_regex()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.null_regex
+[`CsvReadOptions::file_extension()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.file_extension
+
+### Schema Handling — Inference vs Explicit
+
+Different formats handle schemas differently:
+
+| Format        | Schema Source                 | Inference Needed?           |
+| ------------- | ----------------------------- | --------------------------- |
+| **Parquet**   | Embedded in file footer       | No                          |
+| **Arrow IPC** | Embedded in file header       | No                          |
+| **Avro**      | Embedded in file header       | No                          |
+| **CSV**       | Inferred from first N rows    | Yes (default: 1000 rows)    |
+| **NDJSON**    | Inferred from first N objects | Yes (default: 1000 objects) |
+
+#### When to Provide Explicit Schemas
+
+For CSV and NDJSON, **explicit schemas are strongly recommended in production**:
+
+```rust,no_run
+use datafusion::prelude::*;
 use datafusion::arrow::datatypes::{Schema, Field, DataType};
 use std::sync::Arc;
 
-// Define explicit schema
-let schema = Arc::new(Schema::new(vec![
-    Field::new("id", DataType::Int64, false),
-    Field::new("name", DataType::Utf8, true),
-    Field::new("amount", DataType::Float64, true),
-]));
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
 
-// Use explicit schema (skips inference)
-let df = ctx.read_csv(
-    "data.csv",
-    CsvReadOptions::new()
-        .schema(&schema)
-        .has_header(true)
-).await?;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("amount", DataType::Float64, true),
+    ]));
+
+    // CSV with explicit schema
+    let df = ctx.read_csv("data.csv", CsvReadOptions::new().schema(&schema)).await?;
+
+    // NDJSON with explicit schema
+    let df = ctx.read_json("logs.ndjson", NdJsonReadOptions::default().schema(&schema)).await?;
+
+    Ok(())
+}
 ```
 
-**When to use explicit schemas**:
+**Use explicit schemas when:**
 
-- CSV/NDJSON in production for reliability
-- Enforcing specific types (e.g., force `Utf8` vs inferred integer)
-- Skipping inference on very large files for performance
-- When early rows/objects aren't representative (avoid mis-inference)
+- Running in production (avoid inference surprises)
+- Early rows/objects aren't representative of the full dataset
+- You need specific types (e.g., force `Utf8` instead of inferred `Int64`)
+- Reading very large files (skip inference overhead)
 
-#### References:
+<!-- TODO: Cross-link to a central "Schema Inference: behavior and limits" section in schema-management.md once finalized. -->
 
-See also (DataFusion):
+---
 
-> - Example Usage (SQL and DataFrame on CSV): [example-usage](../../user-guide/example-usage.md)
-> - Using the SQL API: ../using-the-sql-api.md
-> - SQL Format Options (CSV/JSON/Parquet): ../../user-guide/sql/format_options.md
-> - Examples (repo): datafusion-examples/examples/dataframe.rs, datafusion-examples/examples/dataframe_transformations.rs
+### From Files — References
 
-See also (other DataFrame libraries)
+**API Documentation:**
 
-> - Polars (Rust): Lazy vs eager (scan vs read) — https://docs.pola.rs/user-guide/lazy/
-> - Polars CSV — https://docs.pola.rs/user-guide/io/csv/
-> - Polars Parquet — https://docs.pola.rs/user-guide/io/parquet/
-> - Polars JSON — https://docs.pola.rs/user-guide/io/json/
-> - Spark SQL: CSV — https://spark.apache.org/docs/latest/sql-data-sources-csv.html
-> - Spark SQL: JSON — https://spark.apache.org/docs/latest/sql-data-sources-json.html
-> - Spark SQL: Parquet — https://spark.apache.org/docs/latest/sql-data-sources-parquet.html
+- [`ParquetReadOptions`](https://docs.rs/datafusion/latest/datafusion/prelude/struct.ParquetReadOptions.html) — Parquet configuration
+- [`CsvReadOptions`](https://docs.rs/datafusion/latest/datafusion/prelude/struct.CsvReadOptions.html) — CSV configuration
+- [`NdJsonReadOptions`](https://docs.rs/datafusion/latest/datafusion/prelude/struct.NdJsonReadOptions.html) — NDJSON configuration
+- [`AvroReadOptions`](https://docs.rs/datafusion/latest/datafusion/prelude/struct.AvroReadOptions.html) — Avro configuration
+- [`ArrowReadOptions`](https://docs.rs/datafusion/latest/datafusion/prelude/struct.ArrowReadOptions.html) — Arrow IPC configuration
 
-<!-- TODO: Cleaning references -->
+**Parquet Deep Dives:**
+
+- [Embedding User-Defined Parquet Indexes](https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/) — Custom indexes within Parquet files
+- [`parquet_index.rs` example](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/parquet_index.rs) — External index files
+- [`advanced_parquet_index.rs`](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/advanced_parquet_index.rs) — Advanced pruning
+
+**Examples:**
+
+- [Example Usage (CSV with SQL and DataFrame)](../../user-guide/example-usage.md)
+- [`datafusion-examples/examples/dataframe.rs`](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe.rs) — DataFrame basics
+- [`datafusion-examples/examples/parquet_sql_multiple_files.rs`](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/parquet_sql_multiple_files.rs) — Multi-file Parquet
+
+---
 
 ### 2. From a Registered Table
 
-Registration is a powerful pattern in DataFusion that creates a logical name for a physical data source. This abstracts away the underlying details so you work with a simple name like "sales" instead of a file path or connection string.
+**Register data sources once and query them by name—the catalog caches metadata and both SQL and DataFrame APIs see the same logical table.**
+
+Registration creates a logical name for a physical data source. This abstracts away the underlying details so you work with a simple name like "sales" instead of a file path or connection string.
 
 This named table bridges DataFusion's two query interfaces—the SQL interface and the DataFrame API—both orchestrated by `SessionContext`. Under the hood, registration stores a [`TableProvider`] in the catalog so both interfaces see the same logical table.
 
@@ -730,7 +1299,7 @@ For the catalog hierarchy and ways to inspect registered objects, see [Understan
 | [`.register_batch()`]   | Register in-memory RecordBatch   | Holds data in memory | Test data, small lookups     |
 | [`.register_table()`]   | Register custom TableProvider    | Depends on provider  | Custom sources, advanced use |
 
-> **How it works**: Registration creates a catalog entry with the data source's schema. The actual data is scanned lazily when queries execute, using DataFusion's streaming execution engine.
+> **Tip:** Registration creates a catalog entry with the data source's schema. The actual data is scanned lazily when queries execute, using DataFusion's streaming execution engine.
 
 #### Performance benefits: Register once, query many times
 
@@ -826,21 +1395,53 @@ See [Understanding DataFusion's Data Organization](#understanding-datafusions-da
 : objects are organized as catalog → schema → table. Defaults are catalog `datafusion` and schema `public` (plus optional `information_schema`).
 
 ```rust
-// Programmatic inspection (after registering tables)
-let catalog = ctx.catalog("datafusion").unwrap();
-let schema = catalog.schema("public").unwrap();
-let tables = schema.table_names();
-println!("Registered tables: {:?}", tables);
+use std::sync::Arc;
 
-// SQL inspection
-let tables_df = ctx.sql(
-    r#"
-    SELECT table_catalog, table_schema, table_name, table_type
-    FROM information_schema.tables
-    WHERE table_schema != 'information_schema'
-    "#
-).await?;
-tables_df.show().await?;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::MemTable;
+use datafusion::error::{DataFusionError, Result};
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    // Register a table so we have something to inspect
+    let table_schema = Arc::new(Schema::new(vec![Field::new(
+        "order_id",
+        DataType::Int32,
+        false,
+    )]));
+    let batch = RecordBatch::new_empty(Arc::clone(&table_schema));
+    let provider = MemTable::try_new(table_schema, vec![vec![batch]])?;
+    ctx.register_table("sales", Arc::new(provider))?;
+
+    // Programmatic inspection: catalog → schema → tables
+    let catalog = ctx
+        .catalog("datafusion")
+        .ok_or_else(|| DataFusionError::Plan("missing catalog: datafusion".to_string()))?;
+    let schema = catalog
+        .schema("public")
+        .ok_or_else(|| DataFusionError::Plan("missing schema: public".to_string()))?;
+    println!("Registered tables: {:?}", schema.table_names());
+
+    // SQL inspection via information_schema
+    let tables_df = ctx
+        .sql(
+            r#"
+            SELECT table_catalog, table_schema, table_name, table_type
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            ORDER BY table_name
+            "#,
+        )
+        .await?;
+
+    tables_df.show().await?;
+
+    Ok(())
+}
 ```
 
 > **Best practice**: Use SQL [`information_schema`] for ad-hoc exploration and programmatic catalog APIs for dynamic applications.
@@ -850,37 +1451,58 @@ tables_df.show().await?;
 For custom sources (APIs, databases, computed tables), implement the [`TableProvider`] trait and register it with the session. See the advanced guide for details.
 
 ```rust
-// Register a custom data source
-ctx.register_table("custom_source", Arc::new(MyCustomProvider::new()))?;
+use std::sync::Arc;
+
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::MemTable;
+use datafusion::error::Result;
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    // `register_table` accepts any `Arc<dyn TableProvider>`.
+    // Here we use a built-in provider (`MemTable`) as a stand-in for a custom provider.
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "status",
+        DataType::Utf8,
+        true,
+    )]));
+    let batch = RecordBatch::new_empty(Arc::clone(&schema));
+    let provider = MemTable::try_new(schema, vec![vec![batch]])?;
+
+    ctx.register_table("custom_source", Arc::new(provider))?;
+
+    Ok(())
+}
 ```
 
-See: [Custom TableProviders](dataframe-advance.md#custom-tableproviders)
+See: [Advanced Topics: TableProvider](dataframes-advance.md#tableprovider)
 
 #### References
 
-- **Internal (DataFusion API — registration, catalog, mixing)**
+**DataFusion:**
 
-  - `TableProvider` — https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-  - `CatalogProvider` / `SchemaProvider` — https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html · https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
-  - `MemoryCatalogProvider` / `MemorySchemaProvider` — https://docs.rs/datafusion/latest/datafusion/catalog/memory/struct.MemoryCatalogProvider.html · https://docs.rs/datafusion/latest/datafusion/catalog/memory/struct.MemorySchemaProvider.html
-  - [`information_schema`](docs/source/user-guide/sql/information_schema.md)
-  - [`ViewTable` (SQL views)](https://docs.rs/datafusion/latest/datafusion/catalog/view/struct.ViewTable.html)
-  - Tokio in datafusion docs: [datafusion tokio]
-  - Datafusion blogpost: [Using Rust async for Query Execution][tokio_blogpost]
+- [Catalogs Guide](../catalogs.md) — Full catalog hierarchy and custom providers
+- [`TableProvider` trait](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html) — Interface for custom data sources
+- [`CatalogProvider` trait](https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html) — Custom catalog implementations
+- [`information_schema`](../../user-guide/sql/information_schema.md) — SQL inspection of registered objects
+- [Using Rust async for Query Execution](https://datafusion.apache.org/blog/2025/01/28/async-dataframes/) — Async patterns in DataFusion
 
-- **External (analogs in other systems)**
-  - Spark: [spark guide]
-  - Spark SQL programmically: [running-sql-queries-programmatically]
-  - Polars: [register DataFrames for SQL](https://docs.pola.rs/user-guide/sql/intro/#register-dataframes)
-  - DuckDB: [register objects as tables](https://duckdb.org/docs/api/python/overview#registering-python-objects-as-tables)
-  - Medium article : [register dataframes as sql in pyspark][medium article]
-  - Tokio deep dive: [Tokio tutorial][tokio_tutorial]
+**Other Systems (for comparison):**
+
+- [Polars: Register DataFrames for SQL](https://docs.pola.rs/user-guide/sql/intro/#register-dataframes) — Similar registration pattern
+- [DuckDB: Registering Objects as Tables](https://duckdb.org/docs/api/python/overview#registering-python-objects-as-tables)
 
 ---
 
 ### 3. From SQL Queries
 
-Execute SQL queries and get the result as a `DataFrame` using [`.sql()`]. This is DataFusion's hybrid strength: leverage SQL for complex relational operations, then seamlessly continue with DataFrames for programmatic logic—both compile to the same optimized columnar execution plan.
+**Execute SQL and get a lazy `DataFrame`—both APIs compile to the same optimized plan, so you can mix them freely.**
+
+This is DataFusion's hybrid strength: leverage SQL for complex relational operations (CTEs, window functions, complex joins), then seamlessly continue with DataFrames for programmatic logic.
 
 #### Pattern 1: SQL-first workflow
 
@@ -975,21 +1597,23 @@ Now that you've seen the patterns:
 
 #### References
 
-- **Internal (DataFusion)**
+**DataFusion:**
 
-  - [Concepts: Mixing SQL and DataFrames](concepts.md#mixing-sql-and-dataframes) — Deeper dive into the hybrid execution model
-  - [SQL Reference](../../user-guide/sql/index.md) — Full SQL syntax, functions, and data types
-  - [`TableProvider` API](https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html) — Advanced: connecting to external sources with pushdown
+- [Concepts: Mixing SQL and DataFrames](concepts.md#mixing-sql-and-dataframes) — Deeper dive into the hybrid execution model
+- [SQL Reference](../../user-guide/sql/index.md) — Full SQL syntax, functions, and data types
+- [`SessionContext::sql()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql) — API documentation
 
-- **External (related concepts)**
-  - Spark guid: [spark guide]
-  - Spark: [Catalyst Optimizer](https://databricks.com/glossary/catalyst-optimizer) — Similar unified DataFrame/SQL execution plans
+**Other Systems (for comparison):**
+
+- [Spark: Catalyst Optimizer](https://databricks.com/glossary/catalyst-optimizer) — Similar unified DataFrame/SQL execution plans
 
 ---
 
 ### 4. From Arrow [`RecordBatch`]es: The Native Pathway
 
-Create DataFrames directly from in-memory Arrow [`RecordBatch`]es. This is the most native and efficient way to get data into DataFusion because **you're speaking the engine's native language**, often with zero-copy overhead.
+**Create DataFrames directly from in-memory Arrow `RecordBatch`es—the engine's native format—often with zero-copy overhead.**
+
+This is the most efficient way to get data into DataFusion when you already have Arrow data.
 
 > New to Arrow? See [What is a RecordBatch?](../../user-guide/arrow-introduction.md#what-is-a-recordbatch-and-why-batch) for a quick primer.
 
@@ -1088,13 +1712,26 @@ When constructing `RecordBatch`es manually, these invariants must hold:
 
 > **Need help debugging?** See the full checklist in [What is a RecordBatch?](../../user-guide/arrow-introduction.md#what-is-a-recordbatch-and-why-batch)
 
-#### References <!-- TODO: References -->
+#### References
+
+**DataFusion:**
+
+- [What is a RecordBatch?](../../user-guide/arrow-introduction.md#what-is-a-recordbatch-and-why-batch) — RecordBatch fundamentals and debugging
+- [`SessionContext::read_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch) — One-shot DataFrame from RecordBatch
+- [`SessionContext::register_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch) — Register RecordBatch as table
+
+**Arrow Ecosystem:**
+
+- [`RecordBatch`](https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html) — Arrow's columnar in-memory format
+- [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) — Network protocol for Arrow data
 
 ---
 
 ### 5. From Inline Data (using the [`dataframe!`] macro)
 
-Create DataFrames directly from Rust literals—no files, no external data sources. This approach shines when your data is small, temporary, and lives entirely in code.
+**Create DataFrames from Rust literals—perfect for tests, examples, and prototyping without external data dependencies.**
+
+This approach shines when your data is small, temporary, and lives entirely in code.
 
 **Perfect for:**
 
@@ -1231,13 +1868,22 @@ async fn main() -> Result<()> {
 }
 ```
 
-#### References <!-- TODO: here references -->
+#### References
+
+**DataFusion:**
+
+- [`dataframe!` macro](https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html) — Create DataFrames from literals
+- [`assert_batches_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html) — Test DataFrame outputs
+- [`assert_batches_sorted_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_sorted_eq.html) — Order-insensitive test comparison
+- [`DataFrame::from_columns()`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.from_columns) — Create from Arrow arrays
 
 ---
 
 ### 6. Advanced: Constructing from a LogicalPlan
 
-You are no longer just using the query engine — you are programming it. Constructing a [`LogicalPlan`][LogicalPlan] and handing it to [`DataFrame::new`] lets you inject, rewrite, and compose queries at the AST level, then pass them through DataFusion's optimizer and executor.
+**Construct or rewrite the query tree directly—full engine-room access for federation, policy injection, and DSL builders.**
+
+You are no longer just using the query engine—you are programming it. Constructing a [`LogicalPlan`][LogicalPlan] and handing it to [`DataFrame::new`] lets you inject, rewrite, and compose queries at the AST level, then pass them through DataFusion's optimizer and executor.
 
 #### The fundamental shift
 
@@ -1415,12 +2061,85 @@ See the planning overview for where this fits in the pipeline: [Datafusion plann
 #### References: <!-- TODO; Do references -->
 
 - See also :
-  - Custom sources: [Custom TableProviders](dataframe-advance.md#custom-tableproviders)
-  - Performance and plan behavior: [Performance Optimizations](dataframe-advance.md#performance-optimizations)
-  - Debugging and best practices: [Debugging & Best Practices](dataframe-advance.md#debugging--best-practices)
+  - Custom sources: [Advanced Topics: TableProvider](dataframes-advance.md#tableprovider)
+  - Performance and plan behavior: [Best Practices: Performance Quick Checklist](best-practices.md#performance-quick-checklist)
+  - Debugging and best practices: [Best Practices: Debugging Techniques](best-practices.md#debugging-techniques)
   - [Ruminations on Multi-Tenant Databases]
 
 ---
+
+[sigmod-paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
+
+<!-- Link references -->
+
+[`object_store`]: https://docs.rs/object_store/latest/object_store/
+[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
+
+<!-- datafram methods  -->
+
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`.register_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_csv
+[`.register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
+[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
+[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
+[`CatalogProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
+[`RuntimeEnv`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.Session.html#tymethod.runtime_env
+[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
+[`.read_batches()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batches
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`ListingOptions::infer_schema()`]: https://docs.rs/datafusion-catalog-listing/latest/datafusion_catalog_listing/options/struct.ListingOptions.html#method.infer_schema
+[`.register_listing_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_listing_table
+[`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
+[`.catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
+[`.schema_names()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html#tymethod.schema_names
+[`schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html#tymethod.schema
+[`.table_names()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html#tymethod.table_names
+[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`information_schema`]: https://datafusion.apache.org/user-guide/sql/information_schema.html
+[`.unwrap()`]: https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+[CsvReadOptions]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.new
+[`DataFrame::new`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.new
+[`DataFrame::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
+
+<!-- orther -->
+
+[catalog schema]: https://datafusion.apache.org/library-user-guide/catalogs.html
+[Ruminations on Multi-Tenant Databases]: https://www.db.in.tum.de/research/publications/conferences/BTW2007-mtd.pdf
+[`TableScan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/struct.TableScan.html
+[datafusion planning]: https://docs.rs/datafusion/latest/datafusion/#planning
+[`RecordBatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[Arror Flight]: https://arrow.apache.org/blog/2019/10/13/introducing-arrow-flight/
+[datafusion tokio]: https://docs.rs/datafusion/latest/datafusion/#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
+[Comet]: https://datafusion.apache.org/comet/
+[spark guide]: https://spark.apache.org/docs/latest/sql-programming-guide.html
+[running-sql-queries-programmatically]: https://spark.apache.org/docs/latest/sql-getting-started.html#running-sql-queries-programmatically
+[tokio_tutorial]: https://tokio.rs/tokio/tutorial
+[tokio_blogpost]: https://datafusion.apache.org/blog/2025/06/30/cancellation/
+[medium article]: https://medium.com/@anowerhossain97/register-the-dataframe-as-a-sql-table-in-pyspark-92cc1387ca02
+[schema_infer_max_records_csv]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/csv/struct.CsvFormat.html#method.with_schema_infer_max_rec
+[schema_infer_max_records_json]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/json/struct.JsonFormat.html#method.with_schema_infer_max_rec
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+[custom_table_providers example]: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/custom_table_providers.rs
+[SessionContext]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[LogicalPlan]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`ListingOptions::infer_schema()`]: https://docs.rs/datafusion-catalog-listing/latest/datafusion_catalog_listing/options/struct.ListingOptions.html#method.infer_schema
+[`.register_listing_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_listing_table
+[`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
+[`catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
+[information_schema]: ../../user-guide/sql/information_schema.md
+[`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
 
 ## DataFrame Execution
 
@@ -2542,66 +3261,3 @@ async fn monitored_read(ctx: &SessionContext, paths: Vec<&str>) -> datafusion::e
 > **Debugging tip**: Always use `explain()` to understand what DataFusion is actually doing. The physical plan shows the exact operations and their order, which is essential for performance tuning.
 
 For more debugging and profiling techniques, see [Best Practices § Debugging Techniques](best-practices.md#debugging-techniques).
-
-<!-- datafram methods  -->
-
-[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
-[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
-[`.register_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_csv
-[`.register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
-[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
-[`.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
-[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
-[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
-[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
-[`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
-[`CatalogProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
-[`RuntimeEnv`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.Session.html#tymethod.runtime_env
-[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
-[`.read_batches()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batches
-[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
-[`ListingOptions::infer_schema()`]: https://docs.rs/datafusion-catalog-listing/latest/datafusion_catalog_listing/options/struct.ListingOptions.html#method.infer_schema
-[`.register_listing_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_listing_table
-[`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
-[`.catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
-[`.schema_names()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html#tymethod.schema_names
-[`schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html#tymethod.schema
-[`.table_names()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html#tymethod.table_names
-[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
-[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
-[`information_schema`]: https://datafusion.apache.org/user-guide/sql/information_schema.html
-[`.unwrap()`]: https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
-[CsvReadOptions]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.new
-[`DataFrame::new`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.new
-[`.create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
-
-<!-- orther -->
-
-[catalog schema]: https://datafusion.apache.org/library-user-guide/catalogs.html
-[Ruminations on Multi-Tenant Databases]: https://www.db.in.tum.de/research/publications/conferences/BTW2007-mtd.pdf
-[`TableScan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/struct.TableScan.html
-[datafusion planning]: https://docs.rs/datafusion/latest/datafusion/#planning
-[`RecordBatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
-[Arror Flight]: https://arrow.apache.org/blog/2019/10/13/introducing-arrow-flight/
-[datafusion tokio]: https://docs.rs/datafusion/latest/datafusion/#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
-[spark guide]: https://spark.apache.org/docs/latest/sql-programming-guide.html
-[running-sql-queries-programmatically]: https://spark.apache.org/docs/latest/sql-getting-started.html#running-sql-queries-programmatically
-[tokio_tutorial]: https://tokio.rs/tokio/tutorial
-[tokio_blogpost]: https://datafusion.apache.org/blog/2025/06/30/cancellation/
-[medium article]: https://medium.com/@anowerhossain97/register-the-dataframe-as-a-sql-table-in-pyspark-92cc1387ca02
-[schema_infer_max_records_csv]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/csv/struct.CsvFormat.html#method.with_schema_infer_max_rec
-[schema_infer_max_records_json]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/json/struct.JsonFormat.html#method.with_schema_infer_max_rec
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
-[custom_table_providers example]: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/custom_table_providers.rs
-[SessionContext]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[LogicalPlan]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
-[`ListingOptions::infer_schema()`]: https://docs.rs/datafusion-catalog-listing/latest/datafusion_catalog_listing/options/struct.ListingOptions.html#method.infer_schema
-[`.register_listing_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_listing_table
-[`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
-[`catalog_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog_names
-[information_schema]: ../../user-guide/sql/information_schema.md
-[`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html

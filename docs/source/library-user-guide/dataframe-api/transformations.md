@@ -17,6 +17,11 @@
   under the License.
 -->
 
+<!-- TODO:
+- Add encoding https://docs.rs/datafusion/latest/datafusion/functions/encoding/index.html
+- nested functions https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html ,
+-  maybe even datetime (https://docs.rs/datafusion/latest/datafusion/functions/datetime/index.html)  -->
+
 # DataFrame Transformations
 
 **The “life” phase of the DataFrame lifecycle: build and refine a lazy query plan.**
@@ -1294,11 +1299,13 @@ All join algorithms leverage [Arrow]'s columnar format: instead of copying rows,
 >
 > | Technique                          | Benefit                                                                                                                                          |
 > | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-> | **Columnar format (Arrow)**        | Read only the columns you need; SIMD instructions process thousands of keys in parallel                                                          |
+> | **Columnar format (Arrow)**        | Read only the columns you need; SIMD instructions process thousands of keys in parallel\*                                                        |
 > | **Vectorized execution**           | Joins process batches of rows, not one at a time—simple inner loops let CPUs parallelize at the instruction level                                |
 > | **SQL = DataFrame**                | Both compile to the same `LogicalPlan`—identical optimizer benefits regardless of API choice                                                     |
 > | **Statistics-driven optimization** | Table metadata (row counts, min/max) guide join order and algorithm selection—[**16x faster** on TPC-H benchmarks][DataFusion Join Optimization] |
 > | **Late materialization**           | During joins, only key columns + row indices are processed; other columns are fetched afterward                                                  |
+>
+> \*SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../user-guide/crate-configuration.md).
 >
 > The result: you describe _what_ to join, and the optimizer handles _how_—often matching or exceeding hand-tuned imperative code.
 
@@ -2589,8 +2596,6 @@ Joins are fundamental yet often misunderstood. These resources provide deeper un
 
 ---
 
----
-
 ### Sorting and Limiting
 
 **Sorting reorders rows by one or more columns; limiting truncates output to a fixed number of rows.**
@@ -3112,8 +3117,6 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Tip:** <br>
 > When sorting by expressions, the expression is evaluated but **not added as a column**. If you need the computed value visible, use [`.with_column()`] first, then sort by that column.
-
----
 
 ---
 
@@ -4823,9 +4826,11 @@ async fn main() -> Result<()> {
 │  DataFusion Query Engine (shared optimizer & executor)      │
 ├─────────────────────────────────────────────────────────────┤
 │  Apache Arrow (columnar memory format)                      │
-│  • Zero-copy operations  • SIMD acceleration                │
+│  • Zero-copy operations  • SIMD acceleration*               │
 │  • Schema metadata       • Cross-language compatibility     │
 └─────────────────────────────────────────────────────────────┘
+
+*SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../user-guide/crate-configuration.md).
 ```
 
 #### Quick Reference
@@ -6147,34 +6152,32 @@ For deeper exploration of the topics covered in this section:
 
 ## Further Reading
 
-This section provides resources for deeper exploration of DataFrame concepts, data transformation patterns, and the broader data engineering ecosystem—organized from DataFusion-specific to general industry knowledge.
+Resources for going deeper on DataFusion DataFrame transformations, optimization, and the broader data engineering ecosystem.
 
 ### DataFusion: Official Documentation
 
-Core documentation for the DataFrame API and related features:
-
-- [DataFrame API Overview](index.md) — Entry point to this documentation series
-- [Creating DataFrames](creating-dataframes.md) — Data ingestion patterns
-- [DataFrame Concepts](concepts.md) — `SessionContext`, `LogicalPlan`, lazy evaluation
-- [Writing DataFrames](writing-dataframes.md) — Output formats and sinks
-- [Best Practices](best-practices.md) — Performance optimization patterns
-- [Advanced Topics](dataframes-advance.md) — Custom UDFs, `TableProvider`, ecosystem integrations
-- [SQL User Guide](../../user-guide/sql/index.rst) — SQL dialect reference
-- [Expression Functions](../../user-guide/sql/scalar_functions.md) — All available scalar, aggregate, and window functions
+| Resource                                                         | Description                                          |
+| ---------------------------------------------------------------- | ---------------------------------------------------- |
+| [DataFrame API Overview](index.md)                               | Entry point to this documentation series             |
+| [Creating DataFrames](creating-dataframes.md)                    | Data ingestion patterns                              |
+| [DataFrame Concepts](concepts.md)                                | `SessionContext`, `LogicalPlan`, lazy evaluation     |
+| [Writing DataFrames](writing-dataframes.md)                      | Output formats and sinks                             |
+| [Best Practices](best-practices.md)                              | Performance optimization patterns                    |
+| [Advanced Topics](dataframes-advance.md)                         | Custom UDFs, `TableProvider`, ecosystem integrations |
+| [SQL User Guide](../../user-guide/sql/index.rst)                 | SQL dialect reference                                |
+| [Expression Functions](../../user-guide/sql/scalar_functions.md) | Scalar, aggregate, and window functions              |
 
 ### DataFusion: Examples & Source
 
-Learn by example—these are tested, working code:
-
-- [dataframe.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe.rs) — Basic DataFrame operations
-- [dataframe_transformations.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe_transformations.rs) — Examples from this guide
-- [expr_api.rs][`expr_api`] — Complex expression building patterns
-- [custom_datasource.rs](../../library-user-guide/custom-table-providers.md) — Building a `TableProvider`
-- [All Examples](../../../../datafusion-examples) — Complete example collection
+| Resource                                                                                                                                 | Description                          |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| [dataframe.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe.rs)                                 | Basic DataFrame operations           |
+| [dataframe_transformations.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe_transformations.rs) | Examples from this guide             |
+| [expr_api.rs][`expr_api`]                                                                                                                | Complex expression building patterns |
+| [custom_datasource.rs](../../library-user-guide/custom-table-providers.md)                                                               | Building a `TableProvider`           |
+| [All Examples](../../../../datafusion-examples)                                                                                          | Complete example collection          |
 
 ### DataFusion Ecosystem
-
-Community projects that extend DataFusion's capabilities:
 
 | Project                                                                                        | Purpose                                              |
 | :--------------------------------------------------------------------------------------------- | :--------------------------------------------------- |
@@ -6185,52 +6188,39 @@ Community projects that extend DataFusion's capabilities:
 | [datafusion-ballista](https://github.com/apache/datafusion-ballista)                           | Distributed query execution on DataFusion            |
 | [datafusion-comet](https://github.com/apache/datafusion-comet)                                 | Apache Spark plugin using DataFusion                 |
 
-### Industry Standard References
+### Comparable Systems & Semantics
 
-DataFusion's DataFrame API draws inspiration from established systems. These references provide complementary perspectives:
-
-**Apache Spark (Distributed DataFrames):**
-
-- [Spark SQL, DataFrames and Datasets Guide](https://spark.apache.org/docs/latest/sql-programming-guide.html) — The canonical DataFrame API reference
-- [PySpark DataFrame API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/dataframe.html) — Python API that influenced many DataFrame implementations
-- [Spark SQL Paper (SIGMOD 2015)](https://dl.acm.org/doi/10.1145/2723372.2742797) — Foundational work on unifying SQL and DataFrames
-
-**PostgreSQL (SQL Semantics):**
-
-- [PostgreSQL SELECT Documentation](https://www.postgresql.org/docs/current/sql-select.html) — DataFusion follows PostgreSQL SQL semantics
-- [PostgreSQL Window Functions](https://www.postgresql.org/docs/current/tutorial-window.html) — Window function concepts and syntax
-- [PostgreSQL DISTINCT ON](https://www.postgresql.org/docs/current/sql-select.html#SQL-DISTINCT) — The `DISTINCT ON` extension DataFusion supports
-
-**pandas (Data Science Origins):**
-
-- [pandas User Guide](https://pandas.pydata.org/docs/user_guide/index.html) — Where the DataFrame concept was popularized for data science
-- [pandas Comparison with SQL](https://pandas.pydata.org/docs/getting_started/comparison/comparison_with_sql.html) — Mental model mapping between SQL and DataFrame operations
-
-**Apache Arrow (Columnar Foundation):**
-
-- [Apache Arrow Specification](https://arrow.apache.org/docs/format/Columnar.html) — The in-memory columnar format underlying DataFusion
-- [Arrow Rust Implementation](https://docs.rs/arrow/latest/arrow/) — The Rust Arrow crate DataFusion builds on
+| Resource                                                                                                         | Description                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [Spark SQL, DataFrames and Datasets Guide](https://spark.apache.org/docs/latest/sql-programming-guide.html)      | The canonical DataFrame API reference                        |
+| [PySpark DataFrame API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/dataframe.html)    | Python API that influenced many DataFrame implementations    |
+| [Spark SQL Paper (SIGMOD 2015)](https://dl.acm.org/doi/10.1145/2723372.2742797)                                  | Foundational work on unifying SQL and DataFrames             |
+| [PostgreSQL SELECT Documentation](https://www.postgresql.org/docs/current/sql-select.html)                       | DataFusion follows PostgreSQL SQL semantics                  |
+| [PostgreSQL Window Functions](https://www.postgresql.org/docs/current/tutorial-window.html)                      | Window function concepts and syntax                          |
+| [PostgreSQL DISTINCT ON](https://www.postgresql.org/docs/current/sql-select.html#SQL-DISTINCT)                   | The `DISTINCT ON` extension DataFusion supports              |
+| [pandas User Guide](https://pandas.pydata.org/docs/user_guide/index.html)                                        | Where the DataFrame concept was popularized for data science |
+| [pandas Comparison with SQL](https://pandas.pydata.org/docs/getting_started/comparison/comparison_with_sql.html) | Mental model mapping between SQL and DataFrame operations    |
+| [Apache Arrow Specification](https://arrow.apache.org/docs/format/Columnar.html)                                 | The in-memory columnar format underlying DataFusion          |
+| [Arrow Rust Implementation](https://docs.rs/arrow/latest/arrow/)                                                 | The Rust Arrow crate DataFusion builds on                    |
 
 ### Research Papers & Academic Resources
 
-For understanding the theory behind DataFrame systems and query optimization:
-
-- [Apache DataFusion: A Fast, Embeddable, Modular Analytic Query Engine][datafusion paper] — SIGMOD 2024 paper on DataFusion's architecture
-- [Towards Scalable Dataframe Systems][dataframe algebra] — Academic analysis of DataFrame algebra and optimization
-- [The Cascades Framework for Query Optimization](https://15721.courses.cs.cmu.edu/spring2016/papers/graefe-ieee1995.pdf) — The optimization framework DataFusion's planner uses
-- [Volcano: An Extensible and Parallel Query Evaluation System](https://cs-people.bu.edu/mathan/reading-groups/papers-classics/volcano.pdf) — Iterator model for query execution
+| Resource                                                                                                                                  | Description                                             |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| [Apache DataFusion: A Fast, Embeddable, Modular Analytic Query Engine][datafusion paper]                                                  | SIGMOD 2024 paper on DataFusion's architecture          |
+| [Towards Scalable Dataframe Systems][dataframe algebra]                                                                                   | Academic analysis of DataFrame algebra and optimization |
+| [The Cascades Framework for Query Optimization](https://15721.courses.cs.cmu.edu/spring2016/papers/graefe-ieee1995.pdf)                   | The optimization framework DataFusion's planner uses    |
+| [Volcano: An Extensible and Parallel Query Evaluation System](https://cs-people.bu.edu/mathan/reading-groups/papers-classics/volcano.pdf) | Iterator model for query execution                      |
 
 ### Textbooks & Comprehensive Guides
 
-For building deeper expertise in data systems:
-
-- [Designing Data-Intensive Applications](https://dataintensive.net/) — Martin Kleppmann's comprehensive guide to database internals, distributed systems, and data architecture trade-offs
-- [Database Internals](https://www.databass.dev/) — Alex Petrov's deep dive into storage engines and distributed database concepts
-- [The Data Warehouse Toolkit](https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/books/) — Kimball's guide to dimensional modeling (relevant for analytical query patterns)
+| Resource                                                                                                         | Description                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [Designing Data-Intensive Applications](https://dataintensive.net/)                                              | Martin Kleppmann's guide to database internals, distributed systems, and data architecture trade-offs |
+| [Database Internals](https://www.databass.dev/)                                                                  | Alex Petrov's deep dive into storage engines and distributed database concepts                        |
+| [The Data Warehouse Toolkit](https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/books/) | Kimball's guide to dimensional modeling (relevant for analytical query patterns)                      |
 
 ### Concepts Quick Reference
-
-Key concepts referenced throughout this documentation:
 
 | Concept                 | What It Means                                                                     |
 | :---------------------- | :-------------------------------------------------------------------------------- |

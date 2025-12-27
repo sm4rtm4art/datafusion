@@ -42,9 +42,12 @@ Accurate types are critical for both **correctness** and **performance**. They a
 
 DataFusion determines your schema in one of three ways, depending on your data source:
 
-1.  **Self-Describing Formats (Parquet, Avro, Arrow):** The schema is embedded in the file metadata. Types are known instantly at scan time.
-2.  **Text Formats (CSV, JSON):** Types must be either **provided explicitly** (Recommended) or **inferred** from a data sample (Risk of drift).
-3.  **Custom Sources (TableProvider):** The source of truth is the `schema()` method implemented by the provider. This contract must remain stable to ensure predictable query behavior.
+1.  **Self-Describing Formats (Parquet, Avro, Arrow):** <br>
+    The schema is embedded in the file metadata. Types are known instantly at scan time.
+2.  **Text Formats (CSV, JSON):** <br>
+    Types must be either **provided explicitly** (Recommended) or **inferred** from a data sample (Risk of drift).
+3.  **Custom Sources (TableProvider):**<br>
+    The source of truth is the `schema()` method implemented by the provider. This contract must remain stable to ensure predictable query behavior.
 
 For a deep dive into the underlying [Apache Arrow] type system, see the [Arrow Schema Specification][arrow schema].
 
@@ -247,7 +250,8 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-**The Golden Rule of Type Casting**: Always widen types (e.g., `Int32 → Int64`) rather than narrow them to prevent data loss. Narrowing (e.g., `Int64 → Int32`) risks silent data corruption unless you have explicitly proven that no values will be truncated.
+**The Golden Rule of Type Casting**:<br>
+Always widen types (e.g., `Int32 → Int64`) rather than narrow them to prevent data loss. Narrowing (e.g., `Int64 → Int32`) risks silent data corruption unless you have explicitly proven that no values will be truncated.
 
 #### Type Coercion Hierarchy (safe upcasting paths):
 
@@ -2987,68 +2991,39 @@ DataFusion automatically attempts to merge schemas when reading multiple files (
 
 ---
 
-## Schema Management References
+## Further Reading
 
-This concludes the guide to Schema Management in DataFusion. Below are the technical specifications and architectural references required to debug type mismatches and memory layout issues when using the DataFrame API.
+Resources for understanding Arrow’s type system, schema metadata, and DataFusion’s coercion rules—useful when debugging schema mismatches, unexpected casts, or expensive conversions.
 
-### 1. The Physical Memory Model (Essential)
+### Arrow & Memory Model (Essential)
 
-_You cannot effectively use the DataFusion DataFrame API without understanding the underlying Arrow memory format. These specs explain "zero-copy" operations and why certain casts are expensive._
+| Resource                                                                                      | Description                                                                                                                           |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| [Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)            | Physical memory layout, validity bitmaps, and variable-size views (for example, `StringView`) — explains why some casts are expensive |
+| [Arrow Schema IPC Message](https://arrow.apache.org/docs/format/Columnar.html#schema-message) | How fields, metadata, and nullability are serialized — helpful when diagnosing “schema mismatch” errors                               |
 
-- **[Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)**
-  - **Focus on:** _Physical Memory Layout_ and _Variable-size Binary View Layout_ (StringView).
-  - **Why:** Explains why `StringView` is faster than `String` in DataFusion and how to optimize your schema for it.
-- **[Arrow Schema IPC Message](https://arrow.apache.org/docs/format/Columnar.html#schema-message)**
-  - **Why:** Debugging "Schema Mismatch" errors often requires understanding how Arrow serializes field metadata and nullability flags.
+### Storage ↔ Memory Type Mapping
 
-### 2. On-Disk to In-Memory Mapping
+| Resource                                                                                                             | Description                                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| [Parquet Logical Types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md)                        | How Parquet logical types (`DECIMAL`, timestamps, etc.) map into Arrow types                                          |
+| [DataFusion Type Coercion Rules](https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/index.html) | The exact rules DataFusion uses to reconcile type differences (for example, joining or unioning `Int32` with `Int64`) |
 
-_Schema management often fails at the boundary between storage (Parquet/CSV) and memory (Arrow). Use these references to understand type coercion._
+### Execution & Optimization
 
-- **[Parquet Logical Types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md)**
-  - **Why:** Explains how DataFusion maps complex Parquet types (like `INT96` timestamps or `DECIMAL`) into Arrow types.
-- **[DataFusion Type Coercion Rules](https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/index.html)**
-  - **Why:** This module source code documents the exact rules DataFusion uses to resolve type conflicts (e.g., joining `Int32` with `Int64`).
+| Resource                                                                                        | Description                                                                                                              |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [DataFusion Optimizer Rules](https://docs.rs/datafusion/latest/datafusion/optimizer/index.html) | How the optimizer rewrites plans (it may insert implicit `CAST`s); start with `type_coercion` and `simplify_expressions` |
 
-### 3. Execution & Optimization
+### Books (Foundational)
 
-_Understanding how your schema design impacts the Query Plan._
-
-- **[DataFusion Optimizer Rules](https://docs.rs/datafusion/latest/datafusion/optimizer/index.html)**
-  - **Focus on:** `type_coercion` and `simplify_expressions`.
-  - **Why:** See how DataFusion automatically rewrites your DataFrame operations to handle schema discrepancies, sometimes adding hidden `CAST` operations that affect performance.
-
-## Advanced Reading: Foundational Resources
-
-The DataFusion DataFrame API builds upon established patterns in database theory and system design. For users wishing to deepen their understanding of data modeling, schema evolution, and query engine internals, we recommend the following industry-standard resources.
-
-### Data Modeling & Schema Design
-
-_Foundational texts on structuring data for consistency, scalability, and analytics._
-
-- **The Data Model Resource Book (Vol 1-3)** by Len Silverston
-  The standard library of universal data models for common business domains.
-  [Vol 1](https://www.oreilly.com/library/view/the-data-model/9780471380238/), [Vol 2](https://www.oreilly.com/library/view/the-data-model/9780471353485/), [Vol 3](https://www.oreilly.com/library/view/the-data-model/9780470178454/)
-
-- **Patterns of Data Modeling** by David Hay
-  A comprehensive guide to the conceptual structures that underlie robust data design.
-  [Patterns of Data Modeling](https://www.oreilly.com/library/view/patterns-of-data/9781439819906/)
-
-- **The Data Warehouse Toolkit** by Ralph Kimball & Margy Ross
-  The definitive guide to Dimensional Modeling (Star Schemas), the most common design pattern for analytical query engines like DataFusion.
-  [The Data Warehouse Toolkit](https://www.oreilly.com/library/view/the-data-warehouse/9781118530801/)
-
-### Database Internals & Systems
-
-_Essential reading for understanding the mechanisms of storage, encoding, and execution._
-
-- **Designing Data-Intensive Applications** by Martin Kleppmann
-  A modern classic on distributed systems. Chapters on **Encoding and Evolution** are particularly relevant for understanding schema management in modern data pipelines.
-  [Designing Data-Intensive Applications](https://www.oreilly.com/library/view/designing-data-intensive-applications/9781491903063/)
-
-- **How Query Engines Work** by Andy Grove
-  Written by the creator of DataFusion, this book bridges the gap between general database theory and the specific implementation of a query engine.
-  [How Query Engines Work](https://leanpub.com/how-query-engines-work)
+| Resource                                                 | Description                                                                                                                                                                                                                                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The Data Model Resource Book (Vol 1–3) — Len Silverston  | Universal data models for common domains (Vol [1](https://www.oreilly.com/library/view/the-data-model/9780471380238/), [2](https://www.oreilly.com/library/view/the-data-model/9780471353485/), [3](https://www.oreilly.com/library/view/the-data-model/9780470178454/)) |
+| Patterns of Data Modeling — David Hay                    | Conceptual modeling patterns that translate well to analytical schemas ([O’Reilly](https://www.oreilly.com/library/view/patterns-of-data/9781439819906/))                                                                                                                |
+| The Data Warehouse Toolkit — Kimball & Ross              | Dimensional modeling (star schemas) for analytics ([O’Reilly](https://www.oreilly.com/library/view/the-data-warehouse/9781118530801/))                                                                                                                                   |
+| Designing Data-Intensive Applications — Martin Kleppmann | Schema evolution and encoding trade-offs ([O’Reilly](https://www.oreilly.com/library/view/designing-data-intensive-applications/9781491903063/))                                                                                                                         |
+| How Query Engines Work — Andy Grove                      | Query engine internals (DataFusion’s creator) ([Leanpub](https://leanpub.com/how-query-engines-work))                                                                                                                                                                    |
 
 ---
 
