@@ -58,64 +58,69 @@ The diagram below traces the journey—from lazy plan to concrete results—and 
 ### How Queries Flow Through DataFusion
 
 ```text
-                    ┌──────────────────┐
-                    │  SessionContext  │
-                    └────────┬─────────┘
-                             │
-                             │ captures state
-                             ▼
-                    ┌──────────────────┐
-                    │   SessionState   │
-                    │    (snapshot)    │
-                    └────────┬─────────┘
-                             │
-               ┌─────────────┴─────────────┐
-               │                           │
-               ▼                           ▼
-        ┌─────────────┐             ┌─────────────┐
-        │     SQL     │             │  DataFrame  │
-        │   ctx.sql   │             │  API (lazy) │
-        │   (parse)   │             │   (build)   │
-        └──────┬──────┘             └──────┬──────┘
-               │                           │
-               │ produces                  │ produces
-               │                           │
-               └───────────┬───────────────┘
-                           ▼
-               ┌───────────────────────────┐
-               │        LogicalPlan        │
-               └─────────────┬─────────────┘
-                             │
-                             │ optimize (projection/predicate pushdown, etc.)
-                             ▼
-               ┌───────────────────────────┐
-               │   Optimized LogicalPlan   │
-               └─────────────┬─────────────┘
-                             │
-                             │ plan (physical planner)
-                             ▼
-               ┌───────────────────────────┐
-               │ ExecutionPlan (Physical)  │
-               └─────────────┬─────────────┘
-                             │
-                             │ optimize (physical optimizer)
-                             ▼
-               ┌───────────────────────────┐
-               │  Optimized ExecutionPlan  │
-               └─────────────┬─────────────┘
-                             │
-                             │ execute (Tokio + CPU runtimes)
-                             ▼
-               ┌───────────────────────────┐
-               │    RecordBatch streams    │
-               └───────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                        SessionContext                         │
+│   (Primary Entry Point: Catalog, Function Registry, Config)   │
+└─────────────┬───────────────────────────────┬─────────────────┘
+              │                               │
+  ┌───────────▼───────────┐       ┌───────────▼───────────────┐
+  │        SQL API        │       │       DataFrame API       │
+  │     (Declarative)     │       │       (Programmatic)      │
+  ├───────────────────────┤       ├───────────────────────────┤
+  │  "SELECT a, b FROM t  │       │ ctx.table("t")            │
+  │   WHERE a > 10"       │       │   .filter(col("a").gt(10))│
+  └───────────┬───────────┘       └───────────┬───────────────┘
+              │                               │
+              │ parse / plan                  │ build
+              └───────────────┬───────────────┘
+                              │
+                              ▼
+        ┌──────────────────────────────────────────┐
+        │                DataFrame                 │
+        │        (Immutable Query Handle)          │
+        ├──────────────────────────────────────────┤
+        │  1. LogicalPlan (Abstract Query)         │
+        │  2. SessionState (Snapshot of Context)   │
+        └─────────────────────┬────────────────────┘
+                              │
+══════════════════════════════╪═══════════════════ ACTION
+                              │ (.collect / .show / .write)
+                              ▼
+        ┌──────────────────────────────────────────┐
+        │            Logical Optimizer             │
+        │ (Predicate Pushdown, Projection Pruning) │
+        └─────────────────────┬────────────────────┘
+                              │
+                              ▼
+        ┌──────────────────────────────────────────┐
+        │             Physical Planner             │
+        │  (Map Logical nodes to Physical Exec)    │
+        └─────────────────────┬────────────────────┘
+                              │
+                              ▼
+        ┌──────────────────────────────────────────┐
+        │            Physical Optimizer            │
+        │ (Coalesce Batches, Pipeline Parallelism) │
+        └─────────────────────┬────────────────────┘
+                              │
+                              ▼
+        ┌──────────────────────────────────────────┐
+        │            Execution (Tokio)             │
+        │   (Pull-based Stream of RecordBatches)   │
+        └──────────────────────────────────────────┘
 ```
 
 **Reading the diagram:**
 
-- **SessionContext → SessionState**: Your context's configuration is captured as an immutable snapshot, ensuring the DataFrame executes consistently even if the context changes later.
-- **SQL / DataFrame API → LogicalPlan**: Both paths produce the same abstract plan—this is why you can mix APIs freely with no performance penalty.
-- **Optimize → Physical Plan → Execute**: The logical optimizer rewrites the plan (predicate pushdown, projection pruning), the physical planner chooses algorithms (hash join vs. sort-merge), and Tokio executes partitions in parallel.
+- **SessionContext (top)**: <br>
+  The primary entry point holding your catalog, function registry, and configuration.
+- **SQL API / DataFrame API → DataFrame**: <br>
+  Both paths converge to the same `DataFrame` structure—an immutable handle wrapping a `LogicalPlan` (what to compute) and a `SessionState` snapshot (frozen context for reproducibility).
+- **ACTION boundary**: <br>
+  Nothing executes until you call `.collect()`, `.show()`, or `.write_*()`. Above the line is lazy; below is eager.
+- **Logical Optimizer → Physical Planner → Physical Optimizer**: <br>
+  The logical optimizer rewrites the plan (predicate pushdown, projection pruning), the physical planner chooses algorithms (hash join vs. sort-merge), and the physical optimizer adds parallelism and batching.
+- **Execution (Tokio)**: <br> Pull-based streaming via `poll_next()`—data flows as `RecordBatch` chunks through operators in parallel.
 
 > **Glossary snapshot**
 >
@@ -466,7 +471,7 @@ fn main() -> Result<()> {
 
 #### **Conditional Helpers**
 
-Aside ofqqq [`is_null()`] , DataFusion provides tools for explicitly handling nulls. Choose based on your intent:
+Aside of [`is_null()`] , DataFusion provides tools for explicitly handling nulls. Choose based on your intent:
 
 | Function                          | Use When                                        | Example                                                              |
 | --------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
@@ -504,7 +509,12 @@ id | value        id | data
 NULL| 'b'         3  | 'z'          ← NULL ≠ 3, no match
 ```
 
-For null-safe equality (where `NULL = NULL` is `TRUE`), use SQL's `IS NOT DISTINCT FROM`:
+**DataFrame API limitation:** The high-level DataFrame API doesn't currently expose null-safe join semantics directly. For null-safe joins where `NULL = NULL` is `TRUE`, use either:
+
+- **SQL**: `IS NOT DISTINCT FROM` syntax (simplest)
+- **LogicalPlanBuilder**: programmatic control via [`NullEquality`]
+
+Here's the SQL approach:
 
 ```rust
 use datafusion::prelude::*;
@@ -515,21 +525,24 @@ async fn main() -> Result<()> {
     let ctx = SessionContext::new();
 
     // Create tables with NULL keys
-    let left = dataframe!(
+    let left_table = dataframe!(
         "left_id" => [Some(1i32), Some(2i32), None],
         "value" => ["a", "b", "c"]
     )?;
-    let right = dataframe!(
+    let right_table = dataframe!(
         "right_id" => [Some(1i32), None, Some(3i32)],
         "data" => ["x", "y", "z"]
     )?;
 
     // Register for SQL access
-    ctx.register_table("left", left.clone().into_view())?;
-    ctx.register_table("right", right.clone().into_view())?;
+    ctx.register_table("left", left_table.clone().into_view())?;
+    ctx.register_table("right", right_table.clone().into_view())?;
 
     // Standard join: NULL ≠ NULL (only id=1 matches)
-    let standard = left.join(right, JoinType::Inner, &["left_id"], &["right_id"], None)?;
+    let standard = left_table.join(right_table,
+                                  JoinType::Inner,
+                                   &["left_id"], &["right_id"],
+                                   None)?;
     standard.show().await?;
     // +---------+-------+----------+------+
     // | left_id | value | right_id | data |
@@ -539,7 +552,10 @@ async fn main() -> Result<()> {
 
     // Null-safe join via SQL: NULL = NULL is TRUE
     let null_safe = ctx.sql(
-        "SELECT * FROM left l JOIN right r ON l.left_id IS NOT DISTINCT FROM r.right_id"
+        "SELECT *
+        FROM left AS l
+        JOIN right AS r
+        ON l.left_id IS NOT DISTINCT FROM r.right_id"
     ).await?;
     null_safe.show().await?;
     // +---------+-------+----------+------+
@@ -553,7 +569,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-For programmatic control over null equality, see [`NullEquality`] when working with the lower-level [`LogicalPlanBuilder`] API.
+For fully programmatic null-safe joins without SQL, see [`NullEquality`] with the [`LogicalPlanBuilder`] API.
 
 #### **How `.sort()` Handles Nulls**
 
@@ -644,54 +660,54 @@ Here's how this flows through the system in a nutshell:
 
 ```text
 [ STEP 1: THE KITCHEN ]
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                SessionContext                                │
-│                    (Mutable kitchen: tools & ingredients)                    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  • Config:  target_partitions=8, batch_size=8192                             │
-│  • UDFs:    "my_custom_func"                                                 │
-│  • Catalog: table "sales"                                                    │
-└──────────────────────────────────────┬───────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                                SessionContext                     │
+│                    (Mutable kitchen: tools & ingredients)         │
+├───────────────────────────────────────────────────────────────────┤
+│  • Config:  target_partitions=8, batch_size=8192                  │
+│  • UDFs:    "my_custom_func"                                      │
+│  • Catalog: table "sales"                                         │
+└──────────────────────────────────────┬────────────────────────────┘
                                        │
                                        │ .read_table("sales")
                                        ▼
 [ STEP 2: START COOKING ]
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                  DataFrame                                   │
-│              (Workstation setup: what's available when you start)            │
-├──────────────────────────────────────┬───────────────────────────────────────┤
-│           SessionState               │             LogicalPlan               │
-│    (frozen tools & ingredients)      │          (first instruction)          │
-├──────────────────────────────────────┼───────────────────────────────────────┤
-│ • Config/UDFs at creation time       │                                       │
-│ • Catalog state when cooking began   │      TableScan("sales")               │
-└──────────────────────────────────────┴───────────────────┬───────────────────┘
-                                                           │
-                                                           │ .filter(amount > 100)
-                                                           ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                                  DataFrame                        │
+│              (Workstation setup: what's available when you start) │
+├──────────────────────────────────────┬────────────────────────────┤
+│           SessionState               │        LogicalPlan         │
+│    (frozen tools & ingredients)      │     (first instruction)    │
+├──────────────────────────────────────┼────────────────────────────┤
+│ • Config/UDFs at creation time       │                            │
+│ • Catalog state when cooking began   │ TableScan("sales")         │
+└──────────────────────────────────────┬────────────────────────────┘
+                                       │
+                                       │ .filter(amount > 100)
+                                       ▼
 [ STEP 3: ADD INSTRUCTIONS ]
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                New DataFrame                                 │
-│                  (Same workstation, extended recipe)                         │
-├──────────────────────────────────────┬───────────────────────────────────────┤
-│           SessionState               │             LogicalPlan               │
-│         (unchanged snapshot)         │           (more steps added)          │
-├──────────────────────────────────────┼───────────────────────────────────────┤
-│ • Still the original setup           │      Filter(amount > 100)             │
-│ • (New kitchen tools don't appear)   │        └─ TableScan("sales")          │
-└──────────────────────────────────────┴───────────────────┬───────────────────┘
-                                                           │
-                                                           │ .collect() / .show()
-                                                           ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                                New DataFrame                         │
+│                  (Same workstation, extended recipe)                 │
+├──────────────────────────────────────┬───────────────────────────────┤
+│           SessionState               │             LogicalPlan       │
+│         (unchanged snapshot)         │           (more steps added)  │
+├──────────────────────────────────────┼───────────────────────────────┤
+│ • Still the original setup           │      Filter(amount > 100)     │
+│ • (New kitchen tools don't appear)   │        └─ TableScan("sales")  │
+└──────────────────────────────────────┬───────────────────────────────┘
+                                       │
+                                       │ .collect() / .show()
+                                       ▼
 [ STEP 4: SERVE THE DISH ]
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                ExecutionPlan                                 │
-│                     (Cooking happens with given setup)                      │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  • Recipe optimized using snapshot's rules                                   │
-│  • Physical operators created (ParquetExec, FilterExec, etc.)                │
-│  • Output: RecordBatches (the meal!)                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                                ExecutionPlan                         │
+│                     (Cooking happens with given setup)               │
+├──────────────────────────────────────────────────────────────────────┤
+│  • Recipe optimized using snapshot's rules                           │
+│  • Physical operators created (ParquetExec, FilterExec, etc.)        │
+│  • Output: RecordBatches (the meal!)                                 │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 Unlike a single plate, the meal arrives in **RecordBatches**—sliced like a Sunday roast 🍖, one portion at a time. This streaming approach lets DataFusion handle datasets much larger than memory.
@@ -1026,6 +1042,7 @@ async fn main() -> Result<()> {
 > - [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks] — why async works for compute
 > - [Using Rust async for Query Execution][async-blog] — deep dive into cooperative scheduling and query cancellation
 > - [Thread Scheduling documentation] — complete technical details
+> - [Crate Configuration](../../user-guide/crate-configuration.md) — SIMD flags, LTO, PGO, and allocator tuning for maximum performance
 
 ### What Happens During Execution?
 
@@ -1286,6 +1303,15 @@ DataFusion's hybrid approach provides (see [SIGMOD paper Section 5.5][sigmod-pap
 
 This is why all DataFrame actions are `async fn`—they participate in cooperative scheduling rather than blocking threads. For a deep dive into how this enables query cancellation, see [Using Rust async for Query Execution][async-blog].
 
+> **Performance note: SIMD requires explicit opt-in** <br>
+> By default, the Rust compiler produces code for a wide range of CPUs, which may _not_ use advanced SIMD instructions (AVX2, AVX512) available on your hardware. To enable CPU-specific optimizations:
+>
+> ```bash
+> RUSTFLAGS='-C target-cpu=native' cargo build --release
+> ```
+>
+> This can significantly improve performance for filtering, aggregation, and joins. See [Crate Configuration: Generate Code with CPU Specific Instructions](../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for more options including LTO and PGO.
+
 ### The LLVM Parallel: Ecosystem Role
 
 The [SIGMOD 2024 paper][sigmod-paper] draws a parallel between DataFusion and LLVM—not in internal architecture, but in **ecosystem role**. From Section 4.1:
@@ -1327,10 +1353,10 @@ For the complete roadmap and quarterly planning discussions, see the [Contributo
 The following diagram shows how these concepts connect—multiple frontends feed into a common logical layer, which executes via the vectorized Volcano engine:
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                         THE DATAFUSION PLATFORM                              │
-│                (The "LLVM" of Data: Modular & Composable)                    │
-└───────────────────────────────┬──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                         THE DATAFUSION PLATFORM                    │
+│                (The "LLVM" of Data: Modular & Composable)          │
+└───────────────────────────────┬────────────────────────────────────┘
                                 │
         [ FRONTENDS ]           ▼          [ INTERFACES ]
   ┌──────────────────┐    ┌────────────┐    ┌──────────────────┐
@@ -1340,20 +1366,20 @@ The following diagram shows how these concepts connect—multiple frontends feed
             │                   │                    │
             └───────────────────┼────────────────────┘
                                 ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    COMMON LOGICAL INTERMEDIATE LAYER                         │
-│         (Dialect-Agnostic IR, Logical Plans & Global Optimizers)             │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  FUTURE: Separated Frontend/Core (Epic #12723)                               │
-└───────────────────────────────┬──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                    COMMON LOGICAL INTERMEDIATE LAYER               │
+│         (Dialect-Agnostic IR, Logical Plans & Global Optimizers)   │
+├────────────────────────────────────────────────────────────────────┤
+│  FUTURE: Separated Frontend/Core (Epic #12723)                     │
+└───────────────────────────────┬────────────────────────────────────┘
                                 ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    VECTORIZED VOLCANO EXECUTION                              │
-│       (Async Task Runner + Physical Planning + Extension Points)             │
-├───────────────────────────────┬──────────────────────────────────────────────┤
-│    [ EXTENSION TYPES ]        │        [ CUSTOM OPTIMIZERS ]                 │
-│      (Epic #12644)            │         (Domain-Specific)                    │
-└───────────────────────────────┼──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                    VECTORIZED VOLCANO EXECUTION                    │
+│       (Async Task Runner + Physical Planning + Extension Points)   │
+├───────────────────────────────┬────────────────────────────────────┤
+│    [ EXTENSION TYPES ]        │        [ CUSTOM OPTIMIZERS ]       │
+│      (Epic #12644)            │         (Domain-Specific)          │
+└───────────────────────────────┼────────────────────────────────────┘
                                 │
                                 ▼  poll_next() ──▶ [RecordBatch]
                                 ▼  poll_next() ──▶ [RecordBatch]
@@ -1437,42 +1463,45 @@ Know what you want? Find the method here:
 > **SessionState matters**: <br>
 > Methods marked ⚠️ drop the snapshot. They're great for inspection, but to execute later use [`.into_parts()`] to preserve deterministic semantics (timestamps, timezone, config, UDF catalog). See "Re-use plan later" in the cheat-sheet for the safest way to extract and modify a plan.
 
-## References
+## Further Reading
 
-- Internal guides
+### Internal Guides
 
-  - [Using the DataFrame API](../using-the-dataframe-api.md)
-  - [Creating DataFrames](creating-dataframes.md)
-  - [Transformations](transformations.md)
-  - [Writing DataFrames](writing-dataframes.md)
-  - [Best Practices](best-practices.md)
-  - [Building Logical Plans](../building-logical-plans.md)
-  - [Arrow Introduction](../../user-guide/arrow-introduction.md)
-  - [SQL Data Types](../../user-guide/sql/data_types.md)
-  - [Scalar Functions](../../user-guide/sql/scalar_functions.md)
-  - [How DataFrames Work](../../user-guide/dataframe.md#how-dataframes-work-lazy-evaluation-and-arrow-output)
+| Resource                                                     | Description                                                           |
+| ------------------------------------------------------------ | --------------------------------------------------------------------- |
+| [Using the DataFrame API](../using-the-dataframe-api.md)     | Overview + how this guide is structured                               |
+| [Creating DataFrames](creating-dataframes.md)                | Read data and build an initial `DataFrame`                            |
+| [Transformations](transformations.md)                        | Add filters, projections, joins, and aggregates (build the lazy plan) |
+| [Writing DataFrames](writing-dataframes.md)                  | Execute (`.collect()`, `.execute_stream()`) and write results         |
+| [Best Practices](best-practices.md)                          | Performance tuning and correctness tips                               |
+| [Building Logical Plans](../building-logical-plans.md)       | Work directly with `LogicalPlan` / `LogicalPlanBuilder`               |
+| [Arrow Introduction](../../user-guide/arrow-introduction.md) | Arrow basics: `RecordBatch`, schemas, and columnar memory             |
+| [SQL Data Types](../../user-guide/sql/data_types.md)         | DataFusion’s SQL type system                                          |
+| [Scalar Functions](../../user-guide/sql/scalar_functions.md) | Built-in functions (used from both SQL and DataFrames)                |
 
-- API docs
+### API Docs (docs.rs)
 
-  - [`SessionContext` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html)
-  - [`SessionState` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html)
-  - [`DataFrame` (datafusion)](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html)
-  - [`LogicalPlan` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html)
-  - [`LogicalPlanBuilder` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html)
-  - [`ExecutionPlan` (datafusion)](https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html)
-  - [`TableProvider` (datafusion)](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html)
+| Type / Trait                                                                                                                                         | Description                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [`SessionContext` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html)                           | Entry point: register data sources, create DataFrames, run SQL    |
+| [`SessionState` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html)                         | Snapshot of config/catalog/runtime used during planning/execution |
+| [`DataFrame` (datafusion)](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html)                                             | Lazy plan builder; actions trigger execution                      |
+| [`LogicalPlan` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html)                         | Logical representation produced by SQL and DataFrames             |
+| [`LogicalPlanBuilder` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html) | Lower-level builder for `LogicalPlan`                             |
+| [`ExecutionPlan` (datafusion)](https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html)                                  | Physical plan trait executed by the runtime                       |
+| [`TableProvider` (datafusion)](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html)                                     | Data source abstraction used by `SessionContext`                  |
 
-- External
+### External
 
-  - [Apache Arrow DataFusion: A Fast, Embeddable, Modular Analytic Query Engine](https://dl.acm.org/doi/10.1145/3626246.3653368) — SIGMOD 2024 paper
-  - [How to Avoid Consecutive Repartitions](https://datafusion.apache.org/blog/2025/12/15/avoid-consecutive-repartitions/) — Volcano model and parallel execution
-  - [Using Rust async for Query Execution](https://datafusion.apache.org/blog/2025/06/30/cancellation/) — async execution and query cancellation
-  - [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks](https://thenewstack.io/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/) — why async works for compute
-  - [How Parquet Pruning Works](https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/) — file/row-group skipping
-  - [Filter Pushdown in Parquet](https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/) — late materialization
-  - [How Query Engines Work — DataFrames](https://howqueryengineswork.com/06-dataframe.html) — conceptual background
-
-> **Note:** Individual method links (e.g., `.filter()`, `.collect()`) are clickable throughout this guide via reference-style links. For the complete API, see the docs.rs links above.
+| Resource                                                                                                                                    | Description                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| [Apache Arrow DataFusion: A Fast, Embeddable, Modular Analytic Query Engine](https://dl.acm.org/doi/10.1145/3626246.3653368)                | SIGMOD 2024 paper                        |
+| [How to Avoid Consecutive Repartitions](https://datafusion.apache.org/blog/2025/12/15/avoid-consecutive-repartitions/)                      | Volcano model and parallel execution     |
+| [Using Rust async for Query Execution](https://datafusion.apache.org/blog/2025/06/30/cancellation/)                                         | Async execution and query cancellation   |
+| [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks](https://thenewstack.io/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/) | Why async works for compute              |
+| [How Parquet Pruning Works](https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/)                                                 | File/row-group skipping                  |
+| [Filter Pushdown in Parquet](https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/)                                               | Filter pushdown and late materialization |
+| [How Query Engines Work — DataFrames](https://howqueryengineswork.com/06-dataframe.html)                                                    | Conceptual background                    |
 
 <!-- TODO: To be sorted references (tomorrow task was yesterday ;) ) -->
 
@@ -1499,7 +1528,7 @@ Know what you want? Find the method here:
 [physical-rules]: https://github.com/apache/datafusion/blob/main/datafusion/physical-optimizer/src/optimizer.rs#L86-L162
 [Rayon]: https://docs.rs/rayon/latest/rayon/
 [roadmap]: https://datafusion.apache.org/contributor-guide/roadmap.html
-[sigmod-paper]: https://dl.acm.org/doi/10.1145/3626246.3653368
+[sigmod-paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
 [Thread Scheduling documentation]: https://docs.rs/datafusion/latest/datafusion/index.html#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
 [Tokio]: https://tokio.rs
 [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks]: https://www.influxdata.com/blog/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/
