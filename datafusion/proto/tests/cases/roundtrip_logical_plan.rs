@@ -19,9 +19,9 @@ use arrow::array::{
     ArrayRef, FixedSizeListArray, Int32Builder, MapArray, MapBuilder, StringBuilder,
 };
 use arrow::datatypes::{
-    DataType, Field, FieldRef, Fields, Int32Type, IntervalDayTimeType,
-    IntervalMonthDayNanoType, IntervalUnit, Schema, SchemaRef, TimeUnit, UnionFields,
-    UnionMode, DECIMAL256_MAX_PRECISION,
+    DECIMAL256_MAX_PRECISION, DataType, Field, FieldRef, Fields, Int32Type,
+    IntervalDayTimeType, IntervalMonthDayNanoType, IntervalUnit, Schema, SchemaRef,
+    TimeUnit, UnionFields, UnionMode,
 };
 use arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::file_format::json::{JsonFormat, JsonFormatFactory};
@@ -29,8 +29,8 @@ use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
 use datafusion::execution::options::ArrowReadOptions;
-use datafusion::optimizer::eliminate_nested_union::EliminateNestedUnion;
 use datafusion::optimizer::Optimizer;
+use datafusion::optimizer::optimize_unions::OptimizeUnions;
 use datafusion_common::parsers::CompressionTypeVariant;
 use datafusion_functions_aggregate::sum::sum_distinct;
 use prost::Message;
@@ -42,13 +42,13 @@ use std::sync::Arc;
 use std::vec;
 
 use datafusion::catalog::{TableProvider, TableProviderFactory};
+use datafusion::datasource::DefaultTableSource;
 use datafusion::datasource::file_format::arrow::ArrowFormatFactory;
 use datafusion::datasource::file_format::csv::CsvFormatFactory;
 use datafusion::datasource::file_format::parquet::ParquetFormatFactory;
-use datafusion::datasource::file_format::{format_as_file_type, DefaultFileType};
-use datafusion::datasource::DefaultTableSource;
-use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::datasource::file_format::{DefaultFileType, format_as_file_type};
 use datafusion::execution::FunctionRegistry;
+use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::functions_aggregate::count::count_udaf;
 use datafusion::functions_aggregate::expr_fn::{
     approx_median, approx_percentile_cont, approx_percentile_cont_with_weight, count,
@@ -68,8 +68,8 @@ use datafusion::test_util::{TestTableFactory, TestTableProvider};
 use datafusion_common::config::TableOptions;
 use datafusion_common::scalar::ScalarStructBuilder;
 use datafusion_common::{
-    internal_datafusion_err, internal_err, not_impl_err, plan_err, DFSchema, DFSchemaRef,
-    DataFusionError, Result, ScalarValue, TableReference,
+    DFSchema, DFSchemaRef, DataFusionError, Result, ScalarValue, TableReference,
+    internal_datafusion_err, internal_err, not_impl_err, plan_err,
 };
 use datafusion_execution::TaskContext;
 use datafusion_expr::dml::CopyTo;
@@ -102,7 +102,7 @@ use datafusion_proto::logical_plan::file_formats::{
 };
 use datafusion_proto::logical_plan::to_proto::serialize_expr;
 use datafusion_proto::logical_plan::{
-    from_proto, DefaultLogicalExtensionCodec, LogicalExtensionCodec,
+    DefaultLogicalExtensionCodec, LogicalExtensionCodec, from_proto,
 };
 use datafusion_proto::protobuf;
 
@@ -549,6 +549,8 @@ async fn roundtrip_logical_plan_copy_to_csv() -> Result<()> {
     csv_format.timestamp_format = Some("HH:mm:ss.SSSSSS".to_string());
     csv_format.time_format = Some("HH:mm:ss".to_string());
     csv_format.null_value = Some("NIL".to_string());
+    csv_format.compression = CompressionTypeVariant::GZIP;
+    csv_format.compression_level = Some(6);
 
     let file_type = format_as_file_type(Arc::new(CsvFormatFactory::new_with_options(
         csv_format.clone(),
@@ -593,7 +595,9 @@ async fn roundtrip_logical_plan_copy_to_csv() -> Result<()> {
             assert_eq!(csv_format.datetime_format, csv_config.datetime_format);
             assert_eq!(csv_format.timestamp_format, csv_config.timestamp_format);
             assert_eq!(csv_format.time_format, csv_config.time_format);
-            assert_eq!(csv_format.null_value, csv_config.null_value)
+            assert_eq!(csv_format.null_value, csv_config.null_value);
+            assert_eq!(csv_format.compression, csv_config.compression);
+            assert_eq!(csv_format.compression_level, csv_config.compression_level);
         }
         _ => panic!(),
     }
@@ -1072,6 +1076,37 @@ async fn roundtrip_logical_plan_with_view_scan() -> Result<()> {
     let logical_round_trip = logical_plan_from_bytes(&bytes, &ctx.task_ctx())?;
     assert_eq!(format!("{plan}"), format!("{logical_round_trip}"));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_logical_plan_prepared_statement_with_metadata() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    let plan = ctx
+        .sql("SELECT $1")
+        .await
+        .unwrap()
+        .into_optimized_plan()
+        .unwrap();
+    let prepared = LogicalPlanBuilder::new(plan)
+        .prepare(
+            "".to_string(),
+            vec![
+                Field::new("", DataType::Int32, true)
+                    .with_metadata(
+                        [("some_key".to_string(), "some_value".to_string())].into(),
+                    )
+                    .into(),
+            ],
+        )
+        .unwrap()
+        .plan()
+        .clone();
+
+    let bytes = logical_plan_to_bytes(&prepared)?;
+    let logical_round_trip = logical_plan_from_bytes(&bytes, &ctx.task_ctx())?;
+    assert_eq!(format!("{prepared}"), format!("{logical_round_trip}"));
     Ok(())
 }
 
@@ -1952,6 +1987,10 @@ fn roundtrip_binary_op() {
     test(Operator::RegexNotMatch);
     test(Operator::RegexIMatch);
     test(Operator::RegexMatch);
+    test(Operator::LikeMatch);
+    test(Operator::ILikeMatch);
+    test(Operator::NotLikeMatch);
+    test(Operator::NotILikeMatch);
     test(Operator::BitwiseShiftRight);
     test(Operator::BitwiseShiftLeft);
     test(Operator::BitwiseAnd);
@@ -2715,7 +2754,7 @@ async fn roundtrip_union_query() -> Result<()> {
     let logical_round_trip = logical_plan_from_bytes(&bytes, &ctx.task_ctx())?;
     // proto deserialization only supports 2-way union, hence this plan has nested unions
     // apply the flatten unions optimizer rule to be able to compare
-    let optimizer = Optimizer::with_rules(vec![Arc::new(EliminateNestedUnion::new())]);
+    let optimizer = Optimizer::with_rules(vec![Arc::new(OptimizeUnions::new())]);
     let unnested = optimizer.optimize(logical_round_trip, &(ctx.state()), |_x, _y| {})?;
     assert_eq!(
         format!("{}", plan.display_indent_schema()),
@@ -2802,5 +2841,51 @@ async fn roundtrip_arrow_scan() -> Result<()> {
     let bytes = logical_plan_to_bytes(&plan)?;
     let logical_round_trip = logical_plan_from_bytes(&bytes, &ctx.task_ctx())?;
     assert_eq!(format!("{plan:?}"), format!("{logical_round_trip:?}"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_mixed_case_table_reference() -> Result<()> {
+    // Prepare "client" database
+    let client_ctx = SessionContext::new_with_config(
+        SessionConfig::new()
+            .set_bool("datafusion.sql_parser.enable_ident_normalization", false),
+    );
+    client_ctx
+        .register_csv(
+            "\"TestData\"",
+            "tests/testdata/test.csv",
+            CsvReadOptions::default(),
+        )
+        .await?;
+
+    // Prepare "server" database
+    let server_ctx = SessionContext::new_with_config(
+        SessionConfig::new()
+            .set_bool("datafusion.sql_parser.enable_ident_normalization", false),
+    );
+    server_ctx
+        .register_csv(
+            "\"TestData\"",
+            "tests/testdata/test.csv",
+            CsvReadOptions::default(),
+        )
+        .await?;
+
+    // Create a logical plan, serialize it (client), then deserialize it (server)
+    let dataframe = client_ctx
+        .sql("SELECT a FROM TestData WHERE TestData.a = 1")
+        .await?;
+
+    let client_logical_plan = dataframe.into_optimized_plan()?;
+    let plan_bytes = logical_plan_to_bytes(&client_logical_plan)?;
+    let server_logical_plan =
+        logical_plan_from_bytes(&plan_bytes, &server_ctx.task_ctx())?;
+
+    assert_eq!(
+        format!("{}", client_logical_plan.display_indent_schema()),
+        format!("{}", server_logical_plan.display_indent_schema())
+    );
+
     Ok(())
 }

@@ -107,8 +107,8 @@ pub(crate) mod test_util {
 mod tests {
 
     use std::fmt::{self, Display, Formatter};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use crate::datasource::file_format::parquet::test_util::store_parquet;
@@ -120,6 +120,7 @@ mod tests {
     use arrow::array::RecordBatch;
     use arrow_schema::Schema;
     use datafusion_catalog::Session;
+    use datafusion_common::ScalarValue::Utf8;
     use datafusion_common::cast::{
         as_binary_array, as_binary_view_array, as_boolean_array, as_float32_array,
         as_float64_array, as_int32_array, as_timestamp_nanosecond_array,
@@ -127,7 +128,6 @@ mod tests {
     use datafusion_common::config::{ParquetOptions, TableParquetOptions};
     use datafusion_common::stats::Precision;
     use datafusion_common::test_util::batches_to_string;
-    use datafusion_common::ScalarValue::Utf8;
     use datafusion_common::{Result, ScalarValue};
     use datafusion_datasource::file_format::FileFormat;
     use datafusion_datasource::file_sink_config::{FileSink, FileSinkConfig};
@@ -135,37 +135,37 @@ mod tests {
     use datafusion_datasource_parquet::{
         ParquetFormat, ParquetFormatFactory, ParquetSink,
     };
+    use datafusion_execution::TaskContext;
     use datafusion_execution::object_store::ObjectStoreUrl;
     use datafusion_execution::runtime_env::RuntimeEnv;
-    use datafusion_execution::TaskContext;
     use datafusion_expr::dml::InsertOp;
     use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
-    use datafusion_physical_plan::{collect, ExecutionPlan};
+    use datafusion_physical_plan::{ExecutionPlan, collect};
 
     use crate::test_util::bounded_stream;
     use arrow::array::{
-        types::Int32Type, Array, ArrayRef, DictionaryArray, Int32Array, Int64Array,
-        StringArray,
+        Array, ArrayRef, DictionaryArray, Int32Array, Int64Array, StringArray,
+        types::Int32Type,
     };
     use arrow::datatypes::{DataType, Field};
     use async_trait::async_trait;
     use datafusion_datasource::file_groups::FileGroup;
     use datafusion_datasource_parquet::metadata::DFParquetMetadata;
-    use futures::stream::BoxStream;
     use futures::StreamExt;
+    use futures::stream::BoxStream;
     use insta::assert_snapshot;
-    use log::error;
-    use object_store::local::LocalFileSystem;
     use object_store::ObjectMeta;
+    use object_store::local::LocalFileSystem;
     use object_store::{
-        path::Path, GetOptions, GetResult, ListResult, MultipartUpload, ObjectStore,
-        PutMultipartOptions, PutOptions, PutPayload, PutResult,
+        GetOptions, GetResult, ListResult, MultipartUpload, ObjectStore,
+        PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
     };
-    use parquet::arrow::arrow_reader::ArrowReaderOptions;
     use parquet::arrow::ParquetRecordBatchStreamBuilder;
-    use parquet::file::metadata::{KeyValue, ParquetColumnIndex, ParquetOffsetIndex};
-    use parquet::file::page_index::index::Index;
-    use parquet::format::FileMetaData;
+    use parquet::arrow::arrow_reader::ArrowReaderOptions;
+    use parquet::file::metadata::{
+        KeyValue, ParquetColumnIndex, ParquetMetaData, ParquetOffsetIndex,
+    };
+    use parquet::file::page_index::column_index::ColumnIndexMetaData;
     use tokio::fs::File;
 
     enum ForceViews {
@@ -546,7 +546,8 @@ mod tests {
         let (files, _file_names) = store_parquet(vec![batch1], false).await?;
 
         let state = SessionContext::new().state();
-        let format = ParquetFormat::default();
+        // Make metadata size hint None to keep original behavior
+        let format = ParquetFormat::default().with_metadata_size_hint(None);
         let _schema = format.infer_schema(&state, &store.upcast(), &files).await?;
         assert_eq!(store.request_count(), 3);
         // No increase, cache being used.
@@ -620,7 +621,9 @@ mod tests {
 
         let mut state = SessionContext::new().state();
         state = set_view_state(state, force_views);
-        let format = ParquetFormat::default().with_force_view_types(force_views);
+        let format = ParquetFormat::default()
+            .with_force_view_types(force_views)
+            .with_metadata_size_hint(None);
         let schema = format.infer_schema(&state, &store.upcast(), &files).await?;
         assert_eq!(store.request_count(), 6);
 
@@ -721,7 +724,7 @@ mod tests {
         // TODO correct byte size: https://github.com/apache/datafusion/issues/14936
         assert_eq!(
             exec.partition_statistics(None)?.total_byte_size,
-            Precision::Exact(671)
+            Precision::Absent,
         );
 
         Ok(())
@@ -767,10 +770,9 @@ mod tests {
             exec.partition_statistics(None)?.num_rows,
             Precision::Exact(8)
         );
-        // TODO correct byte size: https://github.com/apache/datafusion/issues/14936
         assert_eq!(
             exec.partition_statistics(None)?.total_byte_size,
-            Precision::Exact(671)
+            Precision::Absent,
         );
         let batches = collect(exec, task_ctx).await?;
         assert_eq!(1, batches.len());
@@ -928,7 +930,10 @@ mod tests {
             values.push(array.value(i));
         }
 
-        assert_eq!("[1235865600000000000, 1235865660000000000, 1238544000000000000, 1238544060000000000, 1233446400000000000, 1233446460000000000, 1230768000000000000, 1230768060000000000]", format!("{values:?}"));
+        assert_eq!(
+            "[1235865600000000000, 1235865660000000000, 1238544000000000000, 1238544060000000000, 1233446400000000000, 1233446460000000000, 1230768000000000000, 1230768060000000000]",
+            format!("{values:?}")
+        );
 
         Ok(())
     }
@@ -1144,18 +1149,14 @@ mod tests {
 
         // 325 pages in int_col
         assert_eq!(int_col_offset.len(), 325);
-        match int_col_index {
-            Index::INT32(index) => {
-                assert_eq!(index.indexes.len(), 325);
-                for min_max in index.clone().indexes {
-                    assert!(min_max.min.is_some());
-                    assert!(min_max.max.is_some());
-                    assert!(min_max.null_count.is_some());
-                }
-            }
-            _ => {
-                error!("fail to read page index.")
-            }
+        let ColumnIndexMetaData::INT32(index) = int_col_index else {
+            panic!("fail to read page index.")
+        };
+        assert_eq!(index.min_values().len(), 325);
+        assert_eq!(index.max_values().len(), 325);
+        // all values are non null
+        for idx in 0..325 {
+            assert_eq!(index.null_count(idx), Some(0));
         }
     }
 
@@ -1205,10 +1206,10 @@ mod tests {
 
         let result = df.collect().await?;
 
-        assert_snapshot!(batches_to_string(&result), @r###"
-            ++
-            ++
-       "###);
+        assert_snapshot!(batches_to_string(&result), @r"
+        ++
+        ++
+        ");
 
         Ok(())
     }
@@ -1234,10 +1235,10 @@ mod tests {
 
         let result = df.collect().await?;
 
-        assert_snapshot!(batches_to_string(&result), @r###"
-            ++
-            ++
-       "###);
+        assert_snapshot!(batches_to_string(&result), @r"
+        ++
+        ++
+        ");
 
         Ok(())
     }
@@ -1556,7 +1557,7 @@ mod tests {
         Ok(parquet_sink)
     }
 
-    fn get_written(parquet_sink: Arc<ParquetSink>) -> Result<(Path, FileMetaData)> {
+    fn get_written(parquet_sink: Arc<ParquetSink>) -> Result<(Path, ParquetMetaData)> {
         let mut written = parquet_sink.written();
         let written = written.drain();
         assert_eq!(
@@ -1566,28 +1567,33 @@ mod tests {
             written.len()
         );
 
-        let (path, file_metadata) = written.take(1).next().unwrap();
-        Ok((path, file_metadata))
+        let (path, parquet_meta_data) = written.take(1).next().unwrap();
+        Ok((path, parquet_meta_data))
     }
 
-    fn assert_file_metadata(file_metadata: FileMetaData, expected_kv: &Vec<KeyValue>) {
-        let FileMetaData {
-            num_rows,
-            schema,
-            key_value_metadata,
-            ..
-        } = file_metadata;
-        assert_eq!(num_rows, 2, "file metadata to have 2 rows");
+    fn assert_file_metadata(
+        parquet_meta_data: ParquetMetaData,
+        expected_kv: &Vec<KeyValue>,
+    ) {
+        let file_metadata = parquet_meta_data.file_metadata();
+        let schema_descr = file_metadata.schema_descr();
+        assert_eq!(file_metadata.num_rows(), 2, "file metadata to have 2 rows");
         assert!(
-            schema.iter().any(|col_schema| col_schema.name == "a"),
+            schema_descr
+                .columns()
+                .iter()
+                .any(|col_schema| col_schema.name() == "a"),
             "output file metadata should contain col a"
         );
         assert!(
-            schema.iter().any(|col_schema| col_schema.name == "b"),
+            schema_descr
+                .columns()
+                .iter()
+                .any(|col_schema| col_schema.name() == "b"),
             "output file metadata should contain col b"
         );
 
-        let mut key_value_metadata = key_value_metadata.unwrap();
+        let mut key_value_metadata = file_metadata.key_value_metadata().unwrap().clone();
         key_value_metadata.sort_by(|a, b| a.key.cmp(&b.key));
         assert_eq!(&key_value_metadata, expected_kv);
     }
@@ -1644,13 +1650,11 @@ mod tests {
 
         // check the file metadata includes partitions
         let mut expected_partitions = std::collections::HashSet::from(["a=foo", "a=bar"]);
-        for (
-            path,
-            FileMetaData {
-                num_rows, schema, ..
-            },
-        ) in written.take(2)
-        {
+        for (path, parquet_metadata) in written.take(2) {
+            let file_metadata = parquet_metadata.file_metadata();
+            let schema = file_metadata.schema_descr();
+            let num_rows = file_metadata.num_rows();
+
             let path_parts = path.parts().collect::<Vec<_>>();
             assert_eq!(path_parts.len(), 2, "should have path prefix");
 
@@ -1663,11 +1667,17 @@ mod tests {
 
             assert_eq!(num_rows, 1, "file metadata to have 1 row");
             assert!(
-                !schema.iter().any(|col_schema| col_schema.name == "a"),
+                !schema
+                    .columns()
+                    .iter()
+                    .any(|col_schema| col_schema.name() == "a"),
                 "output file metadata will not contain partitioned col a"
             );
             assert!(
-                schema.iter().any(|col_schema| col_schema.name == "b"),
+                schema
+                    .columns()
+                    .iter()
+                    .any(|col_schema| col_schema.name() == "b"),
                 "output file metadata should contain col b"
             );
         }

@@ -24,7 +24,7 @@ use std::{sync::Arc, vec};
 use arrow::datatypes::*;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::file_options::file_type::FileType;
-use datafusion_common::{plan_err, DFSchema, GetExt, Result, TableReference};
+use datafusion_common::{DFSchema, GetExt, Result, TableReference, plan_err};
 use datafusion_expr::planner::{ExprPlanner, PlannerResult, TypePlanner};
 use datafusion_expr::{AggregateUDF, Expr, ScalarUDF, TableSource, WindowUDF};
 use datafusion_functions_nested::expr_fn::make_array;
@@ -150,6 +150,14 @@ impl ContextProvider for MockContextProvider {
                     false,
                 ),
                 Field::new("😀", DataType::Int32, false),
+            ])),
+            "person_with_uuid_extension" => Ok(Schema::new(vec![
+                Field::new("id", DataType::FixedSizeBinary(16), false).with_metadata(
+                    [("ARROW:extension:name".to_string(), "arrow.uuid".to_string())]
+                        .into(),
+                ),
+                Field::new("first_name", DataType::Utf8, false),
+                Field::new("last_name", DataType::Utf8, false),
             ])),
             "orders" => Ok(Schema::new(vec![
                 Field::new("order_id", DataType::UInt32, false),

@@ -25,7 +25,7 @@ use datafusion_catalog::TableProvider;
 use datafusion_common::ScalarValue;
 use datafusion_common::{error::Result, utils::get_available_parallelism};
 use datafusion_expr::col;
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 
 use crate::fuzz_cases::aggregation_fuzzer::data_generator::Dataset;
 
@@ -44,7 +44,6 @@ use crate::fuzz_cases::aggregation_fuzzer::data_generator::Dataset;
 ///   - hint `sorted` or not
 ///   - `spilling` or not (TODO, I think a special `MemoryPool` may be needed
 ///     to support this)
-///
 pub struct SessionContextGenerator {
     /// Current testing dataset
     dataset: Arc<Dataset>,

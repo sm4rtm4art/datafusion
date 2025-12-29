@@ -20,21 +20,22 @@ use datafusion_expr::planner::{
     PlannerResult, RawBinaryExpr, RawDictionaryExpr, RawFieldAccessExpr,
 };
 use sqlparser::ast::{
-    AccessExpr, BinaryOperator, CastFormat, CastKind, DataType as SQLDataType,
-    DictionaryField, Expr as SQLExpr, ExprWithAlias as SQLExprWithAlias, MapEntry,
-    StructField, Subscript, TrimWhereField, TypedString, Value, ValueWithSpan,
+    AccessExpr, BinaryOperator, CastFormat, CastKind, CeilFloorKind,
+    DataType as SQLDataType, DateTimeField, DictionaryField, Expr as SQLExpr,
+    ExprWithAlias as SQLExprWithAlias, MapEntry, StructField, Subscript, TrimWhereField,
+    TypedString, Value, ValueWithSpan,
 };
 
 use datafusion_common::{
-    internal_datafusion_err, internal_err, not_impl_err, plan_err, DFSchema, Result,
-    ScalarValue,
+    DFSchema, Result, ScalarValue, internal_datafusion_err, internal_err, not_impl_err,
+    plan_err,
 };
 
 use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::expr::{InList, WildcardOptions};
 use datafusion_expr::{
-    lit, Between, BinaryExpr, Cast, Expr, ExprSchemable, GetFieldAccess, Like, Literal,
-    Operator, TryCast,
+    Between, BinaryExpr, Cast, Expr, ExprSchemable, GetFieldAccess, Like, Literal,
+    Operator, TryCast, lit,
 };
 
 use crate::planner::{ContextProvider, PlannerContext, SqlToRel};
@@ -139,7 +140,7 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
         let RawBinaryExpr { op, left, right } = binary_expr;
         Ok(Expr::BinaryExpr(BinaryExpr::new(
             Box::new(left),
-            self.parse_sql_binary_op(op)?,
+            self.parse_sql_binary_op(&op)?,
             Box::new(right),
         )))
     }
@@ -269,7 +270,9 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
                 expr,
                 data_type,
                 format,
-            } => self.sql_cast_to_expr(*expr, data_type, format, schema, planner_context),
+            } => {
+                self.sql_cast_to_expr(*expr, &data_type, format, schema, planner_context)
+            }
 
             SQLExpr::Cast {
                 kind: CastKind::TryCast | CastKind::SafeCast,
@@ -287,7 +290,9 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
                         schema,
                         planner_context,
                     )?),
-                    self.convert_data_type(&data_type)?,
+                    self.convert_data_type_to_field(&data_type)?
+                        .data_type()
+                        .clone(),
                 )))
             }
 
@@ -297,7 +302,9 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
                 uses_odbc_syntax: _,
             }) => Ok(Expr::Cast(Cast::new(
                 Box::new(lit(value.into_string().unwrap())),
-                self.convert_data_type(&data_type)?,
+                self.convert_data_type_to_field(&data_type)?
+                    .data_type()
+                    .clone(),
             ))),
 
             SQLExpr::IsNull(expr) => Ok(Expr::IsNull(Box::new(
@@ -494,14 +501,28 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
                 self.sql_grouping_sets_to_expr(exprs, schema, planner_context)
             }
 
-            SQLExpr::Floor {
-                expr,
-                field: _field,
-            } => self.sql_fn_name_to_expr(*expr, "floor", schema, planner_context),
-            SQLExpr::Ceil {
-                expr,
-                field: _field,
-            } => self.sql_fn_name_to_expr(*expr, "ceil", schema, planner_context),
+            SQLExpr::Floor { expr, field } => match field {
+                CeilFloorKind::DateTimeField(DateTimeField::NoDateTime) => {
+                    self.sql_fn_name_to_expr(*expr, "floor", schema, planner_context)
+                }
+                CeilFloorKind::DateTimeField(_) => {
+                    not_impl_err!("FLOOR with datetime is not supported")
+                }
+                CeilFloorKind::Scale(_) => {
+                    not_impl_err!("FLOOR with scale is not supported")
+                }
+            },
+            SQLExpr::Ceil { expr, field } => match field {
+                CeilFloorKind::DateTimeField(DateTimeField::NoDateTime) => {
+                    self.sql_fn_name_to_expr(*expr, "ceil", schema, planner_context)
+                }
+                CeilFloorKind::DateTimeField(_) => {
+                    not_impl_err!("CEIL with datetime is not supported")
+                }
+                CeilFloorKind::Scale(_) => {
+                    not_impl_err!("CEIL with scale is not supported")
+                }
+            },
             SQLExpr::Overlay {
                 expr,
                 overlay_what,
@@ -534,7 +555,7 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
             }
 
             SQLExpr::Struct { values, fields } => {
-                self.parse_struct(schema, planner_context, values, fields)
+                self.parse_struct(schema, planner_context, values, &fields)
             }
             SQLExpr::Position { expr, r#in } => {
                 self.sql_position_to_expr(*expr, *r#in, schema, planner_context)
@@ -556,7 +577,7 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
                     _ => {
                         return not_impl_err!(
                             "Unsupported ast node in sqltorel: {time_zone:?}"
-                        )
+                        );
                     }
                 },
             ))),
@@ -620,7 +641,7 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
         schema: &DFSchema,
         planner_context: &mut PlannerContext,
         values: Vec<SQLExpr>,
-        fields: Vec<StructField>,
+        fields: &[StructField],
     ) -> Result<Expr> {
         if !fields.is_empty() {
             return not_impl_err!("Struct fields are not supported yet");
@@ -654,7 +675,7 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
             Some(SQLExpr::Identifier(_))
             | Some(SQLExpr::Value(_))
             | Some(SQLExpr::CompoundIdentifier(_)) => {
-                self.parse_struct(schema, planner_context, values, vec![])
+                self.parse_struct(schema, planner_context, values, &[])
             }
             None => not_impl_err!("Empty tuple not supported yet"),
             _ => {
@@ -814,7 +835,7 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
         )))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn sql_like_to_expr(
         &self,
         negated: bool,
@@ -834,7 +855,11 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
             Some(Value::SingleQuotedString(char)) if char.len() == 1 => {
                 Some(char.chars().next().unwrap())
             }
-            Some(value) => return plan_err!("Invalid escape character in LIKE expression. Expected a single character wrapped with single quotes, got {value}"),
+            Some(value) => {
+                return plan_err!(
+                    "Invalid escape character in LIKE expression. Expected a single character wrapped with single quotes, got {value}"
+                );
+            }
             None => None,
         };
         Ok(Expr::Like(Like::new(
@@ -864,7 +889,11 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
             Some(Value::SingleQuotedString(char)) if char.len() == 1 => {
                 Some(char.chars().next().unwrap())
             }
-            Some(value) => return plan_err!("Invalid escape character in SIMILAR TO expression. Expected a single character wrapped with single quotes, got {value}"),
+            Some(value) => {
+                return plan_err!(
+                    "Invalid escape character in SIMILAR TO expression. Expected a single character wrapped with single quotes, got {value}"
+                );
+            }
             None => None,
         };
         Ok(Expr::SimilarTo(Like::new(
@@ -960,7 +989,7 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
     fn sql_cast_to_expr(
         &self,
         expr: SQLExpr,
-        data_type: SQLDataType,
+        data_type: &SQLDataType,
         format: Option<CastFormat>,
         schema: &DFSchema,
         planner_context: &mut PlannerContext,
@@ -969,12 +998,12 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
             return not_impl_err!("CAST with format is not supported: {format}");
         }
 
-        let dt = self.convert_data_type(&data_type)?;
+        let dt = self.convert_data_type_to_field(data_type)?;
         let expr = self.sql_expr_to_logical_expr(expr, schema, planner_context)?;
 
         // numeric constants are treated as seconds (rather as nanoseconds)
         // to align with postgres / duckdb semantics
-        let expr = match &dt {
+        let expr = match dt.data_type() {
             DataType::Timestamp(TimeUnit::Nanosecond, tz)
                 if expr.get_type(schema)? == DataType::Int64 =>
             {
@@ -986,7 +1015,12 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
             _ => expr,
         };
 
-        Ok(Expr::Cast(Cast::new(Box::new(expr), dt)))
+        // Currently drops metadata attached to the type
+        // https://github.com/apache/datafusion/issues/18060
+        Ok(Expr::Cast(Cast::new(
+            Box::new(expr),
+            dt.data_type().clone(),
+        )))
     }
 
     /// Extracts the root expression and access chain from a compound expression.
@@ -1180,8 +1214,8 @@ mod tests {
     use sqlparser::dialect::GenericDialect;
     use sqlparser::parser::Parser;
 
-    use datafusion_common::config::ConfigOptions;
     use datafusion_common::TableReference;
+    use datafusion_common::config::ConfigOptions;
     use datafusion_expr::logical_plan::builder::LogicalTableSource;
     use datafusion_expr::{AggregateUDF, ScalarUDF, TableSource, WindowUDF};
 

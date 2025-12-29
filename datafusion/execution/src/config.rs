@@ -23,8 +23,8 @@ use std::{
 };
 
 use datafusion_common::{
-    config::{ConfigExtension, ConfigOptions, SpillCompression},
     Result, ScalarValue,
+    config::{ConfigExtension, ConfigOptions, SpillCompression},
 };
 
 /// Configuration options for [`SessionContext`].
@@ -44,12 +44,15 @@ use datafusion_common::{
 /// shorthand for setting `datafusion.execution.batch_size`.
 ///
 /// ```
-/// use datafusion_execution::config::SessionConfig;
 /// use datafusion_common::ScalarValue;
+/// use datafusion_execution::config::SessionConfig;
 ///
 /// let config = SessionConfig::new()
-///    .set("datafusion.execution.batch_size", &ScalarValue::UInt64(Some(1234)))
-///    .set_bool("datafusion.execution.parquet.pushdown_filters", true);
+///     .set(
+///         "datafusion.execution.batch_size",
+///         &ScalarValue::UInt64(Some(1234)),
+///     )
+///     .set_bool("datafusion.execution.parquet.pushdown_filters", true);
 ///
 /// assert_eq!(config.batch_size(), 1234);
 /// assert_eq!(config.options().execution.batch_size, 1234);
@@ -421,6 +424,13 @@ impl SessionConfig {
         self.options.optimizer.enable_round_robin_repartition
     }
 
+    /// Enables or disables sort pushdown optimization, and currently only
+    /// applies to Parquet data source.
+    pub fn with_enable_sort_pushdown(mut self, enabled: bool) -> Self {
+        self.options_mut().optimizer.enable_sort_pushdown = enabled;
+        self
+    }
+
     /// Set the size of [`sort_spill_reservation_bytes`] to control
     /// memory pre-reservation
     ///
@@ -502,8 +512,8 @@ impl SessionConfig {
     ///
     /// # Example
     /// ```
-    /// use std::sync::Arc;
     /// use datafusion_execution::config::SessionConfig;
+    /// use std::sync::Arc;
     ///
     /// // application-specific extension types
     /// struct Ext1(u8);
@@ -545,8 +555,8 @@ impl SessionConfig {
     ///
     /// # Example
     /// ```
-    /// use std::sync::Arc;
     /// use datafusion_execution::config::SessionConfig;
+    /// use std::sync::Arc;
     ///
     /// // application-specific extension types
     /// struct Ext1(u8);

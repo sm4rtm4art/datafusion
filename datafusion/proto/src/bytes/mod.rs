@@ -24,15 +24,15 @@ use crate::physical_plan::{
     AsExecutionPlan, DefaultPhysicalExtensionCodec, PhysicalExtensionCodec,
 };
 use crate::protobuf;
-use datafusion_common::{plan_datafusion_err, Result};
+use datafusion_common::{Result, plan_datafusion_err};
 use datafusion_execution::TaskContext;
 use datafusion_expr::{
-    create_udaf, create_udf, create_udwf, AggregateUDF, Expr, LogicalPlan, Volatility,
-    WindowUDF,
+    AggregateUDF, Expr, LogicalPlan, Volatility, WindowUDF, create_udaf, create_udf,
+    create_udwf,
 };
 use prost::{
-    bytes::{Bytes, BytesMut},
     Message,
+    bytes::{Bytes, BytesMut},
 };
 use std::sync::Arc;
 
@@ -313,7 +313,7 @@ pub fn physical_plan_from_json(
     let back: protobuf::PhysicalPlanNode = serde_json::from_str(json)
         .map_err(|e| plan_datafusion_err!("Error serializing plan: {e}"))?;
     let extension_codec = DefaultPhysicalExtensionCodec {};
-    back.try_into_physical_plan(&ctx, &extension_codec)
+    back.try_into_physical_plan(ctx, &extension_codec)
 }
 
 /// Deserialize a PhysicalPlan from bytes

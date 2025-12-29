@@ -31,6 +31,9 @@ rust-version = { workspace = true }
 [package.metadata.docs.rs]
 all-features = true
 
+# Note: add additional linter rules in lib.rs.
+# Rust does not support workspace + new linter rules in subcrates yet
+# https://github.com/rust-lang/cargo/issues/13157
 [lints]
 workspace = true
 
@@ -48,6 +51,7 @@ sql = []
 [dependencies]
 arrow = { workspace = true }
 async-trait = { workspace = true }
+chrono = { workspace = true }
 dashmap = { workspace = true }
 datafusion-common = { workspace = true, default-features = false }
 datafusion-expr = { workspace = true, default-features = false }
@@ -61,5 +65,4 @@ tempfile = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 insta = { workspace = true }

@@ -17,38 +17,38 @@
 
 use std::sync::Arc;
 
+use arrow::datatypes::Field;
 use datafusion_common::{
-    exec_datafusion_err, internal_err, plan_datafusion_err, NullEquality,
-    RecursionUnnestOption, Result, ScalarValue, TableReference, UnnestOptions,
+    NullEquality, RecursionUnnestOption, Result, ScalarValue, TableReference,
+    UnnestOptions, exec_datafusion_err, internal_err, plan_datafusion_err,
 };
 use datafusion_execution::registry::FunctionRegistry;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::expr::{Alias, NullTreatment, Placeholder, Sort};
 use datafusion_expr::expr::{Unnest, WildcardOptions};
 use datafusion_expr::{
-    expr::{self, InList, WindowFunction},
-    logical_plan::{PlanType, StringifiedPlan},
     Between, BinaryExpr, Case, Cast, Expr, GroupingSet,
     GroupingSet::GroupingSets,
     JoinConstraint, JoinType, Like, Operator, TryCast, WindowFrame, WindowFrameBound,
     WindowFrameUnits,
+    expr::{self, InList, WindowFunction},
+    logical_plan::{PlanType, StringifiedPlan},
 };
 use datafusion_expr::{ExprFunctionExt, WriteOp};
-use datafusion_proto_common::{from_proto::FromOptionalField, FromProtoError as Error};
+use datafusion_proto_common::{FromProtoError as Error, from_proto::FromOptionalField};
 
 use crate::protobuf::plan_type::PlanTypeEnum::{
     FinalPhysicalPlanWithSchema, InitialPhysicalPlanWithSchema,
 };
 use crate::protobuf::{
-    self,
+    self, AnalyzedLogicalPlanType, CubeNode, GroupingSetNode, OptimizedLogicalPlanType,
+    OptimizedPhysicalPlanType, PlaceholderNode, RollupNode,
     plan_type::PlanTypeEnum::{
         AnalyzedLogicalPlan, FinalAnalyzedLogicalPlan, FinalLogicalPlan,
         FinalPhysicalPlan, FinalPhysicalPlanWithStats, InitialLogicalPlan,
         InitialPhysicalPlan, InitialPhysicalPlanWithStats, OptimizedLogicalPlan,
         OptimizedPhysicalPlan, PhysicalPlanError,
     },
-    AnalyzedLogicalPlanType, CubeNode, GroupingSetNode, OptimizedLogicalPlanType,
-    OptimizedPhysicalPlanType, PlaceholderNode, RollupNode,
 };
 
 use super::LogicalExtensionCodec;
@@ -315,8 +315,7 @@ pub fn parse_expr(
                     let null_treatment  =  protobuf::NullTreatment::try_from(null_treatment)
                     .map_err(|_| {
                         proto_error(format!(
-                            "Received a WindowExprNode message with unknown NullTreatment {}",
-                            null_treatment
+                            "Received a WindowExprNode message with unknown NullTreatment {null_treatment}",
                         ))
                     })?;
                     Some(NullTreatment::from(null_treatment))
@@ -596,8 +595,7 @@ pub fn parse_expr(
                     let null_treatment  =  protobuf::NullTreatment::try_from(null_treatment)
                     .map_err(|_| {
                         proto_error(format!(
-                            "Received an AggregateUdfExprNode message with unknown NullTreatment {}",
-                            null_treatment
+                            "Received an AggregateUdfExprNode message with unknown NullTreatment {null_treatment}",
                         ))
                     })?;
                     Some(NullTreatment::from(null_treatment))
@@ -628,12 +626,25 @@ pub fn parse_expr(
         ExprType::Rollup(RollupNode { expr }) => Ok(Expr::GroupingSet(
             GroupingSet::Rollup(parse_exprs(expr, registry, codec)?),
         )),
-        ExprType::Placeholder(PlaceholderNode { id, data_type }) => match data_type {
-            None => Ok(Expr::Placeholder(Placeholder::new(id.clone(), None))),
-            Some(data_type) => Ok(Expr::Placeholder(Placeholder::new(
+        ExprType::Placeholder(PlaceholderNode {
+            id,
+            data_type,
+            nullable,
+            metadata,
+        }) => match data_type {
+            None => Ok(Expr::Placeholder(Placeholder::new_with_field(
                 id.clone(),
-                Some(data_type.try_into()?),
+                None,
             ))),
+            Some(data_type) => {
+                let field =
+                    Field::new("", data_type.try_into()?, nullable.unwrap_or(true))
+                        .with_metadata(metadata.clone());
+                Ok(Expr::Placeholder(Placeholder::new_with_field(
+                    id.clone(),
+                    Some(field.into()),
+                )))
+            }
         },
     }
 }
@@ -717,6 +728,10 @@ pub fn from_proto_binary_op(op: &str) -> Result<Operator, Error> {
         "RegexMatch" => Ok(Operator::RegexMatch),
         "RegexNotIMatch" => Ok(Operator::RegexNotIMatch),
         "RegexNotMatch" => Ok(Operator::RegexNotMatch),
+        "LikeMatch" => Ok(Operator::LikeMatch),
+        "ILikeMatch" => Ok(Operator::ILikeMatch),
+        "NotLikeMatch" => Ok(Operator::NotLikeMatch),
+        "NotILikeMatch" => Ok(Operator::NotILikeMatch),
         "StringConcat" => Ok(Operator::StringConcat),
         "AtArrow" => Ok(Operator::AtArrow),
         "ArrowAt" => Ok(Operator::ArrowAt),

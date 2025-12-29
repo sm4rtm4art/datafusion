@@ -19,16 +19,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{
-    get_query_sql, get_tbl_tpch_table_schema, get_tpch_table_schema, TPCH_QUERY_END_ID,
-    TPCH_QUERY_START_ID, TPCH_TABLES,
+    TPCH_QUERY_END_ID, TPCH_QUERY_START_ID, TPCH_TABLES, get_query_sql,
+    get_tbl_tpch_table_schema, get_tpch_table_schema,
 };
-use crate::util::{print_memory_stats, BenchmarkRun, CommonOpt, QueryResult};
+use crate::util::{BenchmarkRun, CommonOpt, QueryResult, print_memory_stats};
 
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty::{self, pretty_format_batches};
+use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::csv::CsvFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
-use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
@@ -92,6 +92,15 @@ pub struct RunOpt {
     #[structopt(short = "j", long = "prefer_hash_join", default_value = "true")]
     prefer_hash_join: BoolDefaultTrue,
 
+    /// If true then Piecewise Merge Join can be used, if false then it will opt for Nested Loop Join
+    /// False by default.
+    #[structopt(
+        short = "w",
+        long = "enable_piecewise_merge_join",
+        default_value = "false"
+    )]
+    enable_piecewise_merge_join: BoolDefaultTrue,
+
     /// Mark the first column of each table as sorted in ascending order.
     /// The tables should have been created with the `--sort` option for this to have any effect.
     #[structopt(short = "t", long = "sorted")]
@@ -112,6 +121,8 @@ impl RunOpt {
             .config()?
             .with_collect_statistics(!self.disable_statistics);
         config.options_mut().optimizer.prefer_hash_join = self.prefer_hash_join;
+        config.options_mut().optimizer.enable_piecewise_merge_join =
+            self.enable_piecewise_merge_join;
         let rt_builder = self.common.runtime_env_builder()?;
         let ctx = SessionContext::new_with_config_rt(config, rt_builder.build_arc()?);
         // register tables
@@ -379,6 +390,7 @@ mod tests {
             output_path: None,
             disable_statistics: false,
             prefer_hash_join: true,
+            enable_piecewise_merge_join: false,
             sorted: false,
         };
         opt.register_tables(&ctx).await?;
@@ -416,6 +428,7 @@ mod tests {
             output_path: None,
             disable_statistics: false,
             prefer_hash_join: true,
+            enable_piecewise_merge_join: false,
             sorted: false,
         };
         opt.register_tables(&ctx).await?;
