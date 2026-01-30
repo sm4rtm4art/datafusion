@@ -40,6 +40,72 @@ This guide covers **extending DataFusion** with custom functions, data sources, 
 
 Understanding DataFusion's execution model enables you to build efficient custom operators and troubleshoot performance issues.
 
+### Parquet File Structure
+
+**Understanding Parquet's internal structure helps you optimize file layout for query performance.**
+
+```text
+PARQUET FILE STRUCTURE & SCANNING LOGIC
+════════════════════════════════════════════════════════════════════════════
+
+  Query: SELECT "price" FROM table WHERE "date" = '2026-01-02'
+
+         (Physically stored on disk)        (DataFusion Reader Logic)
+┌──────────────────────────────────────────┐
+│             PARQUET FILE                 │  1. READ FOOTER FIRST
+│                                          │  (Load Schema & Stats)
+│  ┌────────────────────────────────────┐  │            │
+│  │           FILE FOOTER              │◄──────────────┘
+│  │ (Schema, Row Group Metadata, Stats)│  │
+│  └────────────────────────────────────┘  │
+│                                          │
+│  ┌────────────────────────────────────┐  │  2. ROW GROUP PRUNING
+│  │           ROW GROUP 1              │  │  Check Stats:
+│  │     (Rows 0 - 10,000)              │  │  "date" min: '2026-01-01'
+│  │                                    │  │  "date" max: '2026-01-01'
+│  │ ┌───────────┐  ┌───────────┐       │  │
+│  │ │ Col: date │  │ Col: price│       │  │  Result: SKIP ENTIRE GROUP
+│  │ └───────────┘  └───────────┘       │  │  (No IO for these columns)
+│  └────────────────────────────────────┘  │
+│                                          │
+│  ┌────────────────────────────────────┐  │  3. COLUMN PRUNING
+│  │           ROW GROUP 2              │  │  Check Stats:
+│  │     (Rows 10,001 - 20,000)         │  │  "date" min: '2026-01-02'
+│  │                                    │  │  "date" max: '2026-01-02'
+│  │ ┌───────────┐  ┌───────────┐       │  │  Result: MATCH!
+│  │ │ Col: date │  │ Col: price│◄──────┼─────Read only "price" column
+│  │ └───────────┘  └───────────┘       │  │  (Skip "date" data after
+│  └────────────────────────────────────┘  │   verifying stats)
+└──────────────────────────────────────────┘
+```
+
+> **Why is metadata a footer at the bottom?** <br>
+> Parquet is a "write-once" format: statistics aren't known until all data is written, so the footer goes last. Parquet readers seek to the end of the file first—then they know where everything else is.
+
+Parquet files organize data into **row groups** (horizontal partitions, typically 128MB) containing **column chunks**:
+
+| Component         | Description                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Row groups**    | Independent horizontal slices (~128MB each). Each can be read/skipped separately.                                      |
+| **Column chunks** | One per column per row group. **Stored contiguously on disk**—enables efficient seeks to read only the needed columns. |
+| **Statistics**    | Min/max values, null count per column chunk—enables row group pruning.                                                 |
+| **Footer**        | Schema + row group metadata. Read first to plan the query (~few KB).                                                   |
+
+**Practical considerations:**
+
+- **Row group size** <br>
+  Commonly ~128MB (writer-dependent). Larger (512MB–1GB) improves sequential I/O; smaller improves pruning granularity.
+- **Schema evolution** <br>
+  Columns can be added but renaming/reordering is limited. Plan schema upfront.
+- **Compression** <br>
+  Set at write time (Snappy, Zstd, Gzip). Reader handles any compression automatically. See [Writing Parquet](writing-dataframes.md#writing-to-parquet) for compression options.
+
+For more details, see:
+
+- [Apache Parquet Documentation](https://parquet.apache.org/docs/) — Official specification
+- [Parquet rust crate](https://docs.rs/parquet/latest/parquet/) documentation
+- [Parquet Viewer](https://github.com/domoritz/parquet-viewer) — Explore schema, row groups, and statistics visually
+
 ### Physical Plan Customization
 
 The physical plan determines how DataFusion executes your query. You can inspect and customize it for advanced optimizations.
@@ -447,6 +513,20 @@ Arrow Flight enables:
 - **Streaming**: Handle results larger than memory
 - **Authentication**: Integrate with existing auth systems
 
+> **Tip:** <br>
+> If you need a SQL protocol (for example, JDBC clients), consider Arrow Flight SQL. DataFusion includes an example Flight SQL server in `datafusion-examples/examples/flight/flight_sql_server.rs`.
+
+### ADBC (Arrow Database Connectivity)
+
+**ADBC standardizes database connectivity APIs that exchange query results as Arrow streams, rather than row-by-row.**
+This is useful when you want to keep data in Arrow format end-to-end and reduce row-to-column conversion at system boundaries.
+
+- **Overview/specification:** [ADBC: Arrow Database Connectivity](https://arrow.apache.org/docs/format/ADBC.html)
+- **Rust quickstart (DataFusion driver):** [ADBC Rust quickstart](https://arrow.apache.org/adbc/current/rust/quickstart.html)
+
+> **Note:** <br>
+> The ADBC DataFusion driver (`adbc_datafusion`) is maintained in the Apache Arrow ADBC project, not in this repository.
+
 ### Ballista: Distributed Execution
 
 [Ballista](https://github.com/apache/datafusion-ballista) extends DataFusion to distributed execution across multiple machines:
@@ -793,7 +873,7 @@ async fn main() -> datafusion::error::Result<()> {
 > - [Blue Elephants Inspecting Pandas] - Research on ML pipeline inspection in SQL
 > - [mlinspect] - Python framework for ML pipeline inspection
 
-[Blue Elephants Inspecting Pandas]: https://arxiv.org/abs/2309.07564 "Research paper on inspecting ML pipelines"
+[blue elephants inspecting pandas]: https://arxiv.org/abs/2309.07564 "Research paper on inspecting ML pipelines"
 [mlinspect]: https://github.com/stefan-grafberger/mlinspect "Python ML pipeline inspection framework"
 
 ---
@@ -834,12 +914,12 @@ This guide is designed for community expansion. Each section has **Extension Poi
 
 <!-- Link references -->
 
-[`ExecutionPlan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`CatalogProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
-[`CatalogProviderList`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProviderList.html
-[`SchemaProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
-[`Accumulator`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/trait.Accumulator.html
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`catalogprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
+[`catalogproviderlist`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProviderList.html
+[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
+[`accumulator`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/trait.Accumulator.html
 [`custom_datasource`]: https://github.com/apache/datafusion/tree/main/datafusion-examples/examples/custom_datasource
 [`custom_file_format.rs`]: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/custom_file_format.rs
 [`simple_udf.rs`]: https://github.com/apache/datafusion/tree/main/datafusion-examples/examples/simple_udf.rs

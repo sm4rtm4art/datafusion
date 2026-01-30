@@ -41,15 +41,15 @@ DataFusion [`DataFrame`]s are modeled after the [Pandas DataFrame] interface and
 
 The documentation follows the **lifecycle of a DataFrame**—from creation to execution (Inspiered by [the desctiption of physics of photons][photon]):
 
-| Phase             | Document                                      | What Happens                                |
-| ----------------- | --------------------------------------------- | ------------------------------------------- |
-| **Understanding** | [Concepts](concepts.md)                       | What are DataFrames and where do they live? |
-| **Birth**         | [Creating DataFrames](creating-dataframes.md) | Instantiate from files, SQL, in-memory data |
-| **Health**        | [Schema Management](schema-management.md)     | Inspect, validate, and evolve schema        |
-| **Life**          | [Transformations](transformations.md)         | Filter, join, aggregate, sort, enrich       |
-| **Death**         | [Writing & Executing](writing-dataframes.md)  | Materialize results or persist to storage   |
-| **Wellness**      | [Best Practices](best-practices.md)           | Optimize performance and debug issues       |
-| **Graduation**    | [Advanced Topics](dataframes-advance.md)      | S3, Kafka, Arrow Flight, custom execution   |
+| Phase             | Document                                      | What Happens                                    |
+| ----------------- | --------------------------------------------- | ----------------------------------------------- |
+| **Understanding** | [Concepts](concepts.md)                       | What are DataFrames and where do they live?     |
+| **Birth**         | [Creating DataFrames](creating-dataframes.md) | Instantiate from files, SQL, in-memory data     |
+| **Health**        | [Schema Management](schema-management.md)     | Inspect, validate, and evolve schema            |
+| **Life**          | [Transformations](transformations.md)         | Filter, join, aggregate, sort, enrich           |
+| **Death**         | [Writing & Executing](writing-dataframes.md)  | Materialize results or persist to storage       |
+| **Wellness**      | [Best Practices](best-practices.md)           | Optimize performance and debug issues           |
+| **Graduation**    | [Advanced Topics](dataframes-advance.md)      | S3, Kafka, Arrow Flight, ADBC, custom execution |
 
 ## Quick Navigation
 
@@ -105,54 +105,76 @@ Cache for reuse              df.cache().await?
 
 **Reading data:**
 
-```rust
-// CSV
-ctx.read_csv("data.csv", CsvReadOptions::new()).await?
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::error::Result;
 
-// JSON (NDJSON)
-ctx.read_json("data.json", NdJsonReadOptions::default()).await?
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
 
-// Parquet
-ctx.read_parquet("data.parquet", ParquetReadOptions::default()).await?
+    // CSV
+    ctx.read_csv("data.csv", CsvReadOptions::new()).await?;
 
-// In-memory
-ctx.read_batch(record_batch)?
+    // JSON (NDJSON)
+    ctx.read_json("data.json", NdJsonReadOptions::default()).await?;
+
+    // Parquet
+    ctx.read_parquet("data.parquet", ParquetReadOptions::default()).await?;
+
+    // In-memory (from a RecordBatch)
+    let record_batch = ctx.sql("SELECT 1 as id").await?.collect().await?.pop().unwrap();
+    ctx.read_batch(record_batch)?;
+
+    Ok(())
+}
 ```
 
 **Writing data:**
 
-```rust
-// Parquet (partitioned by year)
-df.write_parquet(
-    "out/",
-    DataFrameWriteOptions::new().with_partition_by(vec!["year".to_string()]),
-    None
-).await?
+```rust,no_run
+use datafusion::prelude::*;
+use datafusion::dataframe::DataFrameWriteOptions;
+use datafusion::config::CsvOptions;
+use datafusion::common::parsers::CompressionTypeVariant;
+use datafusion::error::Result;
 
-// Parquet (single file)
-df.write_parquet(
-    "out/file.parquet",
-    DataFrameWriteOptions::new().with_single_file_output(true),
-    None
-).await?
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+    let df = ctx.sql("SELECT 1 as year").await?;
 
-// CSV with compression
-df.write_csv(
-    "out.csv.gz",
-    DataFrameWriteOptions::new(),
-    Some(CsvOptions::default()
+    // Parquet (partitioned by year)
+    df.clone().write_parquet(
+        "out/",
+        DataFrameWriteOptions::new().with_partition_by(vec!["year".to_string()]),
+        None
+    ).await?;
+
+    // Parquet (single file)
+    df.clone().write_parquet(
+        "out/file.parquet",
+        DataFrameWriteOptions::new().with_single_file_output(true),
+        None
+    ).await?;
+
+    // CSV with compression and custom options
+    let csv_opts = CsvOptions::default()
         .with_delimiter(b'\t')
         .with_has_header(true)
-        .with_compression(CompressionTypeVariant::GZIP))
-).await?
+        .with_compression(CompressionTypeVariant::GZIP);
+    df.write_csv("out.csv.gz", DataFrameWriteOptions::new(), Some(csv_opts)).await?;
+
+    Ok(())
+}
 ```
 
 <!-- Link references -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`DataType`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html
-[Pandas DataFrame]: https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`datatype`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html
+[pandas dataframe]: https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
 [`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
 [photon]: https://www.sciencedaily.com/releases/2007/04/070402122514.htm

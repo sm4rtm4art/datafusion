@@ -703,6 +703,7 @@ The table below summarizes the key concerns. Think of these as a mental checklis
 | **Storage capacity** | Disk quotas are larger than RAM but still finite. Partitioned writes can create many small files—the "small files problem" that hurts downstream read performance. |
 | **Format lock-in**   | Your format choice affects every downstream consumer. Parquet preserves schema and compresses well; CSV loses types. Choose based on who reads the data next.      |
 | **Permissions**      | File system permissions and object store IAM policies must allow writes. These errors often surface late, during execution rather than planning.                   |
+| **Path handling**    | Write methods accept `&str` paths. Use `path.display().to_string()` (not `.to_str().unwrap()`) to convert `PathBuf`—it avoids panics on non-UTF-8 paths.           |
 
 > **Tip:** <br>
 > For production pipelines, validate write targets early (check permissions, available space) and implement retry logic for transient failures. See [Best Practices](best-practices.md) for patterns.
@@ -1019,9 +1020,9 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 1) Single file — simple export
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let path = output.path().join("sales.parquet");
+    let path = output.path().join("sales.parquet").display().to_string();
     sales_df.clone().write_parquet(
-        path.to_str().unwrap(),
+        &path,
         DataFrameWriteOptions::new(),
         None,
     ).await?;
@@ -1029,10 +1030,11 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 2) Directory output — enables parallel I/O on read
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let dir = output.path().join("sales_multi/");
-    std::fs::create_dir_all(&dir)?;
+    let dir_buf = output.path().join("sales_multi");
+    std::fs::create_dir_all(&dir_buf)?;
+    let dir = format!("{}/", dir_buf.display());
     sales_df.clone().write_parquet(
-        dir.to_str().unwrap(),
+        &dir,
         DataFrameWriteOptions::new(),
         None,
     ).await?;
@@ -1041,10 +1043,11 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 3) Partitioned dataset — hive-style directories for partition pruning
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let partitioned = output.path().join("sales_by_region/");
-    std::fs::create_dir_all(&partitioned)?;
+    let partitioned_buf = output.path().join("sales_by_region");
+    std::fs::create_dir_all(&partitioned_buf)?;
+    let partitioned = format!("{}/", partitioned_buf.display());
     sales_df.clone().write_parquet(
-        partitioned.to_str().unwrap(),
+        &partitioned,
         DataFrameWriteOptions::new()
             .with_partition_by(vec!["region".into()]),
         None,
@@ -1055,12 +1058,12 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 4) Sorted + compressed — optimized for range scans
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let optimized = output.path().join("sales_optimized.parquet");
+    let optimized = output.path().join("sales_optimized.parquet").display().to_string();
     let mut parquet_opts = TableParquetOptions::default();
     parquet_opts.global.compression = Some("zstd(3)".into());
 
     sales_df.write_parquet(
-        optimized.to_str().unwrap(),
+        &optimized,
         DataFrameWriteOptions::new()
             .with_sort_by(vec![col("sale_date").sort(true, false)]),
         Some(parquet_opts),
@@ -1154,9 +1157,9 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 1) Standard CSV — comma-delimited with header
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let path = output.path().join("sales.csv");
+    let path = output.path().join("sales.csv").display().to_string();
     sales_df.clone().write_csv(
-        path.to_str().unwrap(),
+        &path,
         DataFrameWriteOptions::new(),
         None,  // defaults: comma, header, no compression
     ).await?;
@@ -1164,9 +1167,9 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 2) TSV with compression — for log ingestion pipelines
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let path = output.path().join("sales.tsv.gz");
+    let path = output.path().join("sales.tsv.gz").display().to_string();
     sales_df.clone().write_csv(
-        path.to_str().unwrap(),
+        &path,
         DataFrameWriteOptions::new(),
         Some(CsvOptions::default()
             .with_delimiter(b'\t')
@@ -1176,9 +1179,9 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 3) European-style CSV — semicolon delimiter, no header
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let path = output.path().join("sales_eu.csv");
+    let path = output.path().join("sales_eu.csv").display().to_string();
     sales_df.write_csv(
-        path.to_str().unwrap(),
+        &path,
         DataFrameWriteOptions::new(),
         Some(CsvOptions::default()
             .with_delimiter(b';')
@@ -1224,7 +1227,7 @@ COPY (SELECT ...) TO 'path' STORED AS JSON
 
 > **Note:** <br> > [`JsonOptions`] is minimal—just :
 
-- [`compression`][`JsonOptions.compression`]
+- [`compression`][`jsonoptions.compression`]
 - [`schema_infer_max_rec`]
 
 No builder methods; set fields directly.
@@ -1252,9 +1255,9 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 1) Standard NDJSON — one JSON object per line
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let path = output.path().join("events.ndjson");
+    let path = output.path().join("events.ndjson").display().to_string();
     events_df.clone().write_json(
-        path.to_str().unwrap(),
+        &path,
         DataFrameWriteOptions::new(),
         None,
     ).await?;
@@ -1266,12 +1269,12 @@ async fn main() -> Result<()> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 2) Compressed NDJSON — for log shipping
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let path = output.path().join("events.ndjson.gz");
+    let path = output.path().join("events.ndjson.gz").display().to_string();
     let mut json_opts = JsonOptions::default();
     json_opts.compression = CompressionTypeVariant::GZIP;
 
     events_df.write_json(
-        path.to_str().unwrap(),
+        &path,
         DataFrameWriteOptions::new(),
         Some(json_opts),
     ).await?;
@@ -1312,12 +1315,12 @@ Use [`DataFrameWriteOptions::with_insert_operation(...)`][`with_insert_operation
 
 | Operation                            | SQL Equivalent     | Behavior                                    | Provider Support               |
 | ------------------------------------ | ------------------ | ------------------------------------------- | ------------------------------ |
-| [`InsertOp::Append`][`Append`]       | `INSERT INTO`      | Add new rows to existing data               | Most providers                 |
-| [`InsertOp::Overwrite`][`Overwrite`] | `INSERT OVERWRITE` | Replace all existing rows                   | Some providers (e.g., Parquet) |
-| [`InsertOp::Replace`][`Replace`]     | `REPLACE INTO`     | Replace conflicting rows (upsert semantics) | Few providers                  |
+| [`InsertOp::Append`][`append`]       | `INSERT INTO`      | Add new rows to existing data               | Most providers                 |
+| [`InsertOp::Overwrite`][`overwrite`] | `INSERT OVERWRITE` | Replace all existing rows                   | Some providers (e.g., Parquet) |
+| [`InsertOp::Replace`][`replace`]     | `REPLACE INTO`     | Replace conflicting rows (upsert semantics) | Few providers                  |
 
 > **Warning:** <br>
-> Not all providers support all operations. <br> > [`MemTable`] currently supports [`Append`] only. Check your provider's documentation for supported operations. See [docs.rs][`MemTable::insert_into`]
+> Not all providers support all operations. <br> > [`MemTable`] currently supports [`Append`] only. Check your provider's documentation for supported operations. See [docs.rs][`memtable::insert_into`]
 
 #### Schema Compatibility
 
@@ -1470,12 +1473,12 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 > **Build your own:** <br>
 > See [Custom Table Provider] for implementing data sources/sinks, or [datafusion-contrib](https://github.com/datafusion-contrib) for community integrations.
 
-[Catalogs, Schemas, and Tables]: https://datafusion.apache.org/library-user-guide/catalogs.html
-[Custom Table Provider]: https://datafusion.apache.org/library-user-guide/custom-table-providers.html
-[Apache Iceberg]: https://iceberg.apache.org/
-[Delta Lake]: https://delta.io/
-[Apache Hudi]: https://hudi.apache.org/
-[`TableProviderFactory`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProviderFactory.html
+[catalogs, schemas, and tables]: https://datafusion.apache.org/library-user-guide/catalogs.html
+[custom table provider]: https://datafusion.apache.org/library-user-guide/custom-table-providers.html
+[apache iceberg]: https://iceberg.apache.org/
+[delta lake]: https://delta.io/
+[apache hudi]: https://hudi.apache.org/
+[`tableproviderfactory`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProviderFactory.html
 
 ## Quick Reference
 
@@ -1539,14 +1542,14 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 
 <!-- Tobe sorted Later (Ongoing tomorrow job ;D) -->
 
-[`ListingTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
 [`date_format`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html#method.date_format
 [`timestamp_format`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html#method.timestamp_format
 [`null`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html#method.null
 [`quote`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html#method.quote
-[`WriterBuilder`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html
-[Predicate Pushdown]: creating-dataframes.md#predicate-pushdown-filtering-at-source
-[Partitioned Datasets]: schema-management.md#strategy-3-partitioned-datasets--pruning-with-listingtable
+[`writerbuilder`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html
+[predicate pushdown]: creating-dataframes.md#predicate-pushdown-filtering-at-source
+[partitioned datasets]: schema-management.md#strategy-3-partitioned-datasets--pruning-with-listingtable
 [parquet-pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
 [parquet-pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
 [`.with_escape()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_escape
@@ -1554,23 +1557,23 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 [`.with_terminator()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_terminator
 [`.with_truncated_rows()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_truncated_rows
 [`.with_compression()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_compression
-[`JsonOptions.compression`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.JsonOptions.html#structfield.compression
+[`jsonoptions.compression`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.JsonOptions.html#structfield.compression
 [`schema_infer_max_rec`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.JsonOptions.html#structfield.schema_infer_max_rec
-[`Append`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/dml/enum.InsertOp.html#variant.Append
-[`Overwrite`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/dml/enum.InsertOp.html#variant.Overwrite
-[`Replace`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/dml/enum.InsertOp.html#variant.Replace
+[`append`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/dml/enum.InsertOp.html#variant.Append
+[`overwrite`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/dml/enum.InsertOp.html#variant.Overwrite
+[`replace`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/dml/enum.InsertOp.html#variant.Replace
 [`with_insert_operation()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrameWriteOptions.html#method.with_insert_operation
-[`ExecutionPlan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
-[`MemTable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.MemTable.html
-[`MemTable::insert_into`]: https://docs.rs/datafusion-catalog/51.0.0/src/datafusion_catalog/memory/table.rs.html#274-298
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.MemTable.html
+[`memtable::insert_into`]: https://docs.rs/datafusion-catalog/51.0.0/src/datafusion_catalog/memory/table.rs.html#274-298
 
 <!-- Local references for this section -->
 
-[`MemoryPool`]: https://docs.rs/datafusion/latest/datafusion/execution/memory_pool/trait.MemoryPool.html
-[`DiskManager`]: https://docs.rs/datafusion/latest/datafusion/execution/disk_manager/struct.DiskManager.html
-[`RuntimeEnv`]: https://docs.rs/datafusion/latest/datafusion/execution/runtime_env/struct.RuntimeEnv.html
-[`RuntimeEnvBuilder`]: https://docs.rs/datafusion/latest/datafusion/execution/runtime_env/struct.RuntimeEnvBuilder.html
-[`Partitioning`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Partitioning.html
+[`memorypool`]: https://docs.rs/datafusion/latest/datafusion/execution/memory_pool/trait.MemoryPool.html
+[`diskmanager`]: https://docs.rs/datafusion/latest/datafusion/execution/disk_manager/struct.DiskManager.html
+[`runtimeenv`]: https://docs.rs/datafusion/latest/datafusion/execution/runtime_env/struct.RuntimeEnv.html
+[`runtimeenvbuilder`]: https://docs.rs/datafusion/latest/datafusion/execution/runtime_env/struct.RuntimeEnvBuilder.html
+[`partitioning`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Partitioning.html
 [`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
 [`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
 [`.repartition()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.repartition
@@ -1590,32 +1593,32 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 
 <!-- External Datafusion documentation -->
 
-[Architecture Guide]: https://docs.rs/datafusion/latest/datafusion/#architecture
-[SIGMOD 2024 Paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
-[How Query Engines Work]: https://howqueryengineswork.com/00-introduction.html
-[Apache Arrow Columnar Format]: https://arrow.apache.org/docs/format/Columnar.html
-[Morsel-Driven Parallelism]: https://db.in.tum.de/~leis/papers/morsels.pdf
-[Configuration Settings]: ../../user-guide/configs.md
-[Streaming Execution (crate docs)]: https://docs.rs/datafusion/latest/datafusion/#streaming-execution
-[Ordering Analysis (DataFusion blog)]: https://datafusion.apache.org/blog/2025/03/11/ordering-analysis
-[Databricks KB: Spark cache recomputation pitfalls]: https://kb.databricks.com/python/expensive-transformation-on-dataframe-is-recalculated-even-when-cached
-[Understanding Spark Execution Planning]: https://medium.com/@aj.patil9292/understanding-spark-execution-planning-from-code-to-cluster-66ea1bd372df
-[Understanding Lazy Evaluation in Polars]: https://medium.com/data-science/understanding-lazy-evaluation-in-polars-b85ccb864d0c
+[architecture guide]: https://docs.rs/datafusion/latest/datafusion/#architecture
+[sigmod 2024 paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
+[how query engines work]: https://howqueryengineswork.com/00-introduction.html
+[apache arrow columnar format]: https://arrow.apache.org/docs/format/Columnar.html
+[morsel-driven parallelism]: https://db.in.tum.de/~leis/papers/morsels.pdf
+[configuration settings]: ../../user-guide/configs.md
+[streaming execution (crate docs)]: https://docs.rs/datafusion/latest/datafusion/#streaming-execution
+[ordering analysis (datafusion blog)]: https://datafusion.apache.org/blog/2025/03/11/ordering-analysis
+[databricks kb: spark cache recomputation pitfalls]: https://kb.databricks.com/python/expensive-transformation-on-dataframe-is-recalculated-even-when-cached
+[understanding spark execution planning]: https://medium.com/@aj.patil9292/understanding-spark-execution-planning-from-code-to-cluster-66ea1bd372df
+[understanding lazy evaluation in polars]: https://medium.com/data-science/understanding-lazy-evaluation-in-polars-b85ccb864d0c
 
 <!-- Core type references -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`RecordBatch`]: https://docs.rs/arrow-array/latest/arrow_array/struct.RecordBatch.html
-[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`SessionContext::register_table`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`recordbatch`]: https://docs.rs/arrow-array/latest/arrow_array/struct.RecordBatch.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessioncontext::register_table`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
 [`register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
-[`DataFrameWriteOptions`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrameWriteOptions.html
-[`InsertOp`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/dml/enum.InsertOp.html
-[`TableParquetOptions`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.TableParquetOptions.html
-[`CsvOptions`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html
-[`JsonOptions`]: https://docs.rs/datafusion/latest/datafusion/config/struct.JsonOptions.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+[`dataframewriteoptions`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrameWriteOptions.html
+[`insertop`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/dml/enum.InsertOp.html
+[`tableparquetoptions`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.TableParquetOptions.html
+[`csvoptions`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html
+[`jsonoptions`]: https://docs.rs/datafusion/latest/datafusion/config/struct.JsonOptions.html
 
 <!-- Transformation method references -->
 
@@ -1646,7 +1649,7 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 [`.write_json()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_json
 [`.write_table()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_table
 [`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
-[`TableProvider::insert_into`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#method.insert_into
+[`tableprovider::insert_into`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#method.insert_into
 [`.with_delimiter()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_delimiter
 [`.with_has_header()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_has_header
 [`.with_quote()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_quote

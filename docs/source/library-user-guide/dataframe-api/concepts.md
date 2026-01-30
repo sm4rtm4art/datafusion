@@ -340,7 +340,7 @@ Understanding how schemas flow—and how null values behave within them—preven
 
 Recall that a `DataFrame` wraps a `LogicalPlan` (see [What is a DataFrame?](#what-is-a-dataframe)). The diagram below shows how schemas propagate through this structure—from source catalog to final execution:
 
-[`DataType`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
+[`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
 
 ```text
 SessionContext (catalog)
@@ -589,7 +589,7 @@ Since `NULL` can't be compared (is `NULL < 5`?), sorting must define where NULLs
 
 PostgreSQL defaults: ASC puts nulls last, DESC puts nulls first.
 
-[`NullEquality`]: https://docs.rs/datafusion/latest/datafusion/common/enum.NullEquality.html
+[`nullequality`]: https://docs.rs/datafusion/latest/datafusion/common/enum.NullEquality.html
 
 ```rust
 use datafusion::prelude::*;
@@ -741,7 +741,7 @@ DataFrame → into_optimized_plan() → Optimized LogicalPlan
 DataFrame → create_physical_plan() → ExecutionPlan
 ```
 
-> **Learn more:** See [SessionContext and SessionState relationship][SessionContext and SessionState] for implementation details.
+> **Learn more:** See [SessionContext and SessionState relationship][sessioncontext and sessionstate] for implementation details.
 
 ### DataFrame vs. LogicalPlanBuilder
 
@@ -844,7 +844,7 @@ async fn main() -> Result<()> {
 > **Further reading:**
 >
 > - [Building Logical Plans](../building-logical-plans.md) — advanced [`LogicalPlanBuilder`] usage
-> - [`LogicalPlanBuilder` API docs][LogicalPlanBuilder] — full method reference
+> - [`LogicalPlanBuilder` API docs][logicalplanbuilder] — full method reference
 
 ## Execution Model: Actions vs. Transformations
 
@@ -1503,8 +1503,6 @@ Know what you want? Find the method here:
 | [Filter Pushdown in Parquet](https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/)                                               | Filter pushdown and late materialization |
 | [How Query Engines Work — DataFrames](https://howqueryengineswork.com/06-dataframe.html)                                                    | Conceptual background                    |
 
-<!-- TODO: To be sorted references (tomorrow task was yesterday ;) ) -->
-
 <!-- ==========================================================================
      REFERENCE-STYLE LINKS
      Keep alphabetized within each section for maintainability
@@ -1512,26 +1510,26 @@ Know what you want? Find the method here:
 
 <!-- External Resources & Blogs -->
 
-[Abstract Syntax Tree (AST)]: https://en.wikipedia.org/wiki/Abstract_syntax_tree
-[Architecture section]: https://docs.rs/datafusion/latest/datafusion/#architecture
-[Arrow Columnar Format]: https://arrow.apache.org/docs/format/Columnar.html
-[Arrow Introduction]: ../../user-guide/arrow-introduction.md
+[abstract syntax tree (ast)]: https://en.wikipedia.org/wiki/Abstract_syntax_tree
+[architecture section]: https://docs.rs/datafusion/latest/datafusion/#architecture
+[arrow columnar format]: https://arrow.apache.org/docs/format/Columnar.html
+[arrow introduction]: ../../user-guide/arrow-introduction.md
 [async-blog]: https://datafusion.apache.org/blog/2025/06/30/cancellation/
-[blog: Filter Pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
-[blog: Parquet Pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
-[Cooperative scheduling module]: https://docs.rs/datafusion-physical-plan/latest/datafusion_physical_plan/coop/index.html
+[blog: filter pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
+[blog: parquet pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
+[cooperative scheduling module]: https://docs.rs/datafusion-physical-plan/latest/datafusion_physical_plan/coop/index.html
 [dataframe-paper]: https://arxiv.org/abs/2001.00888
 [epic-12644]: https://github.com/apache/datafusion/issues/12644
 [epic-12723]: https://github.com/apache/datafusion/issues/12723
 [nulls via a bitmap]: https://arrow.apache.org/docs/format/Columnar.html#validity-bitmaps
 [optimizer-rules]: https://github.com/apache/datafusion/blob/main/datafusion/optimizer/src/optimizer.rs#L230-L257
 [physical-rules]: https://github.com/apache/datafusion/blob/main/datafusion/physical-optimizer/src/optimizer.rs#L86-L162
-[Rayon]: https://docs.rs/rayon/latest/rayon/
+[rayon]: https://docs.rs/rayon/latest/rayon/
 [roadmap]: https://datafusion.apache.org/contributor-guide/roadmap.html
 [sigmod-paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
-[Thread Scheduling documentation]: https://docs.rs/datafusion/latest/datafusion/index.html#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
-[Tokio]: https://tokio.rs
-[Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks]: https://www.influxdata.com/blog/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/
+[thread scheduling documentation]: https://docs.rs/datafusion/latest/datafusion/index.html#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
+[tokio]: https://tokio.rs
+[using rustlang's async tokio runtime for cpu-bound tasks]: https://www.influxdata.com/blog/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/
 [volcano-blog]: https://datafusion.apache.org/blog/2025/12/15/avoid-consecutive-repartitions/#parallel-execution-in-datafusion
 
 <!-- Internal Guide Links -->
@@ -1543,19 +1541,19 @@ Know what you want? Find the method here:
 
 <!-- Core Types (with backticks for inline code style) -->
 
-[`ConfigOptions`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.ConfigOptions.html
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`ExecutionPlan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
-[`Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
-[`LogicalPlan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
-[`LogicalPlanBuilder`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html
-[`RecordBatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
-[`SessionConfig`]: https://docs.rs/datafusion/latest/datafusion/config/struct.SessionConfig.html
-[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`configoptions`]: https://docs.rs/datafusion/latest/datafusion/common/config/struct.ConfigOptions.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`logicalplanbuilder`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[`sessionconfig`]: https://docs.rs/datafusion/latest/datafusion/config/struct.SessionConfig.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
 [`sqlparser`]: https://crates.io/crates/sqlparser
-[`Stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+[`stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
 
 <!-- SessionContext Methods -->
 
@@ -1609,42 +1607,42 @@ Know what you want? Find the method here:
 [`is_null()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.is_null.html
 [`nullif()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.nullif.html
 [`nvl()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.nvl.html
-[`datafusion::common::NullEquality`]: https://docs.rs/datafusion-common/latest/datafusion_common/enum.NullEquality.html
+[`datafusion::common::nullequality`]: https://docs.rs/datafusion-common/latest/datafusion_common/enum.NullEquality.html
 
 <!-- Optimizer Rules -->
 
-[`CommonSubexprEliminate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/common_subexpr_eliminate/struct.CommonSubexprEliminate.html
-[`EliminateJoin`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/eliminate_join/struct.EliminateJoin.html
-[`EnforceDistribution`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_distribution/struct.EnforceDistribution.html
-[`EnforceSorting`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_sorting/struct.EnforceSorting.html
-[`ExtractEquijoinPredicate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/extract_equijoin_predicate/struct.ExtractEquijoinPredicate.html
-[`OptimizeProjections`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/optimize_projections/index.html
-[`PushDownFilter`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/push_down_filter/struct.PushDownFilter.html
-[`SimplifyExpressions`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/simplify_expressions/struct.SimplifyExpressions.html
+[`commonsubexpreliminate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/common_subexpr_eliminate/struct.CommonSubexprEliminate.html
+[`eliminatejoin`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/eliminate_join/struct.EliminateJoin.html
+[`enforcedistribution`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_distribution/struct.EnforceDistribution.html
+[`enforcesorting`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/enforce_sorting/struct.EnforceSorting.html
+[`extractequijoinpredicate`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/extract_equijoin_predicate/struct.ExtractEquijoinPredicate.html
+[`optimizeprojections`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/optimize_projections/index.html
+[`pushdownfilter`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/push_down_filter/struct.PushDownFilter.html
+[`simplifyexpressions`]: https://docs.rs/datafusion-optimizer/latest/datafusion_optimizer/simplify_expressions/struct.SimplifyExpressions.html
 
 <!-- Physical Plan Operators -->
 
-[`CoalesceBatches`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/coalesce_batches/struct.CoalesceBatches.html
-[`HashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html
-[`JoinSelection`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/join_selection/struct.JoinSelection.html
-[`ParquetExec`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/struct.ParquetExec.html
-[`SortMergeJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html
-[`SymmetricHashJoinExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html
+[`coalescebatches`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/coalesce_batches/struct.CoalesceBatches.html
+[`hashjoinexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html
+[`joinselection`]: https://docs.rs/datafusion-physical-optimizer/latest/datafusion_physical_optimizer/join_selection/struct.JoinSelection.html
+[`parquetexec`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/struct.ParquetExec.html
+[`sortmergejoinexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html
+[`symmetrichashjoinexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html
 
 <!-- Execution Infrastructure -->
 
-[`DiskManager`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/disk_manager/struct.DiskManager.html
-[`FairSpillPool`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/memory_pool/struct.FairSpillPool.html
-[`PruningPredicate`]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html
+[`diskmanager`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/disk_manager/struct.DiskManager.html
+[`fairspillpool`]: https://docs.rs/datafusion-execution/latest/datafusion_execution/memory_pool/struct.FairSpillPool.html
+[`pruningpredicate`]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html
 
 <!-- DataFrame vs LogicalPlanBuilder Comparison -->
 
-[`DataFrame::aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
-[`DataFrame::filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
-[`DataFrame::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`DataFrame::select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
-[`DataFrame::sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
-[`LogicalPlanBuilder::aggregate()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.aggregate
-[`LogicalPlanBuilder::filter()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.filter
-[`LogicalPlanBuilder::join()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.join
-[`LogicalPlanBuilder::project()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.project
+[`dataframe::aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`dataframe::filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`dataframe::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`dataframe::select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`dataframe::sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[`logicalplanbuilder::aggregate()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.aggregate
+[`logicalplanbuilder::filter()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.filter
+[`logicalplanbuilder::join()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.join
+[`logicalplanbuilder::project()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html#method.project

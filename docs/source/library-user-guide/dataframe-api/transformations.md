@@ -93,10 +93,10 @@ This table maps SQL operations to their DataFrame equivalents. Methods marked **
 | **Joins**       |          [`JOIN`]          |       [`.join()`], [`.join_on()`]        | [`.join_on()`] allows arbitrary boolean expressions for join conditions.                    |
 | **Sorting**     |        [`ORDER BY`]        |               [`.sort()`]                | Sort by one or multiple expressions.                                                        |
 | **Limiting**    |   [`LIMIT`] / [`OFFSET`]   |               [`.limit()`]               | [`limit(skip, fetch)`][`.limit()`] handles both offset and limit.                           |
-| **Set Ops**     |   [`UNION ALL`][`UNION`]   |               [`.union()`]               | concatenates DataFrames.                                                                    |
+| **Set Ops**     |   [`UNION ALL`][`union`]   |               [`.union()`]               | concatenates DataFrames.                                                                    |
 | **Set Ops**     |         [`UNION`]          |          [`.union_distinct()`]           | concatenates and removes duplicates.                                                        |
 | **Set Ops**     |   (No direct equivalent)   |           [`.union_by_name()`]           | **Unique**: Unions based on column names, forgiving column order mismatches.                |
-| **Distinct**    |   [`DISTINCT`][`SELECT`]   |             [`.distinct()`]              | Removes duplicate rows based on all columns.                                                |
+| **Distinct**    |   [`DISTINCT`][`select`]   |             [`.distinct()`]              | Removes duplicate rows based on all columns.                                                |
 | **Distinct**    | [`DISTINCT ON`] (Postgres) |            [`.distinct_on()`]            | **Unique**: Deduplicates based on specific columns, keeping the "first" row per sort order. |
 
 > **Note:** While you can mix SQL and DataFrames (see [Concepts](../concepts.md)), mastering these native methods unlocks the full power of programmatic data manipulation.
@@ -254,11 +254,11 @@ If you know SQL, you already know _what_ these operations do. The difference is 
 
 | SQL Clause                         | DataFrame Method                             | Origin / Note                              |
 | ---------------------------------- | -------------------------------------------- | ------------------------------------------ |
-| [`WHERE condition`][`WHERE`]       | [`.filter(expr)`][`.filter()`]               | Functional programming tradition           |
-| [`SELECT columns`][`SELECT`]       | [`.select(exprs)`][`.select()`]              | Same concept, expression-based             |
-| [`SELECT col AS name`][`AS`]       | [`.alias("name")`][`.alias()`]               | Rename via expression                      |
-| [`GROUP BY ... AGG()`][`GROUP BY`] | [`.aggregate(groups, aggs)`][`.aggregate()`] | Explicit grouping + aggregation separation |
-| [`ORDER BY col`][`ORDER BY`]       | [`.sort(exprs)`][`.sort()`]                  | Spark naming convention                    |
+| [`WHERE condition`][`where`]       | [`.filter(expr)`][`.filter()`]               | Functional programming tradition           |
+| [`SELECT columns`][`select`]       | [`.select(exprs)`][`.select()`]              | Same concept, expression-based             |
+| [`SELECT col AS name`][`as`]       | [`.alias("name")`][`.alias()`]               | Rename via expression                      |
+| [`GROUP BY ... AGG()`][`group by`] | [`.aggregate(groups, aggs)`][`.aggregate()`] | Explicit grouping + aggregation separation |
+| [`ORDER BY col`][`order by`]       | [`.sort(exprs)`][`.sort()`]                  | Spark naming convention                    |
 | `ORDER BY col DESC`                | `.sort(col.sort(false, true))`               | `(ascending, nulls_first)` parameters      |
 | `LIMIT n OFFSET m`                 | [`.limit(skip, Some(fetch))`][`.limit()`]    | Combined into single method                |
 | `DISTINCT`                         | [`.distinct()`]                              | Same concept                               |
@@ -319,7 +319,7 @@ FROM table
 > **Trade-off: DataFrame vs SQL**
 >
 > - **DataFrame shines:** Type-safe column references catch typos at compile time; programmatic column selection from schema; projection pushdown happens automatically
-> - **SQL shines:** Familiar [`SELECT`] syntax; more readable for simple projections; [`SELECT *`][`SELECT`] for quick exploration
+> - **SQL shines:** Familiar [`SELECT`] syntax; more readable for simple projections; [`SELECT *`][`select`] for quick exploration
 
 **Performance note:**
 <br> Projection is where **columnar vs row-based TableProviders** differ most — columnar sources (i.e. Parquet, Delta Lake ...) read only requested columns, while row-based sources (i.e. Postgres, MySQL, Oracle...) read full rows and discard unwanted columns during transfer.
@@ -487,7 +487,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 #### Anti-Pattern: Over-Selection
 
-Selecting all columns with [`col("*")`][`col()`] defeats **projection pushdown**—an optimization where DataFusion tells the data source to only read requested columns. With Parquet files, this can mean reading 2 columns instead of 200, dramatically reducing I/O. Common SQL-Rule of not using [`SELECT *  FROM big_table`][`SELECT`]
+Selecting all columns with [`col("*")`][`col()`] defeats **projection pushdown**—an optimization where DataFusion tells the data source to only read requested columns. With Parquet files, this can mean reading 2 columns instead of 200, dramatically reducing I/O. Common SQL-Rule of not using [`SELECT * FROM big_table`][`select`]
 
 ```rust
 use datafusion::prelude::*;
@@ -567,12 +567,12 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Best Practice: Pick a Lane (or Document the Bridge)**
 
-Mixing method chains with embedded SQL strings violates the [Single Level of Abstraction Principle][SLAP]—readers must context-switch constantly between abstraction levels. Choose _one_ approach:
+Mixing method chains with embedded SQL strings violates the [Single Level of Abstraction Principle][slap]—readers must context-switch constantly between abstraction levels. Choose _one_ approach:
 
 | Approach                                                | Best For                               | Trade-off                            |
 | :------------------------------------------------------ | :------------------------------------- | :----------------------------------- |
 | **Full DataFrame**                                      | App logic, refactoring, IDE support    | Type-safe, but more verbose          |
-| **Full SQL** via [`ctx.sql()`][`SessionContext::sql()`] | Ad-hoc queries, portability            | Familiar, but no compile-time checks |
+| **Full SQL** via [`ctx.sql()`][`sessioncontext::sql()`] | Ad-hoc queries, portability            | Familiar, but no compile-time checks |
 | **Documented Constants**                                | Complex expressions reused across code | Traceable, but requires discipline   |
 
 If you choose the third approach, extract SQL strings into named constants with doc comments:
@@ -622,7 +622,7 @@ Where [projection](#selection-and-projection-mastery) shapes columns, filtering 
 
 Predicate pushdown ensures filters reach the data source, letting formats like Parquet skip entire row groups.
 
-**SQL equivalent:** [`WHERE condition`][`WHERE`]
+**SQL equivalent:** [`WHERE condition`][`where`]
 
 > **Trade-off: DataFrame vs SQL**
 >
@@ -1116,8 +1116,8 @@ Master joins, and you unlock the full power of relational data processing.
 
 > **DataFrame API coverage:** The DataFrame API supports all common join types ([`Inner`], [`Left`], [`Right`], [`Full`], [`LeftSemi`], [`LeftAnti`], and their right variants). Two SQL join types have **no direct DataFrame equivalent**:
 >
-> - [`NATURAL JOIN`] — use [`ctx.sql()`][`SessionContext::sql()`] or specify keys explicitly with [`.join()`]
-> - [`CROSS JOIN`] — use [`.join()`] with empty key lists, or [`ctx.sql("... CROSS JOIN ...")`][`SessionContext::sql()`]
+> - [`NATURAL JOIN`] — use [`ctx.sql()`][`sessioncontext::sql()`] or specify keys explicitly with [`.join()`]
+> - [`CROSS JOIN`] — use [`.join()`] with empty key lists, or [`ctx.sql("... CROSS JOIN ...")`][`sessioncontext::sql()`]
 >
 > For most workflows, the DataFrame API is fully sufficient. Fall back to SQL for these edge cases.
 
@@ -1173,7 +1173,7 @@ Since we cannot cover a tutorial for joins, please follow other tutorials as but
 
 **The multiplicity of SQL-Dialects**<br>
 DataFusion's SQL parser ([`sqlparser`]) accepts syntax from multiple dialects—PostgreSQL, MySQL, Snowflake, and others. Throughout this documentation, we use **PostgreSQL syntax** as the reference standard: it's widely understood, well-documented, and DataFusion's join semantics (NULL handling, outer join behavior) closely follow PostgreSQL conventions. <br>
-For more deeper insights follow [SQL Dialects][Understanding SQL Dialects (medium-article)]
+For more deeper insights follow [SQL Dialects][understanding sql dialects (medium-article)]
 
 Both SQL and the DataFrame API support the standard join families:
 
@@ -1181,14 +1181,14 @@ Both SQL and the DataFrame API support the standard join families:
 | ----------- | -------------------------------------------- | ----------------------------- | ------------------------------------------- |
 | **Inner**   | [`INNER JOIN`]                               | [`Inner`]                     | Only matching rows                          |
 | **Outer**   | [`LEFT`] / [`RIGHT`] / [`FULL OUTER JOIN`]   | [`Left`], [`Right`], [`Full`] | Keep non-matches from one or both sides     |
-| **Semi**    | [`LEFT / RIGHT SEMI JOIN`][`LEFT SEMI JOIN`] | [`LeftSemi`], [`RightSemi` ]  | Filter by existence (no columns from right) |
-| **Anti**    | [`LEFT / RIGHT ANTI JOIN`][`LEFT ANTI JOIN`] | [`LeftAnti`], [`RightAnti` ]  | Filter by non-existence                     |
+| **Semi**    | [`LEFT / RIGHT SEMI JOIN`][`left semi join`] | [`LeftSemi`], [`RightSemi` ]  | Filter by existence (no columns from right) |
+| **Anti**    | [`LEFT / RIGHT ANTI JOIN`][`left anti join`] | [`LeftAnti`], [`RightAnti` ]  | Filter by non-existence                     |
 | **Cross**   | [`CROSS JOIN`]                               | _(none)_                      | Cartesian product (use empty keys)          |
 | **Natural** | [`NATURAL JOIN`]                             | _(none)_                      | Auto-match same-named columns               |
 | **Mark**    | _(internal)_                                 | [`LeftMark`], [`RightMark`]   | Adds boolean column for `EXISTS` subqueries |
 
 > **SQL-only joins:**<br> > [`NATURAL JOIN`] and [`CROSS JOIN`] have no direct [`JoinType`] variant.
-> Use [`ctx.sql()`][`SessionContext::sql()`] for natural joins; for cross joins, call [`.join()`] with empty key lists (see Anti-Pattern section).
+> Use [`ctx.sql()`][`sessioncontext::sql()`] for natural joins; for cross joins, call [`.join()`] with empty key lists (see Anti-Pattern section).
 
 The [`.join()`] method signature in the datafusion dataframe-API:
 
@@ -1302,7 +1302,7 @@ All join algorithms leverage [Arrow]'s columnar format: instead of copying rows,
 > | **Columnar format (Arrow)**        | Read only the columns you need; SIMD instructions process thousands of keys in parallel\*                                                        |
 > | **Vectorized execution**           | Joins process batches of rows, not one at a time—simple inner loops let CPUs parallelize at the instruction level                                |
 > | **SQL = DataFrame**                | Both compile to the same `LogicalPlan`—identical optimizer benefits regardless of API choice                                                     |
-> | **Statistics-driven optimization** | Table metadata (row counts, min/max) guide join order and algorithm selection—[**16x faster** on TPC-H benchmarks][DataFusion Join Optimization] |
+> | **Statistics-driven optimization** | Table metadata (row counts, min/max) guide join order and algorithm selection—[**16x faster** on TPC-H benchmarks][datafusion join optimization] |
 > | **Late materialization**           | During joins, only key columns + row indices are processed; other columns are fetched afterward                                                  |
 >
 > \*SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../user-guide/crate-configuration.md).
@@ -2327,7 +2327,7 @@ async fn main() -> datafusion::error::Result<()> {
 If a join returns unexpectedly many rows, check your keys. An empty or mismatched key array silently produces a Cartesian product. Use [`.count()`] before [`.collect()`] to verify.
 
 **If you need a Cartesian product:** <br>
-Use SQL via [`ctx.sql("SELECT ... FROM a CROSS JOIN b")`][`SessionContext::sql()`]. The DataFrame API has no `JoinType::Cross`—empty keys with `Inner` produces the same result but reads like a bug.
+Use SQL via [`ctx.sql("SELECT ... FROM a CROSS JOIN b")`][`sessioncontext::sql()`]. The DataFrame API has no `JoinType::Cross`—empty keys with `Inner` produces the same result but reads like a bug.
 
 #### Join Troubleshooting
 
@@ -2592,7 +2592,7 @@ Joins are fundamental yet often misunderstood. These resources provide deeper un
 | [Semi and Anti joins explained]                                           | First-class existence checks that SQL forgot                       |
 | [PostgreSQL JOIN docs]                                                    | Authoritative reference—DataFusion follows PostgreSQL semantics    |
 | [NULL handling in joins]                                                  | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
-| [Understanding SQL Dialects][Understanding SQL Dialects (medium-article)] | Medium article about different SQL dialects                        |
+| [Understanding SQL Dialects][understanding sql dialects (medium-article)] | Medium article about different SQL dialects                        |
 
 ---
 
@@ -2774,10 +2774,10 @@ The [`.limit()`] method controls how many rows to return. It takes two arguments
 
 | Call                                | SQL Equivalent         | Effect                      |
 | :---------------------------------- | :--------------------- | :-------------------------- |
-| [`.limit(0, Some(10))`][`.limit()`] | [`LIMIT 10`][`LIMIT`]  | First 10 rows               |
+| [`.limit(0, Some(10))`][`.limit()`] | [`LIMIT 10`][`limit`]  | First 10 rows               |
 | [`.limit(5, Some(10))`][`.limit()`] | `OFFSET 5 LIMIT 10`    | Skip 5, take next 10        |
 | [`.limit(0, None)`][`.limit()`]     | _(no limit)_           | All rows (default behavior) |
-| [`.limit(5, None)` ][`.limit()`]    | [`OFFSET 5`][`OFFSET`] | Skip 5, take rest           |
+| [`.limit(5, None)` ][`.limit()`]    | [`OFFSET 5`][`offset`] | Skip 5, take rest           |
 
 > **Ergonomic shortcuts** for sorting and limiting:
 >
@@ -2789,7 +2789,7 @@ The [`.limit()`] method controls how many rows to return. It takes two arguments
 ##### Basic: Top N Results
 
 **The "Top N" pattern retrieves only the first N rows after sorting.** <br>
-DataFusion recognizes this `.sort().limit(n)` combination and applies a [Top-K] optimization internally: instead of sorting the entire dataset then truncating, it maintains a heap of only N candidates — discarding rows that can't make the cut. This reduces both memory usage and execution time dramatically (benchmarks show [15x speedups][Top-K]).
+DataFusion recognizes this `.sort().limit(n)` combination and applies a [Top-K] optimization internally: instead of sorting the entire dataset then truncating, it maintains a heap of only N candidates — discarding rows that can't make the cut. This reduces both memory usage and execution time dramatically (benchmarks show [15x speedups][top-k]).
 
 > **Hint:** <br>
 > Don't confuse TOP N Results with the optimization algorithm called [Top-K].
@@ -3321,9 +3321,9 @@ FROM sales;
 > See [Window Functions](../../user-guide/sql/window_functions.md) for the full list of SQL window functions.
 
 **Performance note:** <br>
-Window functions require sorting by [`PARTITION BY`][Window_function] and [`ORDER BY`] columns. If your data resides in a row-based database (PostgreSQL, MySQL) via [`TableProvider`] with indexes on these columns, consider pushing the window operation to the source. However, when combining multiple window functions over the same partition, DataFusion optimizes by sharing the sort.
+Window functions require sorting by [`PARTITION BY`][window_function] and [`ORDER BY`] columns. If your data resides in a row-based database (PostgreSQL, MySQL) via [`TableProvider`] with indexes on these columns, consider pushing the window operation to the source. However, when combining multiple window functions over the same partition, DataFusion optimizes by sharing the sort.
 
-[Window_function]: ../../user-guide/sql/window_functions.md
+[window_function]: ../../user-guide/sql/window_functions.md
 
 #### Basic: Ranking
 
@@ -4650,7 +4650,7 @@ async fn main() -> Result<()> {
 
 > **Nested arrays:** For deeply nested structures (e.g., `List<List<Int>>`), use `RecursionUnnestOption` to control how many levels to flatten.
 
-[`UnnestOptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
+[`unnestoptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
 
 ### Bridging to SQL
 
@@ -4696,7 +4696,7 @@ async fn main() -> Result<()> {
 
 > **Use case:** Complex pipelines where some transformations are easier in DataFrame (programmatic column manipulation) and others are easier in SQL (complex joins, window functions with familiar syntax).
 
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
 
 ### Methods with SQL Equivalents
 
@@ -5413,8 +5413,8 @@ When data doesn't fit in memory—or you simply don't know how large it is—str
 | Function/Trait                           | Purpose                                                          |
 | ---------------------------------------- | ---------------------------------------------------------------- |
 | [`.execute_stream()`]                    | Returns `SendableRecordBatchStream` - an async stream of batches |
-| [`StreamExt::next()`][`StreamExt`]       | From `futures` crate - pulls the next batch from the stream      |
-| [`RecordBatch::column()`][`RecordBatch`] | Access a specific column from a batch                            |
+| [`StreamExt::next()`][`streamext`]       | From `futures` crate - pulls the next batch from the stream      |
+| [`RecordBatch::column()`][`recordbatch`] | Access a specific column from a batch                            |
 | [`.as_primitive::<T>()`]                 | Cast Arrow array to typed access (e.g., `Int64Type`)             |
 
 **Memory model:** <br>
@@ -5716,7 +5716,7 @@ async fn main() -> datafusion::error::Result<()> {
 **Validation protects your pipeline at multiple levels: schema validation ensures structure, constraint validation ensures values, and quality inspection tracks how transformations affect your data.**
 
 **Why the DataFrame-API excels here:** <br>
-Validation is where DataFusion's DataFrame-API truly shines over the SQL-API. With the SQL-API, validation logic lives in query strings—you can't easily parameterize thresholds, compose rules as functions, or integrate with Rust's type system. The DataFrame-API lets you build validation as **reusable Rust functions** with configurable thresholds, return [`Result<DataFrame>`][`Result<DataFrame>`] to fail fast with meaningful errors, and connect validation failures directly to your logging, metrics, and alerting infrastructure. Both APIs produce the same optimized plans—but the DataFrame-API gives you production-grade data quality tooling, not just "check and hope."
+Validation is where DataFusion's DataFrame-API truly shines over the SQL-API. With the SQL-API, validation logic lives in query strings—you can't easily parameterize thresholds, compose rules as functions, or integrate with Rust's type system. The DataFrame-API lets you build validation as **reusable Rust functions** with configurable thresholds, return [`Result<DataFrame>`][`result<dataframe>`] to fail fast with meaningful errors, and connect validation failures directly to your logging, metrics, and alerting infrastructure. Both APIs produce the same optimized plans—but the DataFrame-API gives you production-grade data quality tooling, not just "check and hope."
 
 This section covers three complementary approaches:
 
@@ -5934,7 +5934,7 @@ For ML pipelines and data-sensitive applications, understanding how transformati
 - **Distribution tracking**: Register pipeline steps as views and compare group counts before/after operations—catches bias introduced by filters or joins
 - **Hybrid inspection**: Build pipelines with DataFrames, audit with SQL—leverage each API's strengths
 
-These patterns come from research on [ML pipeline inspection][Blue Elephants Inspecting Pandas], which showed that many ML fairness issues originate in data preparation, not model training.
+These patterns come from research on [ML pipeline inspection][blue elephants inspecting pandas], which showed that many ML fairness issues originate in data preparation, not model training.
 
 > **See [Advanced Topics § Data Quality](dataframes-advance.md#data-quality--bias-inspection)** for complete implementations with code examples.
 
@@ -6248,28 +6248,28 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 
 <!-- 1. DataFusion Core Types ================================================ -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
 [`datafusion.optimizer`]: https://docs.rs/datafusion/latest/datafusion/optimizer/index.html
-[`Expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
-[`Full`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Full "All rows from both tables (NULL where no match)"
-[`Inner`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Inner "Only rows with matches in both tables"
-[`JoinType`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
-[`Left`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Left "All left rows + matching right rows (NULL if no match)"
-[`LeftAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
-[`LeftMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
-[`LeftSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
-[`LogicalPlan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
+[`full`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Full "All rows from both tables (NULL where no match)"
+[`inner`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Inner "Only rows with matches in both tables"
+[`jointype`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
+[`left`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Left "All left rows + matching right rows (NULL if no match)"
+[`leftanti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
+[`leftmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
+[`leftsemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
 [`prelude`]: https://docs.rs/datafusion/latest/datafusion/prelude/index.html
-[`Result<DataFrame>`]: https://docs.rs/datafusion/latest/datafusion/error/type.Result.html
-[`Right`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Right "All right rows + matching left rows (NULL if no match)"
-[`RightAnti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightAnti
-[`RightMark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
-[`RightSemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightSemi
-[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`SessionContext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`result<dataframe>`]: https://docs.rs/datafusion/latest/datafusion/error/type.Result.html
+[`right`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Right "All right rows + matching left rows (NULL if no match)"
+[`rightanti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightAnti
+[`rightmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
+[`rightsemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightSemi
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessioncontext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
 [`sqlparser`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/index.html "DataFusion's SQL parser supports multiple dialects"
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
 
 <!-- 2. DataFrame Methods ==================================================== -->
 
@@ -6375,34 +6375,34 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 
 <!-- 5. SQL Keywords & Internal Documentation ================================ -->
 
-[`AND`]: ../../user-guide/sql/operators.md#logical-operators
-[`AS`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/ast/struct.ExprWithAlias.html
-[`CASE`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.when.html
-[`COALESCE`]: ../../user-guide/sql/scalar_functions.md#coalesce
-[`CROSS JOIN`]: ../../user-guide/sql/select.md#cross-join
-[`DATE_PART`]: ../../user-guide/sql/scalar_functions.md#date_part
-[`DISTINCT ON`]: https://github.com/apache/datafusion/issues/7827
-[`DISTINCT`]: ../../user-guide/sql/select.md#select-clause
-[`EXCEPT`]: ../../user-guide/sql/select.md#except
-[`EXTRACT`]: ../../user-guide/sql/scalar_functions.md#date_part
-[`FULL OUTER JOIN`]: ../../user-guide/sql/select.md#full-outer-join
-[`GROUP BY`]: ../../user-guide/sql/select.md#group-by-clause
-[`HAVING`]: ../../user-guide/sql/select.md#having-clause
-[`INNER JOIN`]: ../../user-guide/sql/select.md#inner-join
-[`INTERSECT`]: ../../user-guide/sql/select.md#intersect
-[`JOIN`]: ../../user-guide/sql/select.md#join-clause
-[`LEFT ANTI JOIN`]: ../../user-guide/sql/select.md#left-anti-join
-[`LEFT SEMI JOIN`]: ../../user-guide/sql/select.md#left-semi-join
-[`LEFT`]: ../../user-guide/sql/select.md#left-join
-[`LIMIT`]: ../../user-guide/sql/select.md#limit-clause
-[`NATURAL JOIN`]: ../../user-guide/sql/select.md#natural-join
-[`OFFSET`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.OFFSET.html
-[`OR`]: ../../user-guide/sql/operators.md#logical-operators
-[`ORDER BY`]: ../../user-guide/sql/select.md#order-by-clause
-[`SELECT`]: ../../user-guide/sql/select.md
-[`TO_DATE`]: ../../user-guide/sql/scalar_functions.md#to_date
-[`UNION`]: ../../user-guide/sql/select.md#union-clause
-[`WHERE`]: ../../user-guide/sql/select.md#where
+[`and`]: ../../user-guide/sql/operators.md#logical-operators
+[`as`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/ast/struct.ExprWithAlias.html
+[`case`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.when.html
+[`coalesce`]: ../../user-guide/sql/scalar_functions.md#coalesce
+[`cross join`]: ../../user-guide/sql/select.md#cross-join
+[`date_part`]: ../../user-guide/sql/scalar_functions.md#date_part
+[`distinct on`]: https://github.com/apache/datafusion/issues/7827
+[`distinct`]: ../../user-guide/sql/select.md#select-clause
+[`except`]: ../../user-guide/sql/select.md#except
+[`extract`]: ../../user-guide/sql/scalar_functions.md#date_part
+[`full outer join`]: ../../user-guide/sql/select.md#full-outer-join
+[`group by`]: ../../user-guide/sql/select.md#group-by-clause
+[`having`]: ../../user-guide/sql/select.md#having-clause
+[`inner join`]: ../../user-guide/sql/select.md#inner-join
+[`intersect`]: ../../user-guide/sql/select.md#intersect
+[`join`]: ../../user-guide/sql/select.md#join-clause
+[`left anti join`]: ../../user-guide/sql/select.md#left-anti-join
+[`left semi join`]: ../../user-guide/sql/select.md#left-semi-join
+[`left`]: ../../user-guide/sql/select.md#left-join
+[`limit`]: ../../user-guide/sql/select.md#limit-clause
+[`natural join`]: ../../user-guide/sql/select.md#natural-join
+[`offset`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.OFFSET.html
+[`or`]: ../../user-guide/sql/operators.md#logical-operators
+[`order by`]: ../../user-guide/sql/select.md#order-by-clause
+[`select`]: ../../user-guide/sql/select.md
+[`to_date`]: ../../user-guide/sql/scalar_functions.md#to_date
+[`union`]: ../../user-guide/sql/select.md#union-clause
+[`where`]: ../../user-guide/sql/select.md#where
 [concepts]: ../concepts.md#mixing-sql-and-dataframes
 [`expr_api`]: ../../library-user-guide/working-with-exprs.md
 [explain usage]: ../../user-guide/explain-usage.md
@@ -6410,91 +6410,91 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 
 <!-- 6. Arrow & Rust Standard Library ======================================== -->
 
-[`.as_primitive::<T>()`]: https://docs.rs/arrow/latest/arrow/array/trait.AsArray.html#method.as_primitive
+[`.as_primitive::<t>()`]: https://docs.rs/arrow/latest/arrow/array/trait.AsArray.html#method.as_primitive
 [`.clone()`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
 [`.is_numeric()`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html#method.is_numeric
-[`DataType`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
-[`RecordBatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
 [`reduce()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.reduce
-[`Stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
-[`StreamExt`]: https://docs.rs/futures/latest/futures/stream/trait.StreamExt.html
+[`stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
+[`streamext`]: https://docs.rs/futures/latest/futures/stream/trait.StreamExt.html
 [`take()`]: https://docs.rs/arrow/latest/arrow/compute/kernels/take/fn.take.html "Arrow kernel: select elements by index"
 [`unwrap_or_else`]: https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap_or_else
 [`unwrap()`]: https://doc.rust-lang.org/core/option/enum.Option.html#method.unwrap
-[Arrow]: https://arrow.apache.org/ "Apache Arrow: columnar in-memory format"
+[arrow]: https://arrow.apache.org/ "Apache Arrow: columnar in-memory format"
 
 <!-- 7. External Resources =================================================== -->
 
 <!-- DataFusion Physical Plan Executors -->
 
-[**Cross Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.CrossJoinExec.html "Cartesian product of two tables"
-[**Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html "Equi-join using hash table on build side"
-[**Nested Loop Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html "General non-equi join conditions"
-[**Piecewise Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.PiecewiseMergeJoinExec.html "Optimized for single range conditions"
-[**Sort-Merge Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html "Join pre-sorted inputs with optional spilling"
-[**Symmetric Hash Join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html "Streaming join for unbounded data"
+[**cross join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.CrossJoinExec.html "Cartesian product of two tables"
+[**hash join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html "Equi-join using hash table on build side"
+[**nested loop join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html "General non-equi join conditions"
+[**piecewise merge join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.PiecewiseMergeJoinExec.html "Optimized for single range conditions"
+[**sort-merge join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html "Join pre-sorted inputs with optional spilling"
+[**symmetric hash join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html "Streaming join for unbounded data"
 [several join algorithms]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/index.html "DataFusion join implementations"
 
 <!-- Papers & Academic Resources -->
 
-[Apache Spark]: https://people.csail.mit.edu/matei/papers/2015/sigmod_spark_sql.pdf
+[apache spark]: https://people.csail.mit.edu/matei/papers/2015/sigmod_spark_sql.pdf
 [dataframe algebra]: https://arxiv.org/pdf/2001.00888
 [datafusion paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
 
 <!-- External Documentation -->
 
-[Apache Spark DataFrames]: https://spark.apache.org/docs/latest/sql-programming-guide.html#datasets-and-dataframes
+[apache spark dataframes]: https://spark.apache.org/docs/latest/sql-programming-guide.html#datasets-and-dataframes
 [docs.rs]: https://docs.rs/datafusion/latest/datafusion/#architecture
-[pandas.DataFrame.explode]: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.explode.html
+[pandas.dataframe.explode]: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.explode.html
 [pandas.melt]: https://pandas.pydata.org/docs/reference/api/pandas.melt.html
 [pandas]: https://pandas.pydata.org/docs/user_guide/dsintro.html#dataframe
-[Polars Join Operations]: https://docs.pola.rs/user-guide/transformations/joins/ "Polars DataFrame join operations"
+[polars join operations]: https://docs.pola.rs/user-guide/transformations/joins/ "Polars DataFrame join operations"
 [postgres docs]: https://www.postgresql.org/docs/
-[PostgreSQL JOIN docs]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "Authoritative reference for join semantics"
-[PostgreSQL semantics]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "DataFusion follows PostgreSQL SQL semantics"
-[PostgreSQL]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "PostgreSQL: The de facto standard for DataFusion SQL behavior"
-[PySpark explode]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.explode.html
+[postgresql join docs]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "Authoritative reference for join semantics"
+[postgresql semantics]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "DataFusion follows PostgreSQL SQL semantics"
+[postgresql]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "PostgreSQL: The de facto standard for DataFusion SQL behavior"
+[pyspark explode]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.explode.html
 [pyspark-rank-function-with-examples]: https://sparkbyexamples.com/pyspark/pyspark-rank-function-with-examples/
 [spark docs]: https://spark.apache.org/docs/latest/
-[Spark Join Guide]: https://spark.apache.org/docs/latest/sql-ref-syntax-qry-select-join.html "Apache Spark SQL join syntax and examples"
-[Neo4j]: https://neo4j.com/
-[Amazon Neptune]: https://aws.amazon.com/de/neptune/
+[spark join guide]: https://spark.apache.org/docs/latest/sql-ref-syntax-qry-select-join.html "Apache Spark SQL join syntax and examples"
+[neo4j]: https://neo4j.com/
+[amazon neptune]: https://aws.amazon.com/de/neptune/
 
 <!-- Tutorials & Blog Posts -->
 
 [anti_semi_joins]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/
 [builder_pattern]: https://refactoring.guru/design-patterns/builder
 [catalyst_optimizer]: https://www.databricks.com/blog/2015/04/13/deep-dive-into-spark-sqls-catalyst-optimizer.html "Deep Dive into Spark SQL's Catalyst Optimizer"
-[CMU Join Algorithms]: https://www.youtube.com/watch?v=YIdIaPopfpk&list=PLSE8ODhjZXjYMAgsGH-GtY5rJYZ6zjsd5&index=12 "CMU 15-445 Lecture 11: Join Algorithms (Andy Pavlo)"
-[DataFusion Join Optimization]: https://xebia.com/blog/making-joins-faster-in-datafusion-based-on-table-statistics/ "Making Joins Faster in DataFusion Based on Table Statistics"
+[cmu join algorithms]: https://www.youtube.com/watch?v=YIdIaPopfpk&list=PLSE8ODhjZXjYMAgsGH-GtY5rJYZ6zjsd5&index=12 "CMU 15-445 Lecture 11: Join Algorithms (Andy Pavlo)"
+[datafusion join optimization]: https://xebia.com/blog/making-joins-faster-in-datafusion-based-on-table-statistics/ "Making Joins Faster in DataFusion Based on Table Statistics"
 [fluent_interface]: https://martinfowler.com/bliki/FluentInterface.html "Martin Fowler's Fluent Interface"
-[Join optimization strategies]: https://use-the-index-luke.com/sql/join "How databases optimize joins and what you can control"
-[Join tutorial]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/ "Why Venn diagrams mislead when explaining joins"
+[join optimization strategies]: https://use-the-index-luke.com/sql/join "How databases optimize joins and what you can control"
+[join tutorial]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/ "Why Venn diagrams mislead when explaining joins"
 [lexicographic order]: https://datafusion.apache.org/blog/2025/03/11/ordering-analysis/#appendix "Lexicographic order: comparing sequences element by element, left to right"
-[NULL handling in joins]: https://modern-sql.com/concept/null "Why NULL comparisons return UNKNOWN, not TRUE/FALSE"
-[Optimizing SQL & DataFrames Pt 1]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-one/ "Optimizing SQL (and DataFrames) in DataFusion: Part 1"
-[Optimizing SQL & DataFrames Pt 2]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-two/ "Optimizing SQL (and DataFrames) in DataFusion: Part 2"
+[null handling in joins]: https://modern-sql.com/concept/null "Why NULL comparisons return UNKNOWN, not TRUE/FALSE"
+[optimizing sql & dataframes pt 1]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-one/ "Optimizing SQL (and DataFrames) in DataFusion: Part 1"
+[optimizing sql & dataframes pt 2]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-two/ "Optimizing SQL (and DataFrames) in DataFusion: Part 2"
 [ordering analysis]: https://datafusion.apache.org/blog/2025/03/11/ordering-analysis/ "DataFusion blog: Using Ordering for Better Plans"
-[Semi and Anti joins explained]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/ "Why Semi/Anti joins deserve first-class syntax"
-[SLAP]: https://www.jameshw.dev/blog/2022-02-05/principles-from-clean-code#d69d60c9b3054d47816551afafcfa847 "Functions should SLAP! — from Clean Code principles"
-[SQL clause order]: https://www.postgresql.org/docs/current/sql-select.html#SQL-HAVING
-[Top-K]: https://xebia.com/blog/optimizing-topk-queries-in-datafusion/ "TopK optimization: 15x faster ORDER BY ... LIMIT queries"
-[Understanding Offset and Cursor Pagination]: https://medium.com/better-programming/understanding-the-offset-and-cursor-pagination-8ddc54d10d98 "In-depth comparison of pagination strategies"
-[Understanding SQL Dialects (medium-article)]: https://medium.com/@abhapratiti27/understanding-sql-dialects-a-deeper-dive-into-the-linguistic-variations-of-sql-e7e2fdb7509b
-[Visual JOIN guide]: https://joins.spathon.com/ "Interactive visual guide to SQL joins"
+[semi and anti joins explained]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/ "Why Semi/Anti joins deserve first-class syntax"
+[slap]: https://www.jameshw.dev/blog/2022-02-05/principles-from-clean-code#d69d60c9b3054d47816551afafcfa847 "Functions should SLAP! — from Clean Code principles"
+[sql clause order]: https://www.postgresql.org/docs/current/sql-select.html#SQL-HAVING
+[top-k]: https://xebia.com/blog/optimizing-topk-queries-in-datafusion/ "TopK optimization: 15x faster ORDER BY ... LIMIT queries"
+[understanding offset and cursor pagination]: https://medium.com/better-programming/understanding-the-offset-and-cursor-pagination-8ddc54d10d98 "In-depth comparison of pagination strategies"
+[understanding sql dialects (medium-article)]: https://medium.com/@abhapratiti27/understanding-sql-dialects-a-deeper-dive-into-the-linguistic-variations-of-sql-e7e2fdb7509b
+[visual join guide]: https://joins.spathon.com/ "Interactive visual guide to SQL joins"
 
 <!-- Concepts & Wikipedia -->
 
 [databricks_star_schema]: https://www.databricks.com/glossary/star-schema
 [external sort]: https://en.wikipedia.org/wiki/External_sorting "External sorting algorithm for data larger than memory"
-[Hash Join (Wikipedia)]: https://en.wikipedia.org/wiki/Hash_join "Hash join algorithm explanation"
-[HyperLogLog]: https://en.wikipedia.org/wiki/HyperLogLog
-[Sort-Merge Join]: https://en.wikipedia.org/wiki/Sort-merge_join "Sort-merge join algorithm"
+[hash join (wikipedia)]: https://en.wikipedia.org/wiki/Hash_join "Hash join algorithm explanation"
+[hyperloglog]: https://en.wikipedia.org/wiki/HyperLogLog
+[sort-merge join]: https://en.wikipedia.org/wiki/Sort-merge_join "Sort-merge join algorithm"
 [survivorship_bias]: https://en.wikipedia.org/wiki/Survivorship_bias
 [three-valued logic]: https://modern-sql.com/concept/three-valued-logic
 
 <!-- Data Quality Tools -->
 
-[Deequ]: https://github.com/awslabs/deequ
-[Great Expectations]: https://greatexpectations.io/
-[Pandera]: https://pandera.readthedocs.io/
+[deequ]: https://github.com/awslabs/deequ
+[great expectations]: https://greatexpectations.io/
+[pandera]: https://pandera.readthedocs.io/
