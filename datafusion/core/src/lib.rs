@@ -1163,12 +1163,6 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/using-the-dataframe-api.md",
-    library_user_guide_dataframe_api
-);
-
-#[cfg(doctest)]
-doc_comment::doctest!(
     "../../../docs/source/library-user-guide/using-the-sql-api.md",
     library_user_guide_sql_api
 );
@@ -1183,6 +1177,61 @@ doc_comment::doctest!(
 doc_comment::doctest!(
     "../../../docs/source/library-user-guide/upgrading.md",
     library_user_guide_upgrading
+);
+
+// DataFrame API documentation
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/using-the-dataframe-api.md",
+    library_user_guide_dataframe_api
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/index.md",
+    dataframe_api_index
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/concepts.md",
+    dataframe_api_concepts
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes.md",
+    dataframe_api_creating_dataframes
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/transformations.md",
+    dataframe_api_transformations
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management.md",
+    dataframe_api_schema_management
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/dataframes-advance.md",
+    dataframe_api_dataframes_advance
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/writing-dataframes.md",
+    dataframe_api_writing_dataframes
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/best-practices.md",
+    dataframe_api_best_practices
 );
 
 #[cfg(doctest)]

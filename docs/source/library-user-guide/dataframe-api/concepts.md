@@ -46,6 +46,8 @@ The builder pattern offers ergonomics that parser patterns like the SQL-API cann
 
 These trade-offs—when to choose SQL, when to choose the DataFrame-API, and how to mix them freely—are explored in [Two Paths to the Same Plan](#two-paths-to-the-same-plan-parser-vs-builder) and [Mixing SQL and DataFrames](#mixing-sql-and-dataframes).
 
+---
+
 ### What is a DataFrame?
 
 In DataFusion, a Data**Frame** is not your data—it's the _frame_ around your data. Think of it literally: a framework defining where data lives, how it flows through the query engine, and the environment in which transformations execute.
@@ -54,6 +56,8 @@ DataFusion's DataFrames are lazy—not in a bad way, but in an efficient way. Wh
 
 **But what happens when you finally call `.collect()` and execute the plan?** <br>
 The diagram below traces the journey—from lazy plan to concrete results—and shows why deferring execution lets the optimizer reorder operations, push predicates to data sources, and select efficient algorithms.
+
+---
 
 ### How Queries Flow Through DataFusion
 
@@ -133,6 +137,10 @@ The diagram below traces the journey—from lazy plan to concrete results—and 
 >
 > For deeper architectural details—thread scheduling, memory management, crate organization—see the [Architecture section] in the API documentation.
 
+---
+
+---
+
 ## Two Paths to the Same Plan: Parser vs Builder
 
 **SQL and the DataFrame API are two front-ends to the same query engine**<br>
@@ -189,6 +197,8 @@ Both compile to identical [`LogicalPlan`] representations, receive the same opti
 > **Key takeaway**: <br>
 > Parser vs Builder is purely a construction choice—once you have a `LogicalPlan`, DataFusion doesn't know or care how you built it.
 
+---
+
 ### In Practice: Two Paths, One Result
 
 The following example demonstrates the interchangeability of both APIs. We query the same table using SQL (parser path) and the DataFrame API (builder path), then verify that both produce identical results. This is the core promise of DataFusion's unified architecture—choose the API that fits your workflow, knowing the outcome is the same.
@@ -236,6 +246,8 @@ async fn main() -> Result<()> {
 }
 ```
 
+---
+
 ### When to Choose Which?
 
 Both APIs produce identical plans, so choose based on ergonomics:
@@ -251,6 +263,8 @@ Neither is "better"—they're tools for different situations. Since both compile
 
 > **Further reading**:<br>
 > This dual-API architecture follows principles established in the broader data science ecosystem. For the theoretical foundation, see [Towards Scalable Dataframe Systems][dataframe-paper].
+
+---
 
 ---
 
@@ -277,6 +291,8 @@ SessionState (immutable) ← frozen environment captured by DataFrame
 
 This separation ensures reproducibility: changes to the `SessionContext` after DataFrame creation don't affect existing DataFrames—each continues to execute with the `SessionState` snapshot it captured. Only newly created DataFrames will see the updated configuration, tables, or functions.
 
+---
+
 ### Common ways to create a DataFrame using the SessionContext
 
 Like DataFrame, SessionContext exposes a large API surface that becomes easier to navigate once you understand the main categories:
@@ -291,6 +307,8 @@ Like DataFrame, SessionContext exposes a large API surface that becomes easier t
 
 > **Learn more:** <br>
 > For complete examples of each pattern, see [Creating DataFrames](creating-dataframes.md). For all available configuration options, see [Configuration Settings](../../user-guide/configs.md).
+
+---
 
 ### Creating and Configuring SessionContext
 
@@ -320,6 +338,8 @@ For more detailed explanation and examples of the [`SessionContext`] see:
 - [`SessionState`] documentation (snapshot semantics)
 - [Configuration Settings](../../user-guide/configs.md) (all configuration options)
 - [Creating DataFrames](creating-dataframes.md) (practical examples)
+
+---
 
 ## Data Model & Schema
 
@@ -353,6 +373,10 @@ ExecutionPlan  ← Null handling semantics implemented here
   ↓ executes
 RecordBatches  ← Actual null values (bitmaps) in Arrow format
 ```
+
+---
+
+---
 
 ### Inspecting Schemas
 
@@ -398,6 +422,8 @@ fn main() -> Result<()> {
 
 > **Reference:** <br>
 > For a deeper tour of Arrow schemas and RecordBatches, see [Introduction to Arrow & RecordBatches](../../user-guide/arrow-introduction.md). For SQL type compatibility and coercion rules, see [SQL Data Types](../../user-guide/sql/data_types.md).
+
+---
 
 ### Handling Null Values
 
@@ -628,6 +654,10 @@ fn main() -> Result<()> {
 > - Sort API: [`DataFrame::sort()`], [PostgreSQL ORDER BY](https://www.postgresql.org/docs/current/queries-order.html)
 > - Practical patterns: [Transformations guide](transformations.md#dataframe-transformations)
 
+---
+
+---
+
 ## DataFrame Structure: LogicalPlan + SessionState
 
 **DataFusion—the out-of-the-box query engine—provides the DataFrame with both a recipe (the query plan) and a fully-equipped kitchen (the execution environment) for reproducible results.**
@@ -640,6 +670,8 @@ Every [`DataFrame`] pairs two components:
 - **[`SessionState`]** — a frozen snapshot of the execution environment (_how_ to compute it)
 
 The [`SessionContext`] is mutable and evolves over your session, but each `DataFrame` captures an **immutable snapshot** the [`SessionState`] at creation time. Transformations return new DataFrames with updated plans but the same snapshot; actions execute using that frozen state.
+
+---
 
 ### Inside a DataFrame: Step by Step
 
@@ -743,6 +775,8 @@ DataFrame → create_physical_plan() → ExecutionPlan
 
 > **Learn more:** See [SessionContext and SessionState relationship][sessioncontext and sessionstate] for implementation details.
 
+---
+
 ### DataFrame vs. LogicalPlanBuilder
 
 [`DataFrame`] methods are thin wrappers around [`LogicalPlanBuilder`]—they produce identical plans:
@@ -793,6 +827,8 @@ async fn main() -> Result<()> {
 
 > **Further reading:** <br>
 > See [Building Logical Plans](../building-logical-plans.md) for advanced [`LogicalPlanBuilder`] usage.
+
+---
 
 ### Advanced: Converting Between `DataFrame` and `LogicalPlan`
 
@@ -846,11 +882,17 @@ async fn main() -> Result<()> {
 > - [Building Logical Plans](../building-logical-plans.md) — advanced [`LogicalPlanBuilder`] usage
 > - [`LogicalPlanBuilder` API docs][logicalplanbuilder] — full method reference
 
+---
+
+---
+
 ## Execution Model: Actions vs. Transformations
 
 **Nothing runs until you ask for results.**
 
 DataFusion distinguishes between **transformations** (lazy operations that build a query plan) and **actions** (eager operations that trigger execution). This separation enables whole-query optimization: the optimizer sees your entire pipeline before processing any data, applying rewrites like predicate pushdown and projection pruning. Understanding when execution actually happens—and what triggers it—is key to writing efficient queries and debugging performance issues.
+
+---
 
 ### The DataFrame Lifecycle
 
@@ -891,6 +933,8 @@ PHASE             COMPONENT                  WHAT HAPPENS
                  └────────────────────┘
 ```
 
+---
+
 ### DataFrame Method Categories
 
 Understanding which methods are **lazy** and which trigger **eager** execution is essential—it determines when work actually happens.
@@ -914,6 +958,8 @@ Understanding which methods are **lazy** and which trigger **eager** execution i
   Methods access plan metadata without executing. Exception: [`.explain()`] with `analyze = true` *does\* execute to gather runtime statistics.
 
 For the complete method reference, see [Transformations](transformations.md).
+
+---
 
 ### Ownership vs. Execution: Why You See `.clone()` Everywhere
 
@@ -966,6 +1012,8 @@ async fn main() -> Result<()> {
 ```
 
 > **Re-execution note:** Each action re-runs the full plan from source data. If you need to reuse computed results across multiple actions, materialize them first with [`.cache()`] or write to storage, then run subsequent actions on the materialized output.
+
+---
 
 ### The Tokio Async Runtime: Understanding Tokio
 
@@ -1044,6 +1092,8 @@ async fn main() -> Result<()> {
 > - [Thread Scheduling documentation] — complete technical details
 > - [Crate Configuration](../../user-guide/crate-configuration.md) — SIMD flags, LTO, PGO, and allocator tuning for maximum performance
 
+---
+
 ### What Happens During Execution?
 
 **Datafusion the out of the box query engine, optimizes your query for a performant execution**
@@ -1051,26 +1101,25 @@ async fn main() -> Result<()> {
 When you call an action like [`.collect()`], the lazy plan crosses the ACTION boundary and enters a multi-phase pipeline. What seems to be a simple filter operation to you, is followed by a series of optimizations and transformations by DataFusion's optimizer. Most of the time you don't have to care for this, since the out of the box query engine deals in most of the cases automatically in the background with the optimizers. DataFusion maintains a large set of optimizer rules—only the **applicable ones fire** based on your specific plan structure:
 
 1. **Logical Optimization** ([21+ optimizer rules][optimizer-rules], multiple passes):
-
    - Predicate pushdown (move filters closer to scans)
    - Projection pruning (remove unused columns)
    - Common subexpression elimination
    - Constant folding and simplification
 
 2. **Physical Planning** ([19+ physical rules][physical-rules]):
-
    - Choose concrete algorithms (HashJoin vs SortMergeJoin)
    - Insert repartitioning for parallelism
    - Add sorts where needed
    - Select scan strategies (parallel file readers)
 
 3. **Execution** (parallel, streaming):
-
    - Stream data through operators in chunks (`RecordBatch`es)
    - Execute partitions in parallel via Tokio
    - Spill to disk if memory limits exceeded
 
 > **Memory vs. Streaming:** [`.collect()`] buffers all results in memory—convenient but risky for large datasets. Use [`.execute_stream()`] for incremental processing, or write directly to files with [`.write_parquet()`].
+
+---
 
 ### Optimizer Architecture (For the Curious)
 
@@ -1092,6 +1141,8 @@ This is **not** a Cascades-style optimizer (no memoized search over equivalence 
 
 - [Query Optimizer guide](../query-optimizer.md)
 - [DataFusion paper (SIGMOD 2024)](https://dl.acm.org/doi/10.1145/3626246.3653368).
+
+---
 
 ### Why the Physical Plan Matters
 
@@ -1180,6 +1231,8 @@ For in-memory data (like [`dataframe!]` a datafusion macro), optimizations focus
 - [Optimizer rules (source)][optimizer-rules]
 - [Physical optimizer rules (source)][physical-rules]
 
+---
+
 ### Putting It All Together
 
 **From lazy plan to streaming results—the complete DataFrame lifecycle in action.**
@@ -1246,6 +1299,8 @@ async fn main() -> Result<()> {
 **You now understand:** <br>
 How DataFrames defer work until an action, why [`.clone()`] appears everywhere, and how to inspect plans before running them. For the complete method reference, see [Transformations](transformations.md). For hands-on query building, continue to [Creating DataFrames](creating-dataframes.md).
 
+---
+
 ### References
 
 **DataFrame-API Guides:**
@@ -1275,11 +1330,15 @@ How DataFrames defer work until an action, why [`.clone()`] appears everywhere, 
 
 ---
 
+---
+
 ## The Bigger Picture: The LLVM of Data—Origins and Outlook
 
 **DataFusion stands on the shoulders of giants—and is actively shaping the future of data systems.**
 
 Understanding where DataFusion comes from—and where it's going—helps you make informed architectural decisions. This section covers the execution model heritage, DataFusion's role in the broader ecosystem, and the active roadmap.
+
+---
 
 ### Execution Model: Vectorized Volcano
 
@@ -1312,6 +1371,8 @@ This is why all DataFrame actions are `async fn`—they participate in cooperati
 >
 > This can significantly improve performance for filtering, aggregation, and joins. See [Crate Configuration: Generate Code with CPU Specific Instructions](../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for more options including LTO and PGO.
 
+---
+
 ### The LLVM Parallel: Ecosystem Role
 
 The [SIGMOD 2024 paper][sigmod-paper] draws a parallel between DataFusion and LLVM—not in internal architecture, but in **ecosystem role**. From Section 4.1:
@@ -1331,6 +1392,8 @@ Query engine developers can focus on value-added, domain-specific features while
 
 **What this is NOT:** <br>
 DataFusion does not use LLVM IR or JIT compilation internally. The parallel is about the role DataFusion plays as reusable infrastructure—like LLVM is for compilers, DataFusion is for query engines.
+
+---
 
 ### Future Roadmap
 
@@ -1390,6 +1453,10 @@ The following diagram shows how these concepts connect—multiple frontends feed
                   └───────────────────────────────────────────┘
 ```
 
+---
+
+---
+
 ## Architectural Fit: When to Use DataFusion
 
 **The right tool for the right job—knowing DataFusion's sweet spot saves you from architectural dead-ends.**
@@ -1428,6 +1495,10 @@ DataFusion is a **query engine foundation** optimized for read-heavy, scan-orien
 **The OLAP sweet spot:** <br>
 DataFusion is optimized for read-heavy analytical queries where you scan large amounts of data, filter aggressively, and aggregate results. If your workload involves frequent small writes, point lookups, or requires sub-millisecond response times, a different architecture is likely a better fit.
 
+---
+
+---
+
 ## Summary: A Small Conclusion
 
 The DataFusion DataFrame is more than just a table—it's a powerful recipe for computation. By understanding its core principles, you can build complex, efficient, and predictable data pipelines:
@@ -1439,6 +1510,8 @@ The DataFusion DataFrame is more than just a table—it's a powerful recipe for 
 
 Together these properties let you write declarative SQL for clarity, drop to Rust for control, and still get one optimized execution pipeline.
 
+---
+
 ### Where to Go Next
 
 With these concepts understood, you're ready to build data pipelines:
@@ -1446,6 +1519,8 @@ With these concepts understood, you're ready to build data pipelines:
 1. **[Create DataFrames](creating-dataframes.md)** – load Parquet, CSV, in-memory data
 2. **[Transform DataFrames](transformations.md)** – select, filter, aggregate, join
 3. **[Write / Execute](writing-dataframes.md)** – collect, stream, or persist results
+
+---
 
 ### Advanced Reference: API Cheat-Sheet
 
@@ -1463,6 +1538,10 @@ Know what you want? Find the method here:
 > **SessionState matters**: <br>
 > Methods marked ⚠️ drop the snapshot. They're great for inspection, but to execute later use [`.into_parts()`] to preserve deterministic semantics (timestamps, timezone, config, UDF catalog). See "Re-use plan later" in the cheat-sheet for the safest way to extract and modify a plan.
 
+---
+
+---
+
 ## Further Reading
 
 ### Internal Guides
@@ -1479,6 +1558,8 @@ Know what you want? Find the method here:
 | [SQL Data Types](../../user-guide/sql/data_types.md)         | DataFusion’s SQL type system                                          |
 | [Scalar Functions](../../user-guide/sql/scalar_functions.md) | Built-in functions (used from both SQL and DataFrames)                |
 
+---
+
 ### API Docs (docs.rs)
 
 | Type / Trait                                                                                                                                         | Description                                                       |
@@ -1490,6 +1571,8 @@ Know what you want? Find the method here:
 | [`LogicalPlanBuilder` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html) | Lower-level builder for `LogicalPlan`                             |
 | [`ExecutionPlan` (datafusion)](https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html)                                  | Physical plan trait executed by the runtime                       |
 | [`TableProvider` (datafusion)](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html)                                     | Data source abstraction used by `SessionContext`                  |
+
+---
 
 ### External
 
