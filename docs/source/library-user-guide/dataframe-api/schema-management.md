@@ -163,19 +163,19 @@ For a deep dive into the underlying [Apache Arrow] type system, see the [Arrow S
 Every DataFrame carries a [`DFSchema`] describing its columns and their properties. `DFSchema` wraps an Arrow [`Schema`] and adds query-planning context (table qualifiers and functional dependencies). Understanding the four field properties—name, type, nullability, and metadata—is key to diagnosing schema mismatch errors and handling data safely and performantly.
 
 ```text
-┌─────────────────────────────────────────────────────────┐
-│ DataFrame                                               │
-│   └── LogicalPlan                                       │
-│            └── DFSchema  ← You are here!                │
-│                 ├── inner: Arc<Schema>   (Arrow Schema) │
-│                 │        └── Field[]     (Arrow Fields) │
-│                 │             ├── name                  │
-│                 │             ├── data_type             │
-│                 │             ├── nullable              │
-│                 │             └── metadata              │
-│                 ├── field_qualifiers ([`TableReference`])  │
-│                 └── functional_dependencies             │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ DataFrame                                                 │
+│   └── LogicalPlan                                         │
+│            └── DFSchema  ← YOU ARE HERE!                 │
+│                 ├── inner: Arc<Schema>   (Arrow Schema)   │
+│                 │        └── Field[]     (Arrow Fields)   │
+│                 │             ├── name                    │
+│                 │             ├── data_type               │
+│                 │             ├── nullable                │
+│                 │             └── metadata                │
+│                 ├── field_qualifiers ([`TableReference`]) │
+│                 └── functional_dependencies               │
+└───────────────────────────────────────────────────────────┘
 ```
 
 The example below creates a DataFrame using the `dataframe!` macro, casts a column, and inspects the resulting schema. To access the underlying Arrow Schema, use [`.inner()`] (returns [`&SchemaRef`]) or [`.as_arrow()`] (returns [`&Schema`]).
@@ -240,7 +240,7 @@ In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 │   └── LogicalPlan                                         │
 │            └── DFSchema                                   │
 │                 ├── inner: Arc<Schema>   ← Arrow Schema   │
-│                 │        └── Field[]     ←  Your are here!│
+│                 │        └── Field[]     ←  You are here!│
 │                 │             ├── name                    │
 │                 │             ├── data_type               │
 │                 │             ├── nullable                │
@@ -601,8 +601,6 @@ Now that you understand schema structure and type coercion, you're ready to work
 
 When you call [`df.schema()`], you're reading the schema from the [`LogicalPlan`] that the DataFrame wraps—not accessing data. The schema is stored as a `DFSchemaRef` (`Arc<DFSchema>`), so you need methods to extract different representations depending on your goal.
 
----
-
 ### Display Methods (Human-Readable Output)
 
 **Display methods format the schema as human-readable strings for debugging, logging, and quick inspection during development.**
@@ -650,19 +648,27 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Programmatic methods return schema information as Rust types (`bool`, `Result<>`, iterators), enabling your application logic to validate, branch, and handle errors based on schema properties.**
 
-Production code needs more than display output—it needs to validate schemas before processing, handle missing columns gracefully, and make decisions based on field properties. Display methods show you the schema; programmatic methods let you _act_ on it. Most methods follow two patterns: **check methods** (`has_column_*`) return `bool` for guard clauses, while **access methods** (`field_with_*`) return `Result<>` for explicit error handling when a column might not exist.
+Production code needs more than display output—it needs to validate schemas before processing, handle missing columns gracefully, and make decisions based on field properties. Display methods show you the schema; programmatic methods let you _act_ on it. Most methods follow two patterns:
 
-| Method                                                                                                   | Returns                    | Use Case                                           |
+1. **Check methods** (`has_column_*`) return `bool` for guard clauses,
+2. **Access methods** (`field_with_*`) return `Result<>` for explicit error handling when a column might not exist.
+
+The most commonly used methods for both patterns:
+| Method | Returns | Use Case |
 | -------------------------------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------- |
-| [`df.schema().fields()`]                                                                                 | `&Fields`                  | Iterate over field definitions                     |
-| [`df.schema().iter()`]                                                                                   | `Iterator`                 | Get `(Option<&TableReference>, &Arc<Field>)` pairs |
-| [`df.schema().metadata()`]                                                                               | `&HashMap<String, String>` | Access schema-level metadata                       |
-| [`df.schema().has_column_with_unqualified_name(name)`][`df.schema().has_column_with_unqualified_name()`] | `bool`                     | Check if column exists                             |
-| [`df.schema().field_with_unqualified_name(name)`][`df.schema().field_with_unqualified_name()`]           | `Result<&Arc<Field>>`      | Get field by name (returns error if not found)     |
+| [`.schema().fields()`][`df.schema().fields()`] | `&Fields` | Iterate over field definitions |
+| [`.schema().iter()`][`df.schema().iter()`] | `Iterator` | Get `(Option<&TableReference>, &Arc<Field>)` pairs |
+| [`.schema().metadata()`][`df.schema().metadata()`] | `&HashMap<String, String>` | Access schema-level metadata |
+| [`.schema().has_column_with_unqualified_name(name)`][`df.schema().has_column_with_unqualified_name()`] | `bool` | Check if column exists |
+| [`.schema().field_with_unqualified_name(name)`][`df.schema().field_with_unqualified_name()`] | `Result<&Arc<Field>>` | Get field by name (returns error if not found) |
 
 #### Error Handling Patterns
 
-Schema lookups can fail -- a column may not exist, or a name may be ambiguous after a join. Methods returning `Result<>` are designed for these cases. The three patterns below cover the most common scenarios: defensive checks before access, explicit error handling for user-facing messages, and error propagation for pipeline functions that should fail fast.
+Schema lookups can fail — a column may not exist, or a name may be ambiguous after a join. Pick the pattern that matches your goal:
+
+1. **Guard clause** <br> check with `has_column_*()` before accessing; use when you need to branch.
+2. **Explicit match**<br> `match` on `field_with_*()` result; use when you need informative error messages. This is the most common pattern for error handling.
+3. **Propagate with [`?`]**<br> `field_with_*().map_err(...)?`; use in pipeline functions that should fail fast.
 
 ```rust
 use datafusion::prelude::*;
@@ -748,10 +754,10 @@ async fn main() -> datafusion::error::Result<()> {
 
 Use these when you need to pass the schema to **Arrow ecosystem** functions (compute kernels, IPC writers, RecordBatch creation).
 
-| Method                   | Returns                       | Use Case                          |
-| ------------------------ | ----------------------------- | --------------------------------- |
-| `df.schema().inner()`    | `&SchemaRef` (`&Arc<Schema>`) | Cheap cloning for Arrow functions |
-| `df.schema().as_arrow()` | `&Schema`                     | Direct reference for field access |
+| Method                                               | Returns                       | Use Case                          |
+| ---------------------------------------------------- | ----------------------------- | --------------------------------- |
+| [`.schema().inner()`][`df.schema().inner()`]         | `&SchemaRef` (`&Arc<Schema>`) | Cheap cloning for Arrow functions |
+| [`df.schema().as_arrow()`][`df.schema().as_arrow()`] | `&Schema`                     | Direct reference for field access |
 
 > **Note:**<br>
 > Table qualifiers (e.g., `users.id` vs `orders.id`) are **lost** when converting to Arrow [`Schema`]. If you need qualified names for join disambiguation, stay with [`DFSchema`].
@@ -775,20 +781,25 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 > **Note:** <br>
-> The [`dataframe!`] macro sets all columns to `nullable = true` by default. In production, use `ctx.read_parquet(...)`, `ctx.read_csv(...)`, or `ctx.read_table(...)` to load data with their native nullability settings.
+> The [`dataframe!`] macro sets all columns to `nullable = true` by default. In production, use [`ctx.read_parquet(...)`][`.read_parquet()`], [`ctx.read_csv(...)`][`.read_csv()`], or [`ctx.read_table(...)`][`.read_table()`] to load data with their native nullability settings.
 
 ### Additional DFSchema Methods
 
 For a complete reference of all [`DFSchema`] methods, see the [API documentation][`DFSchema`]. Additional useful methods include:
 
-| Method                                         | Returns               | Purpose                                        |
-| ---------------------------------------------- | --------------------- | ---------------------------------------------- |
-| `df.schema().field(i)`                         | `&Arc<Field>`         | Get field by index                             |
-| `df.schema().field_with_name(qualifier, name)` | `Result<&Arc<Field>>` | Find field by qualified name                   |
-| `df.schema().has_column(&column)`              | `bool`                | Check if column exists (with qualifier)        |
-| `df.schema().index_of_column(&column)`         | `Result<usize>`       | Get column's position                          |
-| `df.schema().data_type(&column)`               | `Result<&DataType>`   | Get column's type (via `ExprSchema`)           |
-| `df.schema().nullable(&column)`                | `Result<bool>`        | Check if column is nullable (via `ExprSchema`) |
+| Method                                          | Returns                                  | Purpose                                          |
+| ----------------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
+| [`.field(i)`]                                   | `&Arc<Field>`                            | Get field by index                               |
+| [`.qualified_field(i)`]                         | `(Option<&TableReference>, &Arc<Field>)` | Get field + qualifier by index                   |
+| [`.field_with_name(qualifier, name)`]           | `Result<&Arc<Field>>`                    | Find field by optional qualifier + name          |
+| [`.field_with_qualified_name(qualifier, name)`] | `Result<&Arc<Field>>`                    | Find field by required qualifier + name          |
+| [`.has_column(&column)`]                        | `bool`                                   | Check if column exists (with qualifier)          |
+| [`.index_of_column(&column)`]                   | `Result<usize>`                          | Get column's position (errors if not found)      |
+| [`.maybe_index_of_column(&column)`]             | `Option<usize>`                          | Get column's position (None if not found)        |
+| [`.field_names()`]                              | `Vec<String>`                            | Quick list of all field names                    |
+| [`.columns()`]                                  | `Vec<Column>`                            | All columns as `Column` structs                  |
+| [`.data_type(&column)`]                         | `Result<&DataType>`                      | Get column's type (via [`ExprSchema`])           |
+| [`.nullable(&column)`]                          | `Result<bool>`                           | Check if column is nullable (via [`ExprSchema`]) |
 
 > **Note:** <br>
 > Methods taking `&column` expect a [`Column`] struct (e.g., `Column::from("name")` or `Column::new_unqualified("name")`), not a plain `&str`. The `data_type` and `nullable` methods come from the [`ExprSchema`] trait, which `DFSchema` implements.
@@ -799,59 +810,60 @@ For a complete reference of all [`DFSchema`] methods, see the [API documentation
 
 ## Creating Schemas
 
-Define schemas explicitly to get planning-time validation, stable types, and predictable downstream behavior.
+**Define schemas explicitly in code to enforce types, nullability, and structure at planning time.**
 
-The most robust way to manage schemas in DataFusion is to define them explicitly in your code. This is done using the [`Schema`], [`Field`], and [`DataType`] objects from the [`arrow` crate].
+Use Arrow's [`Schema`], [`Field`], and [`DataType`] to build schemas that readers, writers, and the optimizer all share. Explicit schemas prevent inference drift in text formats and give the optimizer the type information it needs for efficient execution. See [The Anatomy of a DataFusion Schema](#the-anatomy-of-a-datafusion-schema) for the architectural background.
 
-As described in [The Anatomy of a DataFusion Schema](#the-anatomy-of-a-datafusion-schema), defining a schema gives your pipeline stability and performance. In short:
-
-- **Data quality**:<br> Avoids inference drift in text formats (CSV/NDJSON) and ensures consistent types across runs.
-- **Performance**:<br> Lets the optimizer pick vectorized kernels and push down filters with correct types.
-- **Predictability**:<br> Ensures unions/joins and downstream transformations behave consistently.
-
-A schema specifies:
-
-- **Field names** (case-sensitive)
-- **Data types** ([`DataType`], e.g., `Int64`, `Utf8`, `Timestamp`)
-- **Nullability** (whether `NULL` is allowed)
-- **Optional metadata** (key/value annotations for lineage, semantics)
-
-**DFSchema Construction Methods:**
-
-| Method                                                      | Purpose                                             |
-| ----------------------------------------------------------- | --------------------------------------------------- |
-| [`DFSchema::empty()`]                                       | Create an empty schema                              |
-| [`DFSchema::from_unqualified_fields(fields, metadata)`]     | Create from Arrow Fields without table qualifier    |
-| [`DFSchema::try_from_qualified_schema(qualifier, schema)`]  | Create from Arrow Schema with table qualifier       |
-| [`DFSchema::new_with_metadata(qualified_fields, metadata)`] | Create with per-field qualifiers and metadata       |
-| [`DFSchema::try_from(schema)`]                              | Convert Arrow `Schema` or `Arc<Schema>` to DFSchema |
-
-> **Note:** <br> In most DataFrame workflows, you work with Arrow's `Schema` type directly. `DFSchema` is created automatically when you register tables or read files. You typically only create `DFSchema` directly when implementing custom `TableProvider`s.
+> **Note:** <br>
+> In most DataFrame workflows, you work with Arrow's `Schema` type directly. [`DFSchema`] wraps it with table qualifiers and is created automatically when you register tables or read files. You typically create [`DFSchema`] directly only when implementing custom [`TableProvider`]s.
 
 ### Basic Schema Construction
 
-Build schemas with [`Schema`], [`Field`], and [`DataType`]; reuse them via `Arc<Schema>`.
-
-A minimal schema example demonstrating the core components:
+Build schemas with [`Schema`], [`Field`], and [`DataType`]; then apply them to readers so DataFusion uses your types instead of inference.
 
 ```rust
-use std::sync::Arc;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::assert_batches_eq;
+# use std::fs::File;
+# use std::io::Write;
+# use tempfile::tempdir;
 
-fn main() -> datafusion::error::Result<()> {
-    // Define the structure of your data
-    let schema: Arc<Schema> = Arc::new(Schema::new(vec![
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+    # // Hidden: create a temporary CSV file for the doctest
+    # let dir = tempdir()?;
+    # let csv_path = dir.path().join("users.csv");
+    # let mut file = File::create(&csv_path)?;
+    # writeln!(file, "id,name,active")?;
+    # writeln!(file, "1,Alice,true")?;
+    # writeln!(file, "2,,false")?;
+
+    // 1. Define the schema — this is the contract for your pipeline
+    let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),        // not nullable
         Field::new("name", DataType::Utf8, true),        // nullable
-        Field::new(
-            "created_at",
-            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-            false
-        ),
-    ]));
+        Field::new("active", DataType::Boolean, false),
+    ]);
 
-    // This schema can be applied to readers (see "Applying Schemas to File Readers")
-    assert_eq!(schema.fields().len(), 3);
+    // 2. Apply the schema to a CSV reader — overrides inference
+    let path = "users.csv";
+    # let path = csv_path.to_str().unwrap();
+    let df = ctx.read_csv(path, CsvReadOptions::new().schema(&schema)).await?;
+
+    // 3. Verify: types match the schema, not what inference might have guessed
+    assert_batches_eq!(
+        &[
+            "+----+-------+--------+",
+            "| id | name  | active |",
+            "+----+-------+--------+",
+            "| 1  | Alice | true   |",
+            "| 2  |       | false  |",
+            "+----+-------+--------+",
+        ],
+        &df.collect().await?
+    );
 
     Ok(())
 }
@@ -867,11 +879,10 @@ Each `Field` in the schema specifies:
 
 ### Default Values
 
-Schemas define structure only, not default values. To provide defaults for `NULL` values, apply transformations after reading:
+Schemas define structure only, not default values -- the schema is the contract, defaults are a transformation concern. To provide defaults for `NULL` values, apply transformations after reading:
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::functions::expr_fn::coalesce;
 use datafusion::assert_batches_eq;
 
 #[tokio::main]
@@ -904,7 +915,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-See [Nullability and Default Values](#nullability-and-default-values) for more patterns.
+See [Handling Nullability in Transformations](#handling-nullability-in-transformations) for more patterns.
 
 > **Best practice:** <br> In production, always prefer **explicit schemas** over inference to prevent drift and ensure consistency.
 
@@ -914,12 +925,15 @@ Certain data types require specific configuration to ensure correctness and prev
 
 #### Decimal Types: Precision and Scale
 
-**Why decimals matter**: Floating-point types (Float32/Float64) can introduce rounding errors for financial calculations. Decimals provide exact arithmetic for monetary values.
+**Why decimals matter**: <br>
+Floating-point types (Float32/Float64) can introduce rounding errors for financial calculations. Decimals provide exact arithmetic for monetary values.
 
 **What you need to specify**:
 
-- **Precision**:<br> Total number of digits (maximum 38 for Decimal128)
-- **Scale**:<br> Digits after the decimal point
+- **Precision**:<br>
+  Total number of digits (maximum 38 for Decimal128)
+- **Scale**:<br>
+  Digits after the decimal point
 
 **Example**: `Decimal128(10, 2)`
 
@@ -952,6 +966,8 @@ A timestamp can represent either an absolute moment in time (with timezone) or a
 | :------------------- | :-----------------------------------: | :------------------------------------------------ | :--------------------------------------------------------------------- |
 | **With timezone**    | `Timestamp(Microsecond, Some("UTC"))` | A specific instant (e.g., "2024-01-15 10:00 UTC") | Server logs, transactions, anything that happened at a specific moment |
 | **Without timezone** |    `Timestamp(Microsecond, None)`     | A local time (e.g., "2024-01-15 10:00")           | Scheduled events, opening hours, anything relative to local time       |
+
+At the Arrow level, timestamps with a non-empty timezone are always stored as UTC instants; the timezone string is display/interpretation metadata. Timestamps without a timezone are "wall clock" values with no absolute reference and cannot be compared to timestamped instants without explicit conversion. Changing between two non-empty timezones (e.g., `"UTC"` to `"America/New_York"`) is a metadata-only change at the type level.
 
 **Common mistake**: Mixing the two types in operations
 
@@ -988,18 +1004,25 @@ fn main() {
 }
 ```
 
-> **Best practice:** <br> Pick one strategy for your entire pipeline. Most systems use UTC timestamps throughout. When you need to compare or join columns with different timezone settings, cast them to the same type first using [`.cast_to()`].
+> **Best practice:** <br> Pick one strategy for your entire pipeline. Most systems use UTC timestamps throughout. When you need to compare or join columns with different timezone settings, cast them to the same type first using `cast(col("ts")`, [`DataType::Timestamp(...)`] (available via the prelude).
 
 #### Advanced: Field Metadata
 
-Field metadata is used to embed rich, contextual information—such as column descriptions, data lineage, or security classifications—directly into the schema as key-value pairs. While this information is not used by the DataFusion query engine, it is preserved where possible, making it a powerful tool for external systems, documentation, and compliance.
+Field metadata is used to embed rich, contextual information—such as column descriptions, data lineage, or security classifications—directly into the schema as key-value pairs. This information is not used by the DataFusion query engine and its preservation across I/O is format-dependent and best-effort, but it is a powerful tool for external systems, documentation, and compliance.
 
 Common Use Cases:
 
-- **Constraints:** primary_key, unique, foreign_key
-- **Data Lineage:** source_system, ingest_time, source_column
-- **Compliance & Security:** pii (Personally Identifiable Information), encryption_required
-- **Documentation:** description, owner, version
+- **Constraints (documentation only):**<br>
+  `primary_key`, `unique`, `foreign_key`
+- **Data Lineage:**<br>
+  `source_system`, `ingest_time`, `source_column`
+- **Compliance & Security:**
+  `pii` (Personally Identifiable Information), `encryption_required`
+- **Documentation:**
+  `description`, `owner`, `version`
+
+> **Warning:** <br>
+> Storing `primary_key=true` in Arrow metadata is for documentation and external systems only—the DataFusion optimizer does not read it. For optimizer-level benefits (e.g., functional dependencies, join elimination), express constraints through DataFusion's dedicated [`Constraints`] API on the table or plan.
 
 ```rust
 use std::collections::HashMap;
@@ -1051,7 +1074,7 @@ fn main() {
 - **Re‑attach intentionally**:<br>
   derived/aggregated columns don't inherit metadata—add it on the final output schema if needed.
 - **Verify format support**:<br>
-  Arrow IPC preserves metadata; Parquet varies; CSV/NDJSON don't—treat as best‑effort across formats.
+  Arrow IPC preserves metadata; Parquet can embed it, but DataFusion skips file-level schema metadata by default (`skip_metadata = true`)—set `skip_metadata(false)` in Parquet options if you rely on it; CSV/NDJSON do not carry metadata at all.
 - **Reconcile on merge**:<br>
   when sources disagree, prefer a canonical schema and explicitly resolve conflicts.
 - **Keep it small**:<br>
@@ -1060,323 +1083,72 @@ fn main() {
 
 ---
 
-<!-- ==========================================================================
-     REFERENCE List as Limiter for Focusing on the Above sections
+<!-- TODO: Uncovered DFSchema inspection methods — candidates for Inspecting Schemas / Additional DFSchema Methods:
+     - columns(), columns_with_unqualified_name(name)
+     - fields_with_qualified(qualifier), fields_indices_with_qualified(qualifier)
+     - qualified_fields_with_unqualified_name(name), qualified_field_with_unqualified_name(name)
+     - qualified_field_from_column(column), is_column_from_schema(col)
+     - index_of_column_by_name(qualifier, name)
+     - datatype_is_logically_equal(dt1, dt2), datatype_is_semantically_equal(dt1, dt2)
+     - new_with_metadata(qualified_fields, metadata), from_unqualified_fields(fields, metadata)
+     See: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html -->
 
-     ========================================================================== -->
+---
 
-[`Column`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Column.html
-[`ExprSchema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
-[`df.schema().fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
-[`df.schema().iter()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.iter
-[`df.schema().metadata()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
-[`df.schema().has_column_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_unqualified_name
-[`df.schema().field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
-[`df.schema().field(i)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field
-[`df.schema().field_with_name(qualifier, name)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`df.schema().has_column(column)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
-[`df.schema().index_of_column(col)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column
-[`df.schema().data_type(col)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.data_type
-[`df.schema().nullable(col)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.nullable
-[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
-[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
-[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/expr/type_coercion/struct.TypeCoercion.html
-[`field.metadata()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html#method.metadata
-[`List`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.List.html
-[`Struct`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Struct.html
-[`Map`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Map.html
-[`Union`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Union.html
-[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
-[`LogicalPlanBuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
-[`TableScan.projected_schema`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.TableScan.html#structfield.projected_schema
-[`LogicalPlan.schema()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html#method.schema
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`SessionState.catalog_list`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html#method.catalog_list
-[`arrow::datatypes::Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
-[`Schema::new()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html#method.new
-[`ctx.read_csv(...).schema(...)`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/reader/struct.BufReader.html#method.schema
+## Schema Inference
 
-<!-- Place refrences below this line -->
+**Schema inference derives column names and types from data samples—useful for exploration, but unreliable for production.**
 
-[`df.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`df.schema().to_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.to_string
-[`df.schema().tree_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.tree_string
-[`df.schema().inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
-[`df.schema().as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
-[`df.schema().fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
-[`df.schema().metadata()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
-[`&SchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
-[`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
+When reading text formats (CSV, NDJSON) without an explicit schema, DataFusion samples the first N records to determine column structure. The sampling depth is controlled by [`schema_infer_max_records`] (default: 1,000). Fields not encountered within that window are excluded entirely—no new columns are added after inference completes.
 
-<!-- External References -->
+### How Inference Works
 
-[duckdb]: https://duckdb.org/docs/sql/query_syntax/setops.html#union-by-name
-[arrow-data-types]: https://arrow.apache.org/docs/python/data.html
-[`printschema()`]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.printSchema.html
-[unity catalog]: https://www.unitycatalog.io/
-[project nessie]: https://projectnessie.org/
+Inference behavior varies by format. CSV uses **positional** alignment (column index determines mapping), while NDJSON uses **name-based** alignment (JSON keys map to fields by name).
 
-<!-- DataFusion Core Types -->
+| Aspect                  | CSV                                                                  | NDJSON                                            |
+| :---------------------- | :------------------------------------------------------------------- | :------------------------------------------------ |
+| **Field alignment**     | Positional (column index)                                            | Name-based (JSON key)                             |
+| **Missing fields**      | Row-length mismatch errors by default                                | NULL if field exists in schema                    |
+| **Short rows**          | Error; use [`.truncated_rows(true)`][`truncated_rows`] to fill NULLs | N/A (each line is a self-contained object)        |
+| **Sampling window**     | First N records ([`schema_infer_max_records`])                       | First N records ([`schema_infer_max_records`])    |
+| **Default sample size** | 1,000                                                                | 1,000                                             |
+| **Type inference**      | Attempts numeric/boolean detection; falls back to `Utf8`             | Infers from JSON value types (`number`, `string`) |
 
-[typecoercion]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`schema`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html
-[`field`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
-[`datatype`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html
+> **Tip:** <br>
+> For detailed format behavior with explicit schemas, see [Strategy 1: Text Formats](#strategy-1-text-formats-csv--ndjson--enforce-schemas).
 
-<!-- Dataframe Methods -->
+If inference is necessary, increase the sample size to reduce the risk of missing columns or mistyped fields:
 
-[`.tree_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.tree_string
-[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
-
-<!-- External Standards -->
-
-[parquet]: https://parquet.apache.org/docs/file-format/
-[apache arrow]: https://arrow.apache.org/
-[arrow schema]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[arrow schema docs]: https://arrow.apache.org/cookbook/py/schema.html
-[arrow schema rust]: https://github.com/apache/arrow-rs/tree/main/arrow/examples
-[arrow dtype]: https://arrow.apache.org/docs/python/api/datatypes.html
-[`arrow` crate]: https://docs.rs/arrow/latest/arrow/
-[`arrow::compute::can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
-[`can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
-[`schema`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html
-[`field`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
-[`datatype`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html
-
-<!-- DataFusion Core Types -->
-
-[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
-[`tableprovider.schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[dfschema::inner]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
-[`dfschema::field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`dfschema::logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
-[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
-[tableprovider::schema]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
-[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
-[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
-[`schemaref`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
-[`datafusionerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html
-[`datafusionerror::plan`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.Plan
-[`datafusionerror::schemaerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.SchemaError
-[`null`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.NULL.html
-
-<!-- DataFusion Methods -->
-
-[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.alias
-[`col()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.col.html
-[`.cast_to()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.cast_to
-[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
-[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
-[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
-[`.to_string_pretty()`]: https://docs.rs/serde_json/latest/serde_json/fn.to_string_pretty.html
-[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
-[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
-[`.union_by_name_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name_distinct
-[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
-[`coalesce`]: https://docs.rs/datafusion-functions/latest/datafusion_functions/core/expr_fn/fn.coalesce.html
-[`avg()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/average/index.html
-[`count()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/count/index.html
-[`max()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
-[`median()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/median/index.html
-[`min()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
-[`stddev()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/stddev/index.html
-[typesignature]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.TypeSignature.html
-
-<!-- DFSchema Methods (Advanced) -->
-
-[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
-[`.datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
-[`.datatype_is_semantically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_semantically_equal
-[`.field_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_names
-[`.field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`.field_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_qualified_name
-[`.field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
-[`.fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
-[`.has_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
-[`.has_column_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_qualified_name
-[`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
-[`.index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column
-[`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
-[`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.matches_arrow_schema
-[`.maybe_index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.maybe_index_of_column
-[`nullable()`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html#method.nullable
-[`.qualified_field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.qualified_field_with_name
-[field]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
-
-<!-- IO & Configuration -->
-
-[`csvreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
-[`ndjsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
-[`parquetreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
-[`has_header`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#structfield.has_header
-[`infer_schema_max_records`]: https://docs.rs/deltalake/latest/deltalake/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
-[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
-[`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
-
-<!-- External Reading -->
-
-[avro-evolution]: https://avro.apache.org/docs/current/specification/#schema-resolution
-[kleppmann]: https://dataintensive.net/
-[parquet-dremio]: https://medium.com/data-engineering-with-dremio/all-about-parquet-part-04-schema-evolution-in-parquet-c2c2b1aa6141
-[parquet-evolution]: https://spark.apache.org/docs/latest/sql-data-sources-parquet.html#schema-merging
-[schema mismatch medium]: https://medium.com/data-engineering-with-dremio/schema-mismatch-error-understanding-and-resolving-8d6c1e1a7e1a
-
-<!-- Invisible References (Sorted by Category) -->
-
-[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
-[`.cast_to()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.cast_to
-[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.alias
-[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/config/struct.ConfigOptions.html
-[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
-[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
-[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
-[`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
-[`has_header`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#structfield.has_header
-[`datafusionerror::plan`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.Plan
-[`datafusionerror::schemaerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.SchemaError
-[`datafusionerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html
-[`csvreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
-[`ndjsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
-[`parquetreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
-[`arrow_csv::readerbuilder::with_truncated_rows`]: https://docs.rs/arrow-csv/latest/arrow_csv/reader/struct.ReaderBuilder.html#method.with_truncated_rows
-[`arrow` crate]: https://docs.rs/arrow/latest/arrow/
-[apache arrow]: https://arrow.apache.org/
-[arrow schema]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[arrow schema docs]: https://arrow.apache.org/cookbook/py/schema.html
-[arrow schema docs.rs]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[arrow dtype]: https://arrow.apache.org/docs/python/api/datatypes.html
-[`col()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.col.html
-[`count()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/count/index.html
-[`median()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/median/index.html
-[`min()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
-[`max()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
-[`avg()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/average/index.html
-[`stddev()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/stddev/index.html
-[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
-[`schemaref`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
-[`dfschema::inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
-[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
-[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
-[`.union_by_name_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name_distinct
-[dataframe.schema]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`.to_string_pretty()`]: https://docs.rs/serde_json/latest/serde_json/fn.to_string_pretty.html
-[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`dfschema::logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
-[`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
-[`dfschema::field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`.field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
-[`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.matches_arrow_schema
-[`.datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
-[`.datatype_is_semantically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_semantically_equal
-[`.field_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_qualified_name
-[`.field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
-[`.qualified_field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.qualified_field_with_name
-[`.maybe_index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.maybe_index_of_column
-[`.index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column
-[`.field_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_names
-[`.fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
-[`.has_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
-[`.has_column_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_qualified_name
-[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
-[dfschema::inner]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
-[dfschema::metadata]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[`field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
-[`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
-[`arrow::compute::can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
-[`can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
-[`.cast_to()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Expr.html#method.cast_to
-[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
-[`coalesce`]: https://docs.rs/datafusion-functions/latest/datafusion_functions/core/expr_fn/fn.coalesce.html
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
-[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#structfield.schema_infer_max_records
-[typesignature]: https://github.com/apache/datafusion/blob/main/datafusion/expr-common/src/signature.rs#L154-L249
-[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
-[schema mismatch medium]: https://medium.com/@rakeshchanda/schema-mismatch-understanding-and-resolving-eadf3251f786
-[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
-[tableprovider::schema]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
-[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
-[`TableReference`]: https://docs.rs/datafusion/latest/datafusion/common/enum.TableReference.html
-[parquet-evolution]: https://spark.apache.org/docs/latest/sql-data-sources-parquet.html#schema-merging
-[avro-evolution]: https://avro.apache.org/docs/current/specification/#schema-resolution
-[kleppmann]: https://dataintensive.net/
-[parquet-dremio]: https://medium.com/data-engineering-with-dremio/all-about-parquet-part-04-schema-evolution-in-parquet-c2c2b1aa6141
-[`infer_schema_max_records`]: https://docs.rs/deltalake/latest/deltalake/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
-[`field`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
-[`schema`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html
-[`nullable()`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html#method.nullable
-
-<!-- TODO: MAJOR RESTRUCTURE NEEDED - This section has gold content but poor organization -->
-
-## Schema Inference: behavior and limits
-
-Schema inference is sampling-based and format-dependent. Key points:
-
-- **Sampling window:** only fields seen within [`schema_infer_max_records`] become columns; later unseen fields are ignored (no new columns are added).
-- **CSV specifics:** parsing is positional; row-length mismatches error by default (use [`truncated_rows(true)`][`truncated_rows`] to allow shorter rows and fill NULLs for nullable fields).
-- **NDJSON specifics:** alignment is name-based; missing keys become NULL only if the field is part of the inferred (or explicit) schema.
-- **Types:** string tokens are not auto-cast to numeric/temporal types; choose explicit schemas where precision or safety matters (e.g., `Decimal128` for currency).
-- **Configuration:** tune [`CsvReadOptions::schema_infer_max_records(...)`][`schema_infer_max_records`] and [`NdJsonReadOptions::schema_infer_max_records(...)`]([`schema_infer_max_records`]) to control sampling depth.
-
-#### Schema Inference vs. Explicit Schemas
-
-**When to use explicit schemas:**
-
-- Production pipelines (prevents drift and ensures data quality)
-- When you need specific types (e.g., `Decimal128` instead of `Float64`)
-- Multi-file reads where schemas may vary slightly
-
-**When inference is acceptable:**
-
-- Interactive exploration and prototyping
-- Single-file reads with consistent structure
-- When you can validate the inferred schema before processing
-
-**Increasing inference sample size:**
-
-If you must use inference, increase the number of records sampled to reduce the risk of missing types:
-
-```rust,ignore
+```rust
 use datafusion::prelude::*;
 
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
+fn main() {
+    // CSV: increase from default 1,000 to 10,000 rows
+    let csv_opts = CsvReadOptions::new()
+        .schema_infer_max_records(10_000);
+    assert_eq!(csv_opts.schema_infer_max_records, 10_000);
 
-    let options = CsvReadOptions::new()
-        .schema_infer_max_records(10_000);  // Default is 1000
-    // let df = ctx.read_csv("data.csv", options).await?;
-
-    // Demonstrate the option is set
-    println!("Options configured");
-    Ok(())
+    // NDJSON: same configuration pattern
+    let json_opts = NdJsonReadOptions::default()
+        .schema_infer_max_records(10_000);
+    assert_eq!(json_opts.schema_infer_max_records, 10_000);
 }
 ```
 
-> **Warning:** Schema inference can drift as data evolves. A column that starts as integers may later contain decimals, causing runtime errors. Always validate inferred schemas before deploying to production.
+### When to Use Explicit Schemas
 
-<!-- TODO: Add link for `with_schema_infer_max_records` -->
+| Scenario                                   | Recommendation                                        |
+| :----------------------------------------- | :---------------------------------------------------- |
+| Production pipelines                       | **Explicit** — prevents drift, ensures data quality   |
+| Specific types needed (e.g., `Decimal128`) | **Explicit** — inference may choose `Float64`         |
+| Multi-file reads with varying structure    | **Explicit** — guarantees consistency across files    |
+| Interactive exploration / prototyping      | **Inference OK** — validate before relying on results |
+| Single-file reads with uniform structure   | **Inference OK** — lower risk of missing fields       |
 
-<!-- TODO: Add a compact table comparing inference behavior (CSV vs NDJSON), with examples and links to the central guidance in creating-dataframes.md. -->
+> **Warning:** <br>
+> Inference can drift as data evolves. A column that appears as `Int64` in the first 1,000 rows may contain floats later, causing runtime parse errors. Validate inferred schemas before deploying to production.
+
+**See also:** [Creating Schemas](#creating-schemas) for constructing explicit schemas, and [Applying Schemas and Modeling Data](#applying-schemas-and-modeling-data) for format-specific configuration.
 
 ---
 
@@ -1388,37 +1160,103 @@ While DataFusion schemas are conceptually immutable (each operation creates a ne
 
 ### DFSchema Transform Methods
 
-| Category     | Method                                | Purpose                                                |
-| ------------ | ------------------------------------- | ------------------------------------------------------ |
-| **Align**    | `.strip_qualifiers()`                 | Remove all table qualifiers from fields                |
-| **Align**    | `.replace_qualifier(qualifier)`       | Replace all qualifiers with a new table name           |
-| **Combine**  | `.join(other)`                        | Merge two schemas (errors on duplicate field names)    |
-| **Combine**  | `.merge(&mut self, other)`            | Append fields from another schema (ignores duplicates) |
-| **Annotate** | `.with_functional_dependencies(deps)` | Set functional dependencies for optimization           |
+| Category     | Method                                      | Purpose                                                |
+| ------------ | ------------------------------------------- | ------------------------------------------------------ |
+| **Create**   | `DFSchema::try_from_qualified_schema(q, s)` | Create a qualified schema from an Arrow schema         |
+| **Align**    | `.strip_qualifiers()`                       | Remove all table qualifiers from fields                |
+| **Align**    | `.replace_qualifier(qualifier)`             | Replace all qualifiers with a new table name           |
+| **Combine**  | `.join(&other)`                             | Combine two schemas (errors on duplicate field names)  |
+| **Combine**  | `.merge(&mut self, &other)`                 | Append fields from another schema (ignores duplicates) |
+| **Annotate** | `.with_functional_dependencies(deps)`       | Set functional dependencies for optimization           |
 
-### Aligning Table Qualifiers
+> **Note:** <br>
+> For per-field qualifier control, see [`with_field_specific_qualified_schema()`]. Most workflows use `replace_qualifier()` or `strip_qualifiers()` instead.
 
-When combining data from multiple sources, qualifier alignment ensures unambiguous column references:
+### Aligning Qualifiers
 
-```rust,ignore
-use datafusion::prelude::*;
-use datafusion::common::DFSchema;
+**Table qualifiers disambiguate columns from different sources—essential after joins where multiple tables share column names.**
 
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    // After a join, columns may have different qualifiers: users.id, orders.id
-    // To normalize for downstream processing:
+When DataFusion joins tables, each field retains its source qualifier (e.g., `users.id`, `orders.id`). The qualifier methods let you normalize these for downstream processing: strip them for simplicity, or replace them with a uniform name.
 
-    let df = dataframe!(
-        "id" => [1_i64, 2_i64],
-        "name" => ["Alice", "Bob"]
-    )?;
+#### try_from_qualified_schema
 
-    // The schema has qualifiers from the source
-    let schema = df.schema();
+Create a [`DFSchema`] where every field carries the same table qualifier. This is the primary way to build a qualified schema from an Arrow [`Schema`]:
 
-    // strip_qualifiers() removes table prefixes: users.id -> id
-    // replace_qualifier() changes all to a new name: users.id -> result.id
+```rust
+use datafusion::common::{DFSchema, TableReference};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+fn main() -> datafusion::error::Result<()> {
+    let arrow_schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+    ]);
+
+    // Qualify all fields with "users"
+    let qualified = DFSchema::try_from_qualified_schema("users", &arrow_schema)?;
+
+    // Verify: each field now carries the "users" qualifier
+    for (qualifier, field) in qualified.iter() {
+        assert_eq!(qualifier, Some(&TableReference::bare("users")));
+        assert!(field.name() == "id" || field.name() == "name");
+    }
+
+    Ok(())
+}
+```
+
+#### strip_qualifiers
+
+Remove all table qualifiers, reducing `users.id` to just `id`. Consumes `self` and returns a new [`DFSchema`]:
+
+```rust
+use datafusion::common::{DFSchema, TableReference};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+fn main() -> datafusion::error::Result<()> {
+    let arrow_schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+    ]);
+    let qualified = DFSchema::try_from_qualified_schema("users", &arrow_schema)?;
+
+    // Strip all qualifiers
+    let stripped = qualified.strip_qualifiers();
+
+    // Verify: no qualifiers remain
+    for (qualifier, _field) in stripped.iter() {
+        assert_eq!(qualifier, None);
+    }
+
+    Ok(())
+}
+```
+
+> **Warning:** <br>
+> Stripping qualifiers after a join can create duplicate unqualified names (e.g., two `id` columns). Use `.replace_qualifier()` or rename columns first if ambiguity is possible.
+
+#### replace_qualifier
+
+Replace all qualifiers with a new table name. Useful for normalizing a schema after a join to a single logical name:
+
+```rust
+use datafusion::common::{DFSchema, TableReference};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+fn main() -> datafusion::error::Result<()> {
+    let arrow_schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+    ]);
+    let qualified = DFSchema::try_from_qualified_schema("users", &arrow_schema)?;
+
+    // Replace "users" qualifier with "result"
+    let renamed = qualified.replace_qualifier("result");
+
+    // Verify: all fields now have "result" qualifier
+    for (qualifier, _field) in renamed.iter() {
+        assert_eq!(qualifier, Some(&TableReference::bare("result")));
+    }
 
     Ok(())
 }
@@ -1426,45 +1264,85 @@ async fn main() -> datafusion::error::Result<()> {
 
 ### Combining Schemas
 
-Use `.join()` when schemas must have distinct fields (e.g., preparing for a union), and `.merge()` when you want to combine fields while ignoring duplicates:
+**Combine fields from multiple schemas into one—either strictly (rejecting duplicates) or permissively (ignoring them).**
 
-```rust,ignore
+Use [`.join()`][dfschema::join] when schemas must have entirely distinct fields (e.g., after a SQL JOIN), and [`.merge()`][dfschema::merge] when you want to accumulate fields while silently skipping duplicates (e.g., building a union schema from overlapping sources).
+
+**SQL equivalent:** `.join()` mirrors the schema produced by `SELECT * FROM a JOIN b`; `.merge()` is closer to `UNION BY NAME` schema resolution.
+
+#### join
+
+Combine two schemas into one. Returns an error if any field names overlap (accounting for qualifiers):
+
+```rust
 use datafusion::common::DFSchema;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use std::collections::HashMap;
 
 fn main() -> datafusion::error::Result<()> {
-    let schema_a = DFSchema::try_from(Schema::new(vec![
+    let users_schema = DFSchema::try_from(Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("name", DataType::Utf8, true),
     ]))?;
 
-    let schema_b = DFSchema::try_from(Schema::new(vec![
+    let contact_schema = DFSchema::try_from(Schema::new(vec![
         Field::new("email", DataType::Utf8, true),
     ]))?;
 
     // join: combines schemas, errors if field names overlap
-    let combined = schema_a.join(&schema_b)?;
-    // Result: id, name, email
+    let combined = users_schema.join(&contact_schema)?;
+
+    assert_eq!(combined.fields().len(), 3);
+    assert_eq!(combined.field_names(), vec!["id", "name", "email"]);
 
     Ok(())
 }
 ```
 
+> **Warning:** <br>
+> `.join()` checks for duplicate names within the same qualifier scope. Two fields named `id` with different qualifiers (e.g., `users.id` and `orders.id`) are allowed; two unqualified `id` fields are not.
+
+#### merge
+
+Append fields from another schema, silently skipping any duplicates. Mutates `self` in place:
+
+```rust
+use datafusion::common::DFSchema;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+fn main() -> datafusion::error::Result<()> {
+    let mut base_schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+    ]))?;
+
+    let overlapping_schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("name", DataType::Utf8, true),  // duplicate — will be skipped
+        Field::new("email", DataType::Utf8, true),  // new — will be added
+    ]))?;
+
+    // merge: appends non-duplicate fields, ignores "name" (already present)
+    base_schema.merge(&overlapping_schema);
+
+    assert_eq!(base_schema.fields().len(), 3);
+    assert_eq!(base_schema.field_names(), vec!["id", "name", "email"]);
+
+    Ok(())
+}
+```
+
+> **Note:** <br>
+> Merge precedence: `self` fields take priority over `other` fields, but `other` metadata keys overwrite `self` metadata keys. See the [`merge()`][dfschema::merge] [API docs](https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge) for details.
+
 ### Handling Nullability in Transformations
 
-When schemas are merged or combined, nullability follows a widening rule:
+**After combining schemas via [`.join()`][dfschema::join] or [`.merge()`][dfschema::merge], nullable fields often appear—requiring strategies to fill, filter, or preserve NULL values.**
 
-> **The Golden Rule of Nullability:**<br>
-> If a column is nullable in **any** input schema, it becomes nullable in the output schema.
+As described in [Nullability](#nullability), the widening rule applies: if a column is nullable in **any** input schema, it remains nullable in the combined result. The patterns below address what to do with the resulting NULLs.
 
-This is a safety mechanism—DataFusion never assumes data exists where it might not.
-
-**Common patterns for handling NULL values:**
-
-```rust,ignore
+```rust
 use datafusion::prelude::*;
 use datafusion::functions::expr_fn::coalesce;
+use datafusion::assert_batches_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
@@ -1473,7 +1351,7 @@ async fn main() -> datafusion::error::Result<()> {
         "status" => [Some("active"), None, Some("inactive")]
     )?;
 
-    // Pattern 1: Fill NULLs with default values
+    // Pattern 1: Fill NULLs with a default using coalesce
     let df = df.with_column("status",
         coalesce(vec![col("status"), lit("pending")])
     )?;
@@ -1485,25 +1363,190 @@ async fn main() -> datafusion::error::Result<()> {
             .otherwise(col("email"))?
     )?;
 
+    let results = df.clone().collect().await?;
+    assert_batches_eq!(
+        &[
+            "+---------------------+----------+",
+            "| email               | status   |",
+            "+---------------------+----------+",
+            "| a@x.com             | active   |",
+            "| unknown@example.com | pending  |",
+            "| c@x.com             | inactive |",
+            "+---------------------+----------+",
+        ],
+        &results
+    );
+
     // Pattern 3: Filter out incomplete records
-    let complete_df = df.filter(
-        col("email").is_not_null()
-    )?;
+    let complete_df = df.filter(col("email").is_not_null())?;
+    assert_eq!(complete_df.collect().await?.iter().map(|b| b.num_rows()).sum::<usize>(), 3);
 
     Ok(())
 }
 ```
 
-| Strategy                  | When to Use                                      | Example                                  |
-| :------------------------ | :----------------------------------------------- | :--------------------------------------- |
-| **Fill with default**     | Reasonable default exists AND row still valuable | Missing status -> "pending"              |
-| **Fill with computation** | Can derive from other columns                    | Missing full_name -> concat(first, last) |
-| **Drop row**              | Required field missing OR would skew analysis    | Missing primary key                      |
-| **Keep NULL**             | NULL is meaningful (unknown != default)          | Missing survey response                  |
+| Strategy              | When to Use                                   | Example                                 |
+| :-------------------- | :-------------------------------------------- | :-------------------------------------- |
+| **Fill with default** | Reasonable default exists, row still valuable | Missing status → "pending"              |
+| **Fill with logic**   | Value derivable from other columns            | Missing full_name → concat(first, last) |
+| **Drop row**          | Required field missing or would skew analysis | Missing primary key                     |
+| **Keep NULL**         | NULL is meaningful (unknown ≠ default)        | Missing survey response                 |
 
 **See also:** [Concepts: Handling Null Values](./concepts.md#handling-null-values) for SQL NULL semantics and three-valued logic.
 
 ---
+
+---
+
+<!-- ==========================================================================
+     REFERENCE List as Limiter for Focusing on the Above sections
+
+     ========================================================================== -->
+
+<!-- ADD NEW REFERENCES BELOW  THEY WILL BE SORTET TOMOOROW !--->
+
+<!-- DataFusion: DFSchema & Schema Methods -->
+
+[`&SchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
+[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
+[`.columns()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.columns
+[`.data_type(&column)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.data_type
+[`.datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
+[`.datatype_is_semantically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_semantically_equal
+[`.field(i)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field
+[`.field_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_names
+[`.field_with_name(qualifier, name)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
+[`.field_with_qualified_name(qualifier, name)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_qualified_name
+[`.field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
+[`.fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
+[`.has_column(&column)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
+[`.has_column_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_qualified_name
+[`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
+[`.index_of_column(&column)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column
+[`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
+[`.iter()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.iter
+[`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
+[`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.matches_arrow_schema
+[`.maybe_index_of_column(&column)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.maybe_index_of_column
+[`.nullable(&column)`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html#method.nullable
+[`.qualified_field(i)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.qualified_field
+[`.qualified_field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.qualified_field_with_name
+[`.to_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.to_string
+[`.tree_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.tree_string
+[`df.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`dfschema::field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
+[`dfschema::join`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
+[`dfschema::logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
+[`dfschema::merge`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
+[`dfschema::metadata`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
+[`ExprSchema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
+[`Schema::new()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html#method.new
+[`schemaref`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
+[`with_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_field_specific_qualified_schema
+
+<!-- DataFusion: DataFrame Methods -->
+
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
+[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
+[`.union_by_name_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name_distinct
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+
+<!-- DataFusion: Expressions & Functions -->
+
+[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.alias
+[`.cast_to()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.cast_to
+[`avg()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/average/index.html
+[`coalesce`]: https://docs.rs/datafusion-functions/latest/datafusion_functions/core/expr_fn/fn.coalesce.html
+[`col()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.col.html
+[`Column`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Column.html
+[`Constraints`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Constraints.html
+[`count()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/count/index.html
+[`max()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
+[`median()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/median/index.html
+[`min()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
+[`stddev()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/stddev/index.html
+[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/expr/type_coercion/struct.TypeCoercion.html
+[`typesignature`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.TypeSignature.html
+
+<!-- DataFusion: Context, IO & Configuration -->
+
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
+[`csvreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
+[`ctx.read_csv(...).schema(...)`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/reader/struct.BufReader.html#method.schema
+[`has_header`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#structfield.has_header
+[`infer_schema_max_records`]: https://docs.rs/deltalake/latest/deltalake/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`ndjsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
+[`parquetreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
+[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`SessionState.catalog_list`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html#method.catalog_list
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
+[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
+[`TableScan.projected_schema`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.TableScan.html#structfield.projected_schema
+[`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
+
+<!-- DataFusion: Errors & Logical Plans -->
+
+[`?`]: https://doc.rust-lang.org/stable/std/ops/trait.Try.html
+[`datafusionerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html
+[`datafusionerror::plan`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.Plan
+[`datafusionerror::schemaerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.SchemaError
+[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`LogicalPlan.schema()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html#method.schema
+[`LogicalPlanBuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+
+<!-- Arrow & Data Types -->
+
+[`arrow` crate]: https://docs.rs/arrow/latest/arrow/
+[`arrow schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`arrow::compute::can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
+[`arrow::datatypes::Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+[`can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
+[`DataType::Timestamp(...)`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html#variant.Timestamp
+[`datatype`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html
+[`field.metadata()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html#method.metadata
+[`field`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
+[`List`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.List.html
+[`Map`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Map.html
+[`null`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.NULL.html
+[`schema`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html
+[`Struct`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Struct.html
+[`Union`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Union.html
+
+<!-- External References & Standards -->
+
+[apache arrow]: https://arrow.apache.org/
+[arrow data types]: https://arrow.apache.org/docs/python/data.html
+[arrow dtype]: https://arrow.apache.org/docs/python/api/datatypes.html
+[arrow schema docs]: https://arrow.apache.org/cookbook/py/schema.html
+[arrow schema rust]: https://github.com/apache/arrow-rs/tree/main/arrow/examples
+[avro-evolution]: https://avro.apache.org/docs/current/specification/#schema-resolution
+[duckdb]: https://duckdb.org/docs/sql/query_syntax/setops.html#union-by-name
+[kleppmann]: https://dataintensive.net/
+[parquet]: https://parquet.apache.org/docs/file-format/
+[parquet-dremio]: https://medium.com/data-engineering-with-dremio/all-about-parquet-part-04-schema-evolution-in-parquet-c2c2b1aa6141
+[parquet-evolution]: https://spark.apache.org/docs/latest/sql-data-sources-parquet.html#schema-merging
+[`printschema()`]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.printSchema.html
+[project nessie]: https://projectnessie.org/
+[schema mismatch medium]: https://medium.com/data-engineering-with-dremio/schema-mismatch-error-understanding-and-resolving-8d6c1e1a7e1a
+[unity catalog]: https://www.unitycatalog.io/
+[`.to_string_pretty()`]: https://docs.rs/serde_json/latest/serde_json/fn.to_string_pretty.html
 
 ## Removing/Projecting Columns
 
