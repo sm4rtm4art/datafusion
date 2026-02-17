@@ -17,18 +17,11 @@
   under the License.
 -->
 
-# Schema Management DFSchema-APi
+# Schema Management (DFSchema-APi)
 
 **The “health” phase of the DataFrame lifecycle: inspect, validate, and evolve schema.**
 
-Schema management is the foundation of a robust data pipeline. It defines how you declare, evolve, and reconcile the structure of your data as it flows through DataFusion. Keeping schemas explicit and stable prevents subtle schema drift or type drift and makes transformations predictable, the query engine performant and reliable.
-
-**Why Schemas Matter:** <br>
-Accurate types are critical for both **correctness** and **performance**. They allow the DataFusion optimizer to:
-
-- Push down predicates efficiently.
-- Select the fastest vectorized compute kernels.
-- Leverage columnar statistics to skip irrelevant data.
+Schema management defines the structural contract of your data—names, types, and nullability—as it flows through DataFusion. Explicit schemas are critical for both correctness and performance, enabling the optimizer to push down predicates, select vectorized kernels, and prevent silent schema drift. You manage this contract via the [`DFSchema`] API, which wraps underlying Arrow types with the query-planning context needed for robust, predictable execution.
 
 > **Style Note:** <br>
 > In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
@@ -165,8 +158,8 @@ Every DataFrame carries a [`DFSchema`] describing its columns and their properti
 ```text
 ┌───────────────────────────────────────────────────────────┐
 │ DataFrame                                                 │
-│   └── LogicalPlan                                         │
-│            └── DFSchema  ← YOU ARE HERE!                 │
+│   └── LogicalPlan         CURRENT TOPIC (YOU ARE HERE!)   │
+│            └── DFSchema  <----┘                           │
 │                 ├── inner: Arc<Schema>   (Arrow Schema)   │
 │                 │        └── Field[]     (Arrow Fields)   │
 │                 │             ├── name                    │
@@ -240,8 +233,8 @@ In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 │   └── LogicalPlan                                         │
 │            └── DFSchema                                   │
 │                 ├── inner: Arc<Schema>   ← Arrow Schema   │
-│                 │        └── Field[]     ←  You are here!│
-│                 │             ├── name                    │
+│                 │        └── Field[]     ← CURRENT TOPIC  │
+│                 │             ├── name    (YOU ARE HERE!) │
 │                 │             ├── data_type               │
 │                 │             ├── nullable                │
 │                 │             └── metadata                │
@@ -252,11 +245,11 @@ In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 
 **What DFSchema adds to Arrow Schema:**
 
-| Component                 | Access via                                                           | Purpose                                                                  |
-| :------------------------ | :------------------------------------------------------------------- | :----------------------------------------------------------------------- |
-| `inner` (Arrow Schema)    | [`.inner()`] returns `&SchemaRef`, [`.as_arrow()`] returns `&Schema` | Field definitions (name, type, nullable, metadata)                       |
-| `field_qualifiers`        | [`.iter()`] yields `(Option<&TableReference>, &Arc<Field>)` pairs    | Track which table each field came from (e.g., `users.id` vs `orders.id`) |
-| `functional_dependencies` | [`.with_functional_dependencies()`] to set; internal to optimizer    | Enable optimizations based on key relationships (e.g., primary keys)     |
+| Component                 | Access via                                                                                                   | Purpose                                                                  |
+| :------------------------ | :----------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------- |
+| `inner` (Arrow Schema)    | [`schema().inner()`][`.inner()`] returns `&SchemaRef`, [`.as_arrow()`] returns `&Schema`                     | Field definitions (name, type, nullable, metadata)                       |
+| `field_qualifiers`        | [`schema().iter()`][`.iter()`] yields `(Option<&TableReference>, &Arc<Field>)` pairs                         | Track which table each field came from (e.g., `users.id` vs `orders.id`) |
+| `functional_dependencies` | [`schema().with_functional_dependencies()`][`.with_functional_dependencies()`] to set; internal to optimizer | Enable optimizations based on key relationships (e.g., primary keys)     |
 
 **Where Arrow Schema originates:**
 
@@ -272,14 +265,14 @@ In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 Each column in a DataFrame is defined by four properties that control how data is stored, accessed, and validated. These properties determine how your data is interpreted—for example:<br>
 The same bytes (`1735689600_i64`) become a timestamp (`2025-01-01T00:00:00`) when the field declares `Timestamp` as its type.
 
-| Property             | Role                                     | Operations Affected                              |
-| :------------------- | :--------------------------------------- | :----------------------------------------------- |
-| **Primary**          | Essential for performant data processing | Query engine                                     |
-| [`name`][field]      | Column identity                          | joins, selects, filters, group by, union_by_name |
-| [`data_type`][field] | Storage & compute                        | kernel selection, type coercion, optimization    |
-| [`nullable`][field]  | Null handling                            | validity bitmaps, null-safe operations           |
-| **Secondary**        | _Essential for giving data meaning_      | _Human understanding & tuning_                   |
-| [`metadata`][field]  | Semantic context                         | descriptions, units, lineage, PII classification |
+| Property                     | Role                                     | Operations Affected                              |
+| :--------------------------- | :--------------------------------------- | :----------------------------------------------- |
+| **Primary**                  | Essential for performant data processing | Query engine                                     |
+| [`field.name`][`field`]      | Column identity                          | joins, selects, filters, group by, union_by_name |
+| [`field.data_type`][`field`] | Storage & compute                        | kernel selection, type coercion, optimization    |
+| [`field.nullable`][`field`]  | Null handling                            | validity bitmaps, null-safe operations           |
+| **Secondary**                | _Essential for giving data meaning_      | _Human understanding & tuning_                   |
+| [`field.metadata`][`field`]  | Semantic context                         | descriptions, units, lineage, PII classification |
 
 The query engine uses the **primary properties** to plan and execute queries efficiently. **Metadata** (secondary property), while preserved throughout processing, serves a different purpose: it gives your data _meaning_ so you (or downstream systems) can interpret results correctly and make informed decisions about schema evolution.
 
@@ -292,15 +285,16 @@ In the remainder of this section, we will focus on four practical aspects of sch
 
 #### 1. Column Names
 
-The column [`name`][field] is the primary identifier for a column in the DataFrame API. Operations like [`.select()`], [`.with_column()`], and [`.union_by_name()`] all rely on the column name to perform their work.
+The column [`field.name`][`field`] is the primary identifier for a column in the DataFrame API. Operations like [`.select()`], [`.with_column()`], and [`.union_by_name()`] all rely on the column name to perform their work.
 
 > **The #1 Schema Mismatch Cause:** <br>
-> In the Rust DataFrame API, column names are **case-sensitive strings**. `col("Region")` and `col("region")` reference _different_ columns—this catches many users off guard.
+> In the Rust DataFrame API, column names are **case-sensitive strings**. `col("Region")` and `col("region")` reference _different_ columns—this catches many users off guard.<br>
 
-> **Note:** <br>This differs from DataFusion's SQL parser, where unquoted identifiers are normalized to lowercase by default. When mixing DataFrame API calls with SQL queries, be aware of this distinction.
->
+> **Note:** <br>
+> This differs from DataFusion's SQL parser, where unquoted identifiers are normalized to lowercase by default. When mixing DataFrame API calls with SQL queries, be aware of this distinction.<br>
+
 > **Best Practice:** <br>
-> Enforce a consistent naming convention (e.g., all **snake_case** or **camelCase**) at your ingestion boundary. <br>
+> Enforce a consistent naming convention (e.g., all **snake_case** or **camelCase**) at your ingestion boundary.<br>
 
 #### 2. Column Order
 
@@ -328,7 +322,7 @@ When combining DataFrames with [`.union_by_name()`], differences in column count
 > This flexibility applies to [`.union_by_name()`] only. The positional [`.union()`] requires **identical column counts** in both DataFrames—any mismatch will fail during planning.
 
 > **Important:** <br>
-> While `.union_by_name()` handles _missing_ columns automatically, it does **not** silently handle _type mismatches_ for columns that exist in both DataFrames. When the same column name appears with different types (e.g., `Int32` vs `Int64`), DataFusion's [type coercion analyzer][typecoercion] attempts to find a common type. If no safe coercion path exists, the query will fail during analysis—forcing you to be explicit about how to resolve the ambiguity.
+> While [`.union_by_name()`] handles _missing_ columns automatically, it does **not** silently handle _type mismatches_ for columns that exist in both DataFrames. When the same column name appears with different types (e.g., `Int32` vs `Int64`), DataFusion's [type coercion analyzer][typecoercion] attempts to find a common type. If no safe coercion path exists, the query will fail during analysis—forcing you to be explicit about how to resolve the ambiguity.
 
 #### 4. Column Types
 
@@ -336,16 +330,16 @@ Types drive planning-time validation, coercion, and operator selection—prefer 
 
 **Common Arrow data types in DataFusion:**
 
-| Category           |                                Arrow Types                                 |            Example Values             |           Common Use Cases            |
-| :----------------- | :------------------------------------------------------------------------: | :-----------------------------------: | :-----------------------------------: |
-| **Integers**       | `Int8`, `Int16`, `Int32`, `Int64`<br>`UInt8`, `UInt16`, `UInt32`, `UInt64` |           `42`, `-100`, `0`           |        IDs, counts, quantities        |
-| **Floating-Point** |                            `Float32`, `Float64`                            |           `3.14`, `-0.001`            | Measurements, scientific data, ratios |
-| **Decimal**        |                       `Decimal128(precision, scale)`                       |         `99.99`, `1234.5678`          |   Financial data, currency, prices    |
-| **Strings**        |                            `Utf8`, `LargeUtf8`                             |       `"hello"`, `"データ融合"`       |    Names, descriptions, categories    |
-| **Temporal**       |             `Date32`, `Date64`<br>`Timestamp(unit, timezone)`              | `2024-01-15`<br>`2024-01-15 14:30:00` |          Event times, dates           |
-| **Boolean**        |                                 `Boolean`                                  |            `true`, `false`            |           Flags, conditions           |
-| **Binary**         |                          `Binary`, `LargeBinary`                           |            `[0x12, 0x34]`             |           Raw data, hashes            |
-| **Nested Types**   |                      `Struct(Fields)`, `List(Field)`                       |        `{"a": 1}`, `[1, 2, 3]`        |  JSON/Parquet data, complex objects   |
+| Category           | Arrow Types                                                                | Example Values                        |           Common Use Cases            |
+| :----------------- | -------------------------------------------------------------------------- | ------------------------------------- | :-----------------------------------: |
+| **Integers**       | `Int8`, `Int16`, `Int32`, `Int64`<br>`UInt8`, `UInt16`, `UInt32`, `UInt64` | `42`, `-100`, `0`                     |        IDs, counts, quantities        |
+| **Floating-Point** | `Float32`, `Float64`                                                       | `3.14`, `-0.001`                      | Measurements, scientific data, ratios |
+| **Decimal**        | `Decimal128(precision, scale)`                                             | `99.99`, `1234.5678`                  |   Financial data, currency, prices    |
+| **Strings**        | `Utf8`, `LargeUtf8`                                                        | `"hello"`, `"データ融合"`             |    Names, descriptions, categories    |
+| **Temporal**       | `Date32`, `Date64`<br>`Timestamp(unit, timezone)`                          | `2024-01-15`<br>`2024-01-15 14:30:00` |          Event times, dates           |
+| **Boolean**        | `Boolean`                                                                  | `true`, `false`                       |           Flags, conditions           |
+| **Binary**         | `Binary`, `LargeBinary`                                                    | `[0x12, 0x34]`                        |           Raw data, hashes            |
+| **Nested Types**   | `Struct(Fields)`, `List(Field)`                                            | `{"a": 1}`, `[1, 2, 3]`               |  JSON/Parquet data, complex objects   |
 
 For a complete reference of all supported types, see the [SQL Data Types guide](../../user-guide/sql/data_types.md).
 
@@ -363,14 +357,14 @@ Properties define _what_ a column is (name, type). Features define _how_ it beha
 
 #### Nullability
 
-The [`nullable`][field] flag—the third property in our Schema Field Properties table—is a critical part of a field's type definition. When merging schemas (for example, via [`.union_by_name()`]), DataFusion follows a simple, safe rule:
+The [`field.nullable`][`field`] flag—the third property in our Schema Field Properties table—is a critical part of a field's type definition. When merging schemas (for example, via [`.union_by_name()`]), DataFusion follows a simple, safe rule:
 
 > **The Golden Rule of Nullability:**<br>
 > If a column is nullable in any of the input schemas, it will be nullable in the output schema.
 
 This is a widening conversion: a non‑nullable column can always be represented in a nullable one, but not the other way around.
 
-> **How Arrow stores NULLs:** Arrow tracks nulls with a **validity bitmap**—one bit per row, separate from the data buffer. This makes null checks fast and memory-efficient (no per-null object overhead like Python's `None`). The data buffer still exists at null positions, but the validity bit marks it as "ignore this value."
+> **How Arrow stores NULLs:** Arrow tracks nulls with a **validity bitmap**—one bit per row, separate from the data buffer. This makes null checks fast and memory-efficient (no per-null object overhead like Python's `NONE`). The data buffer still exists at null positions, but the validity bit marks it as "ignore this value."
 
 For a deeper discussion of how NULL values behave in expressions, filters, and joins, see:
 
@@ -378,7 +372,7 @@ For a deeper discussion of how NULL values behave in expressions, filters, and j
 
 #### Metadata
 
-The [`metadata`][field] property—the fourth in our Schema Field Properties table—provides semantic annotations beyond types: column descriptions, units of measure, data lineage, or custom tags. DataFusion **preserves** metadata when reading from formats like Parquet that embed it.
+The [`field.metadata`][`field`] property—the fourth in our Schema Field Properties table—provides semantic annotations beyond types: column descriptions, units of measure, data lineage, or custom tags. DataFusion **preserves** metadata when reading from formats like Parquet that embed it.
 
 **Common metadata use cases:**
 
@@ -393,8 +387,8 @@ The [`metadata`][field] property—the fourth in our Schema Field Properties tab
 
 DataFusion supports metadata at two levels, both accessible via [`DFSchema`]:
 
-- **Schema-level**: [`df.schema().metadata()`][dfschema::metadata] — annotations for the entire dataset
-- **Field-level**: [`field.metadata()`] — annotations per column (accessed via [`df.schema().fields()`] or [`df.schema().inner().fields()`][dfschema::inner])
+- **Schema-level**: [`df.schema().metadata()`][`dfschema::metadata`] — annotations for the entire dataset
+- **Field-level**: [`field.metadata()`][`field.metadata()`] — annotations per column (accessed via [`df.schema().fields()`] or [`df.schema().inner().fields()`][`.inner()`])
 
 For the full metadata API, see the [`DFSchema` documentation][`DFSchema`].
 
@@ -605,12 +599,12 @@ When you call [`df.schema()`], you're reading the schema from the [`LogicalPlan`
 
 **Display methods format the schema as human-readable strings for debugging, logging, and quick inspection during development.**
 
-When diagnosing schema mismatches or exploring unfamiliar data, you need to **_see_** the schema structure at a glance. These methods implement `Display` traits, so you can use them directly with `println!` or logging frameworks. Choose `to_string()` for a quick field list, or `tree_string()` for detailed type and nullability information—the latter is particularly useful when debugging type coercion errors.
+When diagnosing schema mismatches or exploring unfamiliar data, you need to **_see_** the schema structure at a glance. These methods implement `Display` traits, so you can use them directly with `println!` or logging frameworks. Choose [`.to_string()`] for a quick field list, or [`.tree_string()`] for detailed type and nullability information—the latter is particularly useful when debugging type coercion errors.
 
-| Method                        | Returns        | Output                                                                |
-| ----------------------------- | -------------- | --------------------------------------------------------------------- |
-| [`df.schema().to_string()`]   | `String`       | Compact field list: `"fields:[a, b, c], metadata:{}"`                 |
-| [`df.schema().tree_string()`] | `impl Display` | Tree format with types & nullability (like Spark's [`printSchema()`]) |
+| Method                                          | Returns        | Output                                                                |
+| ----------------------------------------------- | -------------- | --------------------------------------------------------------------- |
+| [`df.schema().to_string()`][`.to_string()`]     | `String`       | Compact field list: `"fields:[a, b, c], metadata:{}"`                 |
+| [`df.schema().tree_string()`][`.tree_string()`] | `impl Display` | Tree format with types & nullability (like Spark's [`printSchema()`]) |
 
 ```rust
 use datafusion::prelude::*;
@@ -640,7 +634,7 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 > **Tip:** <br>
-> When debugging schema mismatches, use [`df.schema().tree_string()`] first—it shows types and nullability, which are often the culprits.
+> When debugging schema mismatches, use [`df.schema().tree_string()`][`.tree_string()`] first—it shows types and nullability, which are often the culprits.
 
 ---
 
@@ -650,8 +644,8 @@ async fn main() -> datafusion::error::Result<()> {
 
 Production code needs more than display output—it needs to validate schemas before processing, handle missing columns gracefully, and make decisions based on field properties. Display methods show you the schema; programmatic methods let you _act_ on it. Most methods follow two patterns:
 
-1. **Check methods** (`has_column_*`) return `bool` for guard clauses,
-2. **Access methods** (`field_with_*`) return `Result<>` for explicit error handling when a column might not exist.
+1. **Check methods** ([`has_column_*`]) return `bool` for guard clauses,
+2. **Access methods** ([`field_with_*`]) return `Result<>` for explicit error handling when a column might not exist.
 
 The most commonly used methods for both patterns:
 | Method | Returns | Use Case |
@@ -661,6 +655,14 @@ The most commonly used methods for both patterns:
 | [`.schema().metadata()`][`df.schema().metadata()`] | `&HashMap<String, String>` | Access schema-level metadata |
 | [`.schema().has_column_with_unqualified_name(name)`][`df.schema().has_column_with_unqualified_name()`] | `bool` | Check if column exists |
 | [`.schema().field_with_unqualified_name(name)`][`df.schema().field_with_unqualified_name()`] | `Result<&Arc<Field>>` | Get field by name (returns error if not found) |
+
+[`has_column_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
+[`field_with_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
+[`df.schema().fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
+[`df.schema().iter()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.iter
+[`df.schema().metadata()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
+[`df.schema().has_column_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_unqualified_name
+[`df.schema().field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
 
 #### Error Handling Patterns
 
@@ -785,7 +787,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 ### Additional DFSchema Methods
 
-For a complete reference of all [`DFSchema`] methods, see the [API documentation][`DFSchema`]. Additional useful methods include:
+For a complete reference of all [`DFSchema`] methods, see the [API documentation][`DFSchema`]. Beyond the core methods shown above, these are useful for field access and column-level inspection:
 
 | Method                                          | Returns                                  | Purpose                                          |
 | ----------------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
@@ -793,16 +795,35 @@ For a complete reference of all [`DFSchema`] methods, see the [API documentation
 | [`.qualified_field(i)`]                         | `(Option<&TableReference>, &Arc<Field>)` | Get field + qualifier by index                   |
 | [`.field_with_name(qualifier, name)`]           | `Result<&Arc<Field>>`                    | Find field by optional qualifier + name          |
 | [`.field_with_qualified_name(qualifier, name)`] | `Result<&Arc<Field>>`                    | Find field by required qualifier + name          |
-| [`.has_column(&column)`]                        | `bool`                                   | Check if column exists (with qualifier)          |
-| [`.index_of_column(&column)`]                   | `Result<usize>`                          | Get column's position (errors if not found)      |
-| [`.maybe_index_of_column(&column)`]             | `Option<usize>`                          | Get column's position (None if not found)        |
 | [`.field_names()`]                              | `Vec<String>`                            | Quick list of all field names                    |
 | [`.columns()`]                                  | `Vec<Column>`                            | All columns as `Column` structs                  |
 | [`.data_type(&column)`]                         | `Result<&DataType>`                      | Get column's type (via [`ExprSchema`])           |
 | [`.nullable(&column)`]                          | `Result<bool>`                           | Check if column is nullable (via [`ExprSchema`]) |
+| [`.functional_dependencies()`]                  | `&FunctionalDependencies`                | Access functional dependency constraints         |
 
 > **Note:** <br>
 > Methods taking `&column` expect a [`Column`] struct (e.g., `Column::from("name")` or `Column::new_unqualified("name")`), not a plain `&str`. The `data_type` and `nullable` methods come from the [`ExprSchema`] trait, which `DFSchema` implements.
+
+For column existence checks and index lookups (`.has_column()`, `.index_of_column()`, `.maybe_index_of_column()`), see [Validating Schemas](#validating-schemas).
+
+#### Qualifier-Aware Lookup Methods
+
+When working with qualified schemas—typically after joins or when implementing custom plan nodes—[`DFSchema`] provides specialized methods to look up fields by qualifier, by unqualified name across qualifiers, or by [`Column`] reference. These are rarely needed in typical DataFrame workflows but essential for disambiguation in multi-table contexts.
+
+| Method                                          | Returns                                          | Purpose                                               |
+| ----------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------- |
+| `.fields_with_qualified(qualifier)`             | `Vec<&Arc<Field>>`                               | All fields belonging to a specific table qualifier    |
+| `.fields_indices_with_qualified(qualifier)`     | `Vec<usize>`                                     | Field indices for a specific table qualifier          |
+| `.fields_with_unqualified_name(name)`           | `Vec<&Arc<Field>>`                               | All fields matching a name (ignoring qualifiers)      |
+| `.qualified_fields_with_unqualified_name(name)` | `Vec<(Option<&TableReference>, &Arc<Field>)>`    | Fields + qualifiers matching a name                   |
+| `.qualified_field_with_unqualified_name(name)`  | `Result<(Option<&TableReference>, &Arc<Field>)>` | Single field by name (errors if ambiguous)            |
+| `.qualified_field_from_column(column)`          | `Result<(Option<&TableReference>, &Arc<Field>)>` | Resolve a [`Column`] to its field + qualifier         |
+| `.columns_with_unqualified_name(name)`          | `Vec<Column>`                                    | All [`Column`] refs matching a name                   |
+| `.index_of_column_by_name(qualifier, name)`     | `Option<usize>`                                  | Find index by optional qualifier + name               |
+| `.is_column_from_schema(col)`                   | `bool`                                           | Check if a [`Column`] reference exists in this schema |
+
+> **Tip:** <br>
+> Most of these methods are wrappers around [`.iter()`] with different filter/return semantics. If you need a custom lookup pattern, iterating directly with `.iter()` is often simpler than finding the right method name.
 
 ---
 
@@ -876,6 +897,22 @@ Each `Field` in the schema specifies:
 - **Nullable**: Whether `NULL` values are permitted
 
 > **Note:** <br> Always use [`SchemaRef`] (`Arc<Schema>`) for efficient sharing. Cloning an `Arc` is O(1) and avoids deep copies of the schema structure.
+
+#### DFSchema Construction
+
+In most workflows, [`DFSchema`] is created automatically when you register tables or read files. When you need to create one directly—typically for custom [`TableProvider`] implementations or plan nodes—use these constructors:
+
+| Constructor                                                           | Input                                              | Qualifiers         | Purpose                                    |
+| --------------------------------------------------------------------- | -------------------------------------------------- | ------------------ | ------------------------------------------ |
+| `DFSchema::try_from(schema)`                                          | `Schema` or `SchemaRef`                            | All `None`         | Convert an Arrow schema (no qualifiers)    |
+| `DFSchema::empty()`                                                   | —                                                  | —                  | Create an empty schema (zero fields)       |
+| `DFSchema::from_unqualified_fields(fields, metadata)`                 | `Fields` + `HashMap<String, String>`               | All `None`         | Build from Arrow fields with metadata      |
+| `DFSchema::new_with_metadata(qualified_fields, metadata)`             | `Vec<(Option<TableReference>, Arc<Field>)>` + meta | Per-field          | Full control: explicit qualifier per field |
+| `DFSchema::try_from_qualified_schema(qualifier, &schema)`             | `impl Into<TableReference>` + `&Schema`            | All same qualifier | Qualify every field with one table name    |
+| `DFSchema::from_field_specific_qualified_schema(qualifiers, &schema)` | `Vec<Option<TableReference>>` + `&SchemaRef`       | Per-field          | Different qualifier per field              |
+
+> **Note:** <br>
+> `try_from`, `from_unqualified_fields`, and `try_from_qualified_schema` call [`.check_names()`][`check_names()`] and return `Result`—they will error on duplicate field names. `empty()` always succeeds. For qualifier transformations on an existing `DFSchema`, see [Aligning Qualifiers](#aligning-qualifiers).
 
 ### Default Values
 
@@ -1083,15 +1120,13 @@ fn main() {
 
 ---
 
-<!-- TODO: Uncovered DFSchema inspection methods — candidates for Inspecting Schemas / Additional DFSchema Methods:
-     - columns(), columns_with_unqualified_name(name)
-     - fields_with_qualified(qualifier), fields_indices_with_qualified(qualifier)
-     - qualified_fields_with_unqualified_name(name), qualified_field_with_unqualified_name(name)
-     - qualified_field_from_column(column), is_column_from_schema(col)
-     - index_of_column_by_name(qualifier, name)
-     - datatype_is_logically_equal(dt1, dt2), datatype_is_semantically_equal(dt1, dt2)
-     - new_with_metadata(qualified_fields, metadata), from_unqualified_fields(fields, metadata)
-     See: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html -->
+<!--------------------------------------------
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+END HERE WITH ENTERTING MISSING REFERENCES
+
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+-------------------------------------------->
 
 ---
 
@@ -1126,12 +1161,12 @@ fn main() {
     // CSV: increase from default 1,000 to 10,000 rows
     let csv_opts = CsvReadOptions::new()
         .schema_infer_max_records(10_000);
-    assert_eq!(csv_opts.schema_infer_max_records, 10_000);
+    # assert_eq!(csv_opts.schema_infer_max_records, 10_000);
 
     // NDJSON: same configuration pattern
     let json_opts = NdJsonReadOptions::default()
         .schema_infer_max_records(10_000);
-    assert_eq!(json_opts.schema_infer_max_records, 10_000);
+    # assert_eq!(json_opts.schema_infer_max_records, 10_000);
 }
 ```
 
@@ -1148,7 +1183,11 @@ fn main() {
 > **Warning:** <br>
 > Inference can drift as data evolves. A column that appears as `Int64` in the first 1,000 rows may contain floats later, causing runtime parse errors. Validate inferred schemas before deploying to production.
 
-**See also:** [Creating Schemas](#creating-schemas) for constructing explicit schemas, and [Applying Schemas and Modeling Data](#applying-schemas-and-modeling-data) for format-specific configuration.
+**See also:**<br>
+
+- [Creating Schemas](#creating-schemas) for constructing explicit schemas.
+- [Applying Schemas and Modeling Data](#applying-schemas-and-modeling-data) for format-specific configuration.
+- [Validating Schemas](#validating-schemas) for checking inferred schemas before use.
 
 ---
 
@@ -1160,17 +1199,21 @@ While DataFusion schemas are conceptually immutable (each operation creates a ne
 
 ### DFSchema Transform Methods
 
-| Category     | Method                                      | Purpose                                                |
-| ------------ | ------------------------------------------- | ------------------------------------------------------ |
-| **Create**   | `DFSchema::try_from_qualified_schema(q, s)` | Create a qualified schema from an Arrow schema         |
-| **Align**    | `.strip_qualifiers()`                       | Remove all table qualifiers from fields                |
-| **Align**    | `.replace_qualifier(qualifier)`             | Replace all qualifiers with a new table name           |
-| **Combine**  | `.join(&other)`                             | Combine two schemas (errors on duplicate field names)  |
-| **Combine**  | `.merge(&mut self, &other)`                 | Append fields from another schema (ignores duplicates) |
-| **Annotate** | `.with_functional_dependencies(deps)`       | Set functional dependencies for optimization           |
+| Category     | Method                                                  | Ownership           | Purpose                                               |
+| ------------ | ------------------------------------------------------- | ------------------- | ----------------------------------------------------- |
+| **Create**   | `DFSchema::try_from_qualified_schema(q, s)`             | Associated fn       | Create a qualified [`DFSchema`] from an Arrow schema  |
+| **Create**   | `DFSchema::from_field_specific_qualified_schema(qs, s)` | Associated fn       | Create a [`DFSchema`] with per-field qualifiers       |
+| **Align**    | `.strip_qualifiers()`                                   | Consumes self       | Remove all table qualifiers from fields               |
+| **Align**    | `.replace_qualifier(qualifier)`                         | Consumes self       | Replace all qualifiers with a new table name          |
+| **Align**    | `.with_field_specific_qualified_schema(qs)`             | Borrows `&self`     | Replace qualifiers with per-field values              |
+| **Combine**  | `.join(&other)`                                         | Borrows `&self`     | Combine two schemas (errors on duplicate field names) |
+| **Combine**  | `.merge(&other)`                                        | Mutates `&mut self` | Append fields, silently skipping duplicates           |
+| **Annotate** | `.with_functional_dependencies(deps)`                   | Consumes self       | Set functional dependencies for optimization          |
 
 > **Note:** <br>
-> For per-field qualifier control, see [`with_field_specific_qualified_schema()`]. Most workflows use `replace_qualifier()` or `strip_qualifiers()` instead.
+> Methods that **consume self** (`.strip_qualifiers()`, `.replace_qualifier()`) cannot be called directly on `df.schema()`, which returns `&DFSchema`. Clone first: `df.schema().clone().strip_qualifiers()`. For per-field qualifier control, see [`with_field_specific_qualified_schema()`].
+
+---
 
 ### Aligning Qualifiers
 
@@ -1262,17 +1305,104 @@ fn main() -> datafusion::error::Result<()> {
 }
 ```
 
+#### from_field_specific_qualified_schema
+
+Create a [`DFSchema`] from an Arrow [`SchemaRef`] with a **different qualifier per field**. Unlike `try_from_qualified_schema` (which applies one qualifier to all fields), this lets you assign qualifiers individually—useful when constructing schemas that represent joined results:
+
+```rust
+use std::sync::Arc;
+use datafusion::common::{DFSchema, TableReference};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+fn main() -> datafusion::error::Result<()> {
+    let arrow_schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("order_id", DataType::Int64, false),
+    ]));
+
+    // First field from "users", second from "orders"
+    let qualifiers = vec![
+        Some(TableReference::bare("users")),
+        Some(TableReference::bare("orders")),
+    ];
+
+    let schema = DFSchema::from_field_specific_qualified_schema(qualifiers, &arrow_schema)?;
+
+    // Verify: each field has its own qualifier
+    let (q0, f0) = schema.qualified_field(0);
+    assert_eq!(q0, Some(&TableReference::bare("users")));
+    assert_eq!(f0.name(), "id");
+
+    let (q1, f1) = schema.qualified_field(1);
+    assert_eq!(q1, Some(&TableReference::bare("orders")));
+    assert_eq!(f1.name(), "order_id");
+
+    Ok(())
+}
+```
+
+#### with_field_specific_qualified_schema
+
+Re-qualify an **existing** [`DFSchema`] with per-field qualifiers. Borrows `&self` and returns a new [`DFSchema`] with the same fields but different qualifiers. Errors if the number of qualifiers does not match the number of fields:
+
+```rust
+use datafusion::common::{DFSchema, TableReference};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+fn main() -> datafusion::error::Result<()> {
+    let arrow_schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("amount", DataType::Float64, true),
+    ]);
+
+    // Start with a uniformly qualified schema
+    let original = DFSchema::try_from_qualified_schema("source", &arrow_schema)?;
+
+    // Re-qualify: move "id" to "users", "amount" to "transactions"
+    let requalified = original.with_field_specific_qualified_schema(vec![
+        Some(TableReference::bare("users")),
+        Some(TableReference::bare("transactions")),
+    ])?;
+
+    let (q0, _) = requalified.qualified_field(0);
+    assert_eq!(q0, Some(&TableReference::bare("users")));
+
+    let (q1, _) = requalified.qualified_field(1);
+    assert_eq!(q1, Some(&TableReference::bare("transactions")));
+
+    // Mismatched qualifier count returns an error
+    let result = original.with_field_specific_qualified_schema(vec![None]);
+    assert!(result.is_err());
+
+    Ok(())
+}
+```
+
+> **Note:** <br>
+> Unlike `.strip_qualifiers()` and `.replace_qualifier()` which consume `self`, `.with_field_specific_qualified_schema()` borrows `&self`—so you can call it directly without cloning.
+
+---
+
 ### Combining Schemas
 
 **Combine fields from multiple schemas into one—either strictly (rejecting duplicates) or permissively (ignoring them).**
 
-Use [`.join()`][dfschema::join] when schemas must have entirely distinct fields (e.g., after a SQL JOIN), and [`.merge()`][dfschema::merge] when you want to accumulate fields while silently skipping duplicates (e.g., building a union schema from overlapping sources).
+Use [`schema().join()`][dfschema::join] when schemas must have entirely distinct fields (e.g., after a SQL JOIN), and [`schema().merge()`][dfschema::merge] when you want to accumulate fields while silently skipping duplicates (e.g., building a union schema from overlapping sources).
 
-**SQL equivalent:** `.join()` mirrors the schema produced by `SELECT * FROM a JOIN b`; `.merge()` is closer to `UNION BY NAME` schema resolution.
+**SQL equivalent:**<br>
+`.join()` mirrors the schema produced by `SELECT * FROM a JOIN b`; `.merge()` is closer to `UNION BY NAME` schema resolution.
 
 #### join
 
-Combine two schemas into one. Returns an error if any field names overlap (accounting for qualifiers):
+Combine two schemas into one, appending all fields from `other` after the fields from `self`. Borrows `&self` and returns a new [`DFSchema`].
+
+`.join()` enforces **uniqueness**: it calls [`check_names()`] on the result and returns an error if any field names collide. Duplicate detection follows qualifier scope:
+
+- **Qualified fields:** both qualifier _and_ name must match to be a duplicate (`users.id` and `orders.id` are distinct).
+- **Unqualified fields:** name alone must be unique (two bare `id` fields error).
+- **Cross-scope:** an unqualified `id` also conflicts with any qualified `*.id`, since unqualified names must be unambiguous.
+
+Metadata from both schemas is merged (keys from `other` overwrite matching keys from `self`). Functional dependencies are reset to empty.
 
 ```rust
 use datafusion::common::DFSchema;
@@ -1288,22 +1418,34 @@ fn main() -> datafusion::error::Result<()> {
         Field::new("email", DataType::Utf8, true),
     ]))?;
 
-    // join: combines schemas, errors if field names overlap
+    // join: appends fields from contact_schema, errors on duplicates
     let combined = users_schema.join(&contact_schema)?;
 
     assert_eq!(combined.fields().len(), 3);
     assert_eq!(combined.field_names(), vec!["id", "name", "email"]);
 
+    // Joining schemas with overlapping unqualified names would error:
+    // users_schema.join(&users_schema) -> Err(DuplicateUnqualifiedField)
+
     Ok(())
 }
 ```
 
-> **Warning:** <br>
-> `.join()` checks for duplicate names within the same qualifier scope. Two fields named `id` with different qualifiers (e.g., `users.id` and `orders.id`) are allowed; two unqualified `id` fields are not.
-
 #### merge
 
-Append fields from another schema, silently skipping any duplicates. Mutates `self` in place:
+Append fields from another schema, silently skipping duplicates. Unlike `.join()`, `.merge()` mutates `&mut self` in place and never errors—it is a permissive accumulation operation, designed for building union-compatible schemas.
+
+**Merge precedence** (important—fields and metadata follow _opposite_ rules):
+
+| Aspect                    | Precedence                              | Rationale                                         |
+| :------------------------ | :-------------------------------------- | :------------------------------------------------ |
+| **Fields**                | `self` wins — duplicates skipped        | Preserves the original schema's field definitions |
+| **Schema-level metadata** | `other` wins — overwrites matching keys | Allows newer metadata to propagate                |
+
+Duplicate detection mirrors `.join()`:
+
+- **Qualified fields:** both qualifier and field name must match.
+- **Unqualified fields:** field name alone is sufficient.
 
 ```rust
 use datafusion::common::DFSchema;
@@ -1316,11 +1458,11 @@ fn main() -> datafusion::error::Result<()> {
     ]))?;
 
     let overlapping_schema = DFSchema::try_from(Schema::new(vec![
-        Field::new("name", DataType::Utf8, true),  // duplicate — will be skipped
-        Field::new("email", DataType::Utf8, true),  // new — will be added
+        Field::new("name", DataType::Utf8, true),   // duplicate — skipped
+        Field::new("email", DataType::Utf8, true),   // new — appended
     ]))?;
 
-    // merge: appends non-duplicate fields, ignores "name" (already present)
+    // merge: appends non-duplicate fields, ignores "name" (already in base)
     base_schema.merge(&overlapping_schema);
 
     assert_eq!(base_schema.fields().len(), 3);
@@ -1330,12 +1472,11 @@ fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Note:** <br>
-> Merge precedence: `self` fields take priority over `other` fields, but `other` metadata keys overwrite `self` metadata keys. See the [`merge()`][dfschema::merge] [API docs](https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge) for details.
+---
 
 ### Handling Nullability in Transformations
 
-**After combining schemas via [`.join()`][dfschema::join] or [`.merge()`][dfschema::merge], nullable fields often appear—requiring strategies to fill, filter, or preserve NULL values.**
+**After combining schemas via [`schema().join()`][dfschema::join] or [`schema().merge()`][dfschema::merge], nullable fields often appear—requiring strategies to fill, filter, or preserve NULL values.**
 
 As described in [Nullability](#nullability), the widening rule applies: if a column is nullable in **any** input schema, it remains nullable in the combined result. The patterns below address what to do with the resulting NULLs.
 
@@ -1347,7 +1488,7 @@ use datafusion::assert_batches_eq;
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
     let df = dataframe!(
-        "email" => [Some("a@x.com"), None, Some("c@x.com")],
+        "email" => [Some("a@some.com"), None, Some("c@some.com")],
         "status" => [Some("active"), None, Some("inactive")]
     )?;
 
@@ -1369,9 +1510,9 @@ async fn main() -> datafusion::error::Result<()> {
             "+---------------------+----------+",
             "| email               | status   |",
             "+---------------------+----------+",
-            "| a@x.com             | active   |",
+            "| a@some.com          | active   |",
             "| unknown@example.com | pending  |",
-            "| c@x.com             | inactive |",
+            "| c@some.com          | inactive |",
             "+---------------------+----------+",
         ],
         &results
@@ -1392,7 +1533,582 @@ async fn main() -> datafusion::error::Result<()> {
 | **Drop row**          | Required field missing or would skew analysis | Missing primary key                     |
 | **Keep NULL**         | NULL is meaningful (unknown ≠ default)        | Missing survey response                 |
 
-**See also:** [Concepts: Handling Null Values](./concepts.md#handling-null-values) for SQL NULL semantics and three-valued logic.
+**See also:**<br>
+
+- [Concepts: Handling Null Values](./concepts.md#handling-null-values) for SQL NULL semantics and three-valued logic.
+- [Nullability](#nullability) for the widening rule when schemas are merged.
+- [Default Values](#default-values) for applying defaults during schema creation.
+
+---
+
+---
+
+## Removing/Projecting Columns
+
+**[`DFSchema`] has no removal methods—schemas are immutable snapshots of a plan node's output. To "remove" columns, create a new plan that produces fewer columns using [`.select()`] or [`.drop_columns()`].**
+
+Each [`LogicalPlan`] node has a fixed schema. Projecting columns creates a **new** `Projection` node with its own [`DFSchema`], leaving the original DataFrame unchanged. This immutability enables safe concurrent operations and predictable query plans.
+
+**SQL equivalent:** `SELECT col_a, col_b FROM ...` (listing only the columns to keep).
+
+### Projecting with .select()
+
+**Use [`.select()`] when you know which columns to keep—the explicit inclusion list is the safest approach.**
+
+```rust
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let df = dataframe!(
+        "id" => [1_i64, 2_i64, 3_i64],
+        "name" => ["Alice", "Bob", "Carol"],
+        "email" => ["a@x.com", "b@x.com", "c@x.com"],
+        "internal_flag" => [true, false, true]
+    )?;
+
+    // Keep only the columns you need — "internal_flag" is excluded
+    let df_clean = df.select(vec![col("id"), col("name"), col("email")])?;
+
+    // Verify: new schema has 3 fields, original had 4
+    assert_eq!(df_clean.schema().fields().len(), 3);
+    assert!(df_clean.schema().field_with_unqualified_name("internal_flag").is_err());
+
+    Ok(())
+}
+```
+
+### Excluding with .drop_columns()
+
+**Use [`.drop_columns()`] when it is easier to list what to remove rather than what to keep.**
+
+[`.drop_columns()`] silently ignores names that do not match any column—it never errors on nonexistent names. This is convenient for defensive pipelines but means typos will not be caught.
+
+```rust
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let df = dataframe!(
+        "id" => [1_i64, 2_i64],
+        "name" => ["Alice", "Bob"],
+        "temp_col" => [100, 200]
+    )?;
+
+    // Drop by name — simpler when you only need to exclude a few columns
+    let df_clean = df.drop_columns(&["temp_col"])?;
+    assert_eq!(df_clean.schema().fields().len(), 2);
+
+    // Nonexistent names are silently ignored (no error)
+    let df_safe = df_clean.drop_columns(&["nonexistent"])?;
+    assert_eq!(df_safe.schema().fields().len(), 2);
+
+    Ok(())
+}
+```
+
+> **Tip:** <br>
+> Prefer [`.select()`] in production pipelines—the explicit column list serves as documentation and catches schema drift early. Use [`.drop_columns()`] for interactive exploration or when the schema has many columns and you only need to exclude a few.
+
+---
+
+## Validating Schemas
+
+**Validate column existence, resolve field positions, and compare schemas against expected contracts—before your pipeline runs into runtime surprises.**
+
+Schema validation sits between inspection and transformation. After you [inspect](#inspecting-schemas) what you have, validation answers: "Is this what I expected?" Use column-level checks as guard clauses, index lookups for positional access, and schema-level comparisons to enforce contracts between pipeline stages.
+
+### Does This Column Exist?
+
+**Check column presence before accessing it—use `has_column_*` methods as guard clauses to branch safely.**
+
+These methods return `bool` and never error. Use them when the column might legitimately be absent (optional fields, schema evolution) and your code needs to branch:
+
+- `.has_column_with_unqualified_name(name)` — check by name only (most common)
+- `.has_column_with_qualified_name(qualifier, name)` — check by table-qualified name (after joins)
+- `.has_column(&column)` — check using a [`Column`] struct (qualifier-aware)
+- `.is_column_from_schema(col)` — equivalent to `.has_column()`, returns `bool`
+
+```rust
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let df = dataframe!(
+        "id" => [1_i64, 2_i64],
+        "amount" => [100.0, 200.0]
+    )?;
+
+    let schema = df.schema();
+
+    // Guard clause: validate required columns before processing
+    let required = ["id", "amount", "timestamp"];
+    let missing: Vec<_> = required.iter()
+        .filter(|name| !schema.has_column_with_unqualified_name(name))
+        .collect();
+
+    if !missing.is_empty() {
+        // "timestamp" is missing — handle gracefully
+        assert_eq!(missing, vec![&"timestamp"]);
+    }
+
+    Ok(())
+}
+```
+
+### Can I Safely Index a Column?
+
+**Use index lookups when you need a column's position—choose between fail-fast (`Result`) and optional (`Option`) semantics.**
+
+Two methods, one design choice:
+
+- `.index_of_column(col)` returns `Result<usize>` — use when absence is a **hard error** (pipeline should fail)
+- `.maybe_index_of_column(col)` returns `Option<usize>` — use when absence is **expected** (optional columns, defensive code)
+
+Both take a [`Column`] struct. Use `Column::from("name")` for unqualified lookups.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::common::Column;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let df = dataframe!(
+        "id" => [1_i64, 2_i64],
+        "name" => ["Alice", "Bob"]
+    )?;
+
+    let schema = df.schema();
+
+    // Option path: column might not exist
+    let name_idx = schema.maybe_index_of_column(&Column::from("name"));
+    assert_eq!(name_idx, Some(1));
+
+    let missing_idx = schema.maybe_index_of_column(&Column::from("email"));
+    assert_eq!(missing_idx, None);
+
+    // Result path: column MUST exist, or fail with a descriptive error
+    let id_idx = schema.index_of_column(&Column::from("id"))?;
+    assert_eq!(id_idx, 0);
+
+    Ok(())
+}
+```
+
+### Do These Schemas Match My Contract?
+
+**Compare schemas for compatibility using either loose checks (gating, tolerant) or strict checks (enforcing invariants).**
+
+DataFusion provides two levels of schema comparison. Choose based on how strict you need to be:
+
+- **Loose** — `.logically_equivalent_names_and_types(&other)` returns `bool`. Ignores nullability, metadata, and encoding differences (e.g., `Dict<Utf8>` equals `Utf8`). Use for gating checks and tolerant compatibility.
+- **Strict** — `.has_equivalent_names_and_types(&other)` returns `Result<()>`. Compares field names and types semantically (ignores nullability and metadata, but requires same encoding). Returns a descriptive error on mismatch. Use for enforcing invariants and debugging.
+
+For type-level comparisons (useful in custom plan nodes):
+
+- `DFSchema::datatype_is_logically_equal(dt1, dt2)` — loose: `Dict<K, Utf8>` equals `Utf8`, `Utf8View` equals `Utf8`
+- `DFSchema::datatype_is_semantically_equal(dt1, dt2)` — strict: same representation required
+
+```rust
+use datafusion::common::DFSchema;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+fn main() -> datafusion::error::Result<()> {
+    let expected = DFSchema::try_from(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+    ]))?;
+
+    let actual = DFSchema::try_from(Schema::new(vec![
+        Field::new("id", DataType::Int64, true),   // different nullability
+        Field::new("name", DataType::Utf8, false),  // different nullability
+    ]))?;
+
+    // Loose: passes — nullability differences are ignored
+    assert!(expected.logically_equivalent_names_and_types(&actual));
+
+    // Strict: also passes — semantic equality ignores nullability too
+    assert!(expected.has_equivalent_names_and_types(&actual).is_ok());
+
+    // Where they diverge: type mismatches
+    let wrong_type = DFSchema::try_from(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),  // Utf8 instead of Int64
+        Field::new("name", DataType::Utf8, true),
+    ]))?;
+
+    // Loose: fails on type mismatch
+    assert!(!expected.logically_equivalent_names_and_types(&wrong_type));
+
+    // Strict: returns descriptive error
+    let err = expected.has_equivalent_names_and_types(&wrong_type).unwrap_err();
+    assert!(err.to_string().contains("Schema mismatch"));
+
+    Ok(())
+}
+```
+
+> **Tip:** <br>
+> Use `.has_equivalent_names_and_types()` in tests and pipeline entry points—its error messages pinpoint exactly which field mismatches, saving debugging time.
+
+---
+
+## Applying Schemas and Modeling Data
+
+A schema defines the structure of your data—column names, types, nullability, and nested structures. Applying schemas when reading files enables planning-time validation, improves query performance, and ensures data quality. This section covers schema strategies for different file formats, handling schema evolution, partition pruning, and modeling nested data. <br> **See also:**
+
+- [Schemas and Data Types](concepts.md#schemas-and-data-types) for fundamentals and
+- [Creating DataFrames](./creating-dataframes.md) for file reading basics.
+
+**Jump to:**
+
+- [CSV](#strategy-1-text-formats-csv--ndjson--enforce-schemas)
+- [NDJSON](#strategy-1-text-formats-csv--ndjson--enforce-schemas)
+- [Parquet](#strategy-2-self-describing-formats-parquetavroarrow--merge--normalize)
+- [Partitions](#strategy-3-partitioned-datasets--pruning-with-listingtable)
+- [Nested Data](#strategy-4-nested-data--structlistmap-modeling)
+
+### Strategy 1: Text Formats (CSV & NDJSON) — Enforce Schemas
+
+**Text formats don't embed type information, so you must provide a schema for production workloads.**
+
+Text-based formats are not self-describing; they don't embed type information. Without an explicit schema, DataFusion must infer types from a sample of rows set by [`schema_infer_max_records`]. This is fast for exploration but risky in production, as data drift can cause silent errors.
+
+By providing a schema, you **enforce a contract** on the raw data, ensuring stability and correctness through planning-time validation.
+
+| Format     |   Alignment    | Key Behaviors                                                                                                                       |
+| :--------- | :------------: | :---------------------------------------------------------------------------------------------------------------------------------- |
+| **CSV**    | **Positional** | Fields are mapped to schema columns by their order. The schema dictates the name, type, and nullability for each position.          |
+| **NDJSON** | **Name-based** | JSON keys are mapped to schema fields by name. Order doesn't matter. This allows for more flexibility with missing or extra fields. |
+
+#### CSV — Positional Alignment
+
+CSV uses **positional** mapping: the first column maps to the first field in your schema, the second to the second, and so on. Header names (if present with [`has_header(true)`][`has_header`]) are read but field order determines the mapping.
+
+Key behaviors:
+
+- **Types**: values are parsed into the declared Arrow types (e.g., `Decimal128(19,2)` for currency).
+- **Missing/extra columns**: row-length mismatches error by default; use [`truncated_rows(true)`][`truncated_rows`] to fill missing nullable columns with NULLs.
+- **Format details**: single-byte `delimiter`, `quote`, optional `escape`, `comment`, and `terminator`.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::assert_batches_eq;
+# use std::fs::File;
+# use std::io::Write;
+# use tempfile::tempdir;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+    # let dir = tempdir()?;
+    # let csv_path = dir.path().join("sales.csv");
+    # let mut file = File::create(&csv_path)?;
+    # writeln!(file, "order_id,customer_id,amount")?;
+    # writeln!(file, "1001,CUST-001,99.99")?;
+    # writeln!(file, "1002,CUST-002,150.50")?;
+
+    // Define the canonical schema — explicit types prevent inference drift
+    let sales_schema = Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("customer_id", DataType::Utf8, false),
+        Field::new("amount", DataType::Decimal128(19, 2), true),
+    ]);
+
+    // Apply schema to CSV reader — overrides inference
+    let path = "sales.csv";
+    # let path = csv_path.to_str().unwrap();
+    let df = ctx.read_csv(path, CsvReadOptions::new()
+        .schema(&sales_schema)
+        .has_header(true)
+    ).await?;
+
+    assert_batches_eq!(
+        &[
+            "+----------+-------------+--------+",
+            "| order_id | customer_id | amount |",
+            "+----------+-------------+--------+",
+            "| 1001     | CUST-001    | 99.99  |",
+            "| 1002     | CUST-002    | 150.50 |",
+            "+----------+-------------+--------+",
+        ],
+        &df.collect().await?
+    );
+
+    Ok(())
+}
+```
+
+> **Warning:** <br>
+> Schema inference samples only the first 1,000 rows by default ([`schema_infer_max_records`]). Common pitfalls: IDs inferred as `Int32` then overflow, currency inferred as `Float64` (rounding errors), sparse columns inferred as `Utf8`. Always provide explicit schemas for CSV in production.
+
+#### NDJSON — Name-Based Alignment with Flexible Structure
+
+NDJSON uses **name-based** mapping: JSON keys match schema field names, so field order does not matter. Missing keys become NULL; extra keys are silently ignored.
+
+Key behaviors:
+
+- **Missing keys**: with an explicit schema, missing fields become NULL.
+- **Extra keys**: keys not in the schema are ignored (no error, no column).
+- **Types**: JSON values are cast to declared Arrow types; invalid casts raise errors.
+- **Nested data**: supports `Struct`, `List`, `Map` (CSV cannot express nested types).
+
+```rust
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::assert_batches_eq;
+# use std::fs::File;
+# use std::io::Write;
+# use tempfile::tempdir;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+    # let dir = tempdir()?;
+    # let json_path = dir.path().join("data.json");
+    # let mut file = File::create(&json_path)?;
+    # writeln!(file, r#"{{"id": 1, "name": "Alice"}}"#)?;
+    # writeln!(file, r#"{{"id": 2}}"#)?;
+
+    // Explicit schema: "name" is nullable to handle missing keys
+    let schema = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+    ]);
+
+    let path = "data.json";
+    # let path = json_path.to_str().unwrap();
+    let df = ctx.read_json(path, NdJsonReadOptions::default()
+        .schema(&schema)
+    ).await?;
+
+    // Row 2 has no "name" key — becomes NULL
+    assert_batches_eq!(
+        &[
+            "+----+-------+",
+            "| id | name  |",
+            "+----+-------+",
+            "| 1  | Alice |",
+            "| 2  |       |",
+            "+----+-------+",
+        ],
+        &df.collect().await?
+    );
+
+    Ok(())
+}
+```
+
+### Strategy 2: Self-Describing Formats (Parquet/Avro/Arrow) — Merge & Normalize
+
+**Self-describing formats embed schemas, but DataFusion automatically merges evolved schemas and you should normalize to canonical types.**
+
+Self-describing formats are powerful because they embed a schema in each file. In practice, schemas evolve: IDs widen from `Int32` to `Int64`, decimals gain precision, and new columns appear. DataFusion handles this by automatically merging file schemas into a compatible super‑schema when you read multiple files.
+
+**What auto-merge does:**
+
+- Types are widened: e.g., `Int32` with `Int64` → `Int64`; `Decimal128(19,2)` with `Decimal128(38,9)` → `Decimal128(38,9)`.
+- Columns are added: a column present only in some files appears in the merged schema as nullable.
+
+#### How auto-merge works
+
+When reading multiple Parquet files with evolved schemas, DataFusion automatically merges them into a compatible super-schema:
+
+```text
+v1_sales.parquet:  id (Int32),  amount (Decimal128(19,2))
+v2_sales.parquet:  id (Int64),  amount (Decimal128(38,9)),  region (Utf8)
+
+Merged result:     id (Int64),  amount (Decimal128(38,9)),  region (Utf8, nullable)
+```
+
+- Types are **widened**: `Int32` + `Int64` becomes `Int64`
+- Columns are **added**: a column present only in some files appears as nullable
+- Use [`.read_parquet()`] with multiple file paths to trigger auto-merge
+
+#### Defensive pattern: enforce a canonical schema
+
+**After reading self-describing formats, normalize to your application's canonical schema using [`.select()`] and [`.cast_to()`] to ensure stable downstream contracts.**
+
+Even with auto-merge, the resulting schema may not match your application's expectations. Cast explicitly to decouple your pipeline from upstream schema changes:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::DataType;
+use datafusion::assert_batches_eq;
+use datafusion::logical_expr::ExprSchemable;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Simulate data that arrived as Int32 (might be widened Int32 from Parquet)
+    let df = dataframe!(
+        "id" => [1_i32, 2_i32, 3_i32, 4_i32],
+        "amount" => [99.99, 150.50, 75.25, 200.00]
+    )?;
+
+    // Normalize to canonical types: Int32 → Int64, Float64 stays Float64
+    let canonical_df = df.clone().select(vec![
+        col("id").cast_to(&DataType::Int64, df.schema())?.alias("id"),
+        col("amount").cast_to(&DataType::Float64, df.schema())?.alias("amount"),
+    ])?;
+
+    // Verify the canonical schema has the expected types
+    let schema = canonical_df.schema();
+    assert_eq!(
+        schema.field_with_unqualified_name("id")?.data_type(),
+        &DataType::Int64
+    );
+
+    assert_batches_eq!(
+        &[
+            "+----+--------+",
+            "| id | amount |",
+            "+----+--------+",
+            "| 1  | 99.99  |",
+            "| 2  | 150.5  |",
+            "| 3  | 75.25  |",
+            "| 4  | 200.0  |",
+            "+----+--------+",
+        ],
+        &canonical_df.collect().await?
+    );
+
+    Ok(())
+}
+```
+
+### Strategy 3: Partitioned Datasets — Pruning with ListingTable
+
+**Hive-style partitioning lets DataFusion skip entire directories based on query filters, reducing data scanned.**
+
+For very large datasets, organizing files into a directory structure based on column values (e.g., `year` and `month`) is a highly effective performance strategy. DataFusion's [`ListingTable`] is designed for this layout. It performs partition pruning, using your query's filters to skip reading entire directories that don't match. Partition pruning can skip entire directories, reducing scanned data volume. Use [`.explain()`] to verify pruning in your query plan. (For more about explain, see [Reading Explain Plans](../../user-guide/explain-usage.md))
+
+**Example: Pruning a Parquet Dataset**
+
+Imagine your data is stored like this:
+
+```text
+/data/events/year=2023/month=12/...
+/data/events/year=2024/month=01/...
+/data/events/year=2024/month=02/...
+```
+
+The following code sets up a `ListingTable` that will only read files from the `year=2024` directories when a filter is applied.
+
+```rust,no_run
+// no_run: requires a filesystem with Hive-style partition layout
+use std::sync::Arc;
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::datasource::file_format::parquet::ParquetFormat;
+use datafusion::datasource::listing::{
+    ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
+};
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let ctx = SessionContext::new();
+
+    // 1. Schema of the DATA INSIDE the Parquet files
+    //    Do NOT include partition columns here
+    let file_schema = Arc::new(Schema::new(vec![
+        Field::new("event_id", DataType::Utf8, false),
+        Field::new("payload", DataType::Utf8, true),
+    ]));
+
+    // 2. Describe directory structure — partition column order must match nesting
+    let listing_options = ListingOptions::new(Arc::new(ParquetFormat::default()))
+        .with_file_extension("parquet")
+        .with_table_partition_cols(vec![
+            ("year".into(),  DataType::Int32),
+            ("month".into(), DataType::Int8),
+        ]);
+
+    // 3. Build the ListingTable and register it
+    let config = ListingTableConfig::new(ListingTableUrl::parse("/data/events")?)
+        .with_listing_options(listing_options)
+        .with_schema(file_schema);
+    let table = Arc::new(ListingTable::try_new(config)?);
+    ctx.register_table("events", table)?;
+
+    // 4. Query with a filter — DataFusion prunes partitions automatically
+    let df = ctx.sql("SELECT * FROM events WHERE year = 2024").await?;
+
+    // Verify pruning with EXPLAIN
+    df.explain(false, false)?.show().await?;
+
+    Ok(())
+}
+```
+
+### Strategy 4: Nested Data — Struct/List/Map Modeling
+
+Nested types preserve data relationships and avoid lossy flattening of hierarchical data.
+
+Real-world data is often hierarchical. Instead of flattening JSON or Parquet sources and losing valuable structure, you can use DataFusion's nested types (`Struct`, `List`, `Map`) to model your domain accurately.
+
+#### Defining Nested Schemas
+
+Use Arrow's `Struct`, `List`, and `Map` types to model hierarchical data without lossy flattening:
+
+```rust
+use std::sync::Arc;
+use datafusion::arrow::datatypes::{DataType, Field, Schema, Fields};
+
+fn main() {
+    // Struct: a nested object with its own fields
+    let metadata_type = DataType::Struct(Fields::from(vec![
+        Field::new("source", DataType::Utf8, true),
+        Field::new("version", DataType::Int32, true),
+    ]));
+
+    // List: a variable-length array of a single type
+    let tags_type = DataType::List(
+        Arc::new(Field::new("tag", DataType::Utf8, true))
+    );
+
+    // Map: key-value pairs (List<Struct<key, value>> internally)
+    let attributes_type = DataType::Map(
+        Arc::new(Field::new("entries",
+            DataType::Struct(Fields::from(vec![
+                Field::new("key", DataType::Utf8, false),
+                Field::new("value", DataType::Int64, true),
+            ])),
+            false
+        )),
+        false, // keys_sorted
+    );
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("metadata", metadata_type, true),
+        Field::new("tags", tags_type, true),
+        Field::new("attributes", attributes_type, true),
+    ]));
+
+    assert_eq!(schema.fields().len(), 3);
+}
+```
+
+#### Querying Nested Fields
+
+Access nested data using bracket notation for structs and `array_element()` for lists:
+
+```rust
+use datafusion::prelude::*;
+
+fn main() {
+    // Struct field access: get_field(col, "field_name")
+    let _source_expr = get_field(col("metadata"), "source");
+
+    // Filter on nested field: WHERE metadata.version >= 2
+    let _filter_expr = get_field(col("metadata"), "version").gt_eq(lit(2));
+
+    // List element access: first element (1-based indexing)
+    let _first_tag = array_element(col("tags"), lit(1));
+}
+```
+
+> **Tip:** <br>
+> Use `LargeUtf8` or `LargeList` only when a single value might exceed 2 GB. Standard types are more efficient. DataFusion does not enforce key uniqueness in maps—handle duplicate keys in query logic if needed.
 
 ---
 
@@ -1405,6 +2121,9 @@ async fn main() -> datafusion::error::Result<()> {
 
 <!-- ADD NEW REFERENCES BELOW  THEY WILL BE SORTET TOMOOROW !--->
 
+[`.with_functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_functional_dependencies
+[`df.schema().fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
+
 <!-- DataFusion: DFSchema & Schema Methods -->
 
 [`&SchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
@@ -1414,6 +2133,7 @@ async fn main() -> datafusion::error::Result<()> {
 [`.datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
 [`.datatype_is_semantically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_semantically_equal
 [`.field(i)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field
+[`.functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.functional_dependencies
 [`.field_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_names
 [`.field_with_name(qualifier, name)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
 [`.field_with_qualified_name(qualifier, name)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_qualified_name
@@ -1436,9 +2156,10 @@ async fn main() -> datafusion::error::Result<()> {
 [`df.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
 [`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`dfschema::field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
-[`dfschema::join`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
+[`check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
+[dfschema::join]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
 [`dfschema::logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
-[`dfschema::merge`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
+[dfschema::merge]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
 [`dfschema::metadata`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
 [`ExprSchema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
 [`Schema::new()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html#method.new
@@ -1448,6 +2169,7 @@ async fn main() -> datafusion::error::Result<()> {
 <!-- DataFusion: DataFrame Methods -->
 
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
 [`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
 [`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
 [`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
@@ -1547,590 +2269,6 @@ async fn main() -> datafusion::error::Result<()> {
 [schema mismatch medium]: https://medium.com/data-engineering-with-dremio/schema-mismatch-error-understanding-and-resolving-8d6c1e1a7e1a
 [unity catalog]: https://www.unitycatalog.io/
 [`.to_string_pretty()`]: https://docs.rs/serde_json/latest/serde_json/fn.to_string_pretty.html
-
-## Removing/Projecting Columns
-
-**DFSchema has no removal methods by design—use DataFrame's `.select()` to project columns.**
-
-You might notice that [`DFSchema`] has no methods to remove fields. This is intentional: a schema describes the output of a logical plan node, and schemas are conceptually immutable. Each transformation creates a **new** plan with its own schema rather than modifying an existing one.
-
-### Why No Remove Methods?
-
-In DataFusion's architecture:
-
-- Each `LogicalPlan` node has a fixed schema describing its output
-- Transformations (like `.select()`) create new plan nodes with new schemas
-- The "removal" of columns is actually the **creation** of a new plan that produces fewer columns
-
-### The select() Pattern for Column Removal
-
-To "remove" columns, use `.select()` to project only the columns you want to keep:
-
-```rust,ignore
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "id" => [1_i64, 2_i64, 3_i64],
-        "name" => ["Alice", "Bob", "Carol"],
-        "email" => ["a@x.com", "b@x.com", "c@x.com"],
-        "internal_flag" => [true, false, true]  // Don't want this in output
-    )?;
-
-    // "Remove" internal_flag by selecting only the columns we want
-    let df_clean = df.select(vec![
-        col("id"),
-        col("name"),
-        col("email"),
-    ])?;
-
-    // The new DataFrame has a different schema - internal_flag is gone
-    println!("{}", df_clean.schema().tree_string());
-    // root
-    //  |-- id: int64 (nullable = true)
-    //  |-- name: utf8 (nullable = true)
-    //  |-- email: utf8 (nullable = true)
-
-    Ok(())
-}
-```
-
-### Alternative: drop_columns() Method
-
-For convenience, DataFusion also provides `.drop_columns()` to exclude specific columns:
-
-```rust,ignore
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "id" => [1_i64, 2_i64],
-        "name" => ["Alice", "Bob"],
-        "temp_col" => [100, 200]  // Temporary column to remove
-    )?;
-
-    // Remove specific columns by name
-    let df_clean = df.drop_columns(&["temp_col"])?;
-
-    Ok(())
-}
-```
-
-### Schema Implications
-
-When you project columns:
-
-- A **new** `LogicalPlan::Projection` node is created
-- The new node has a **new** `DFSchema` with only the selected fields
-- The original DataFrame and its schema remain unchanged (DataFrames are immutable)
-
-This immutability is a feature: it enables safe concurrent operations and makes query plans predictable.
-
----
-
-## Validating Schemas
-
-**Verify schema properties, check for column existence, and compare schemas for compatibility.**
-
-Schema validation is essential for building robust pipelines. Before transformations, you often need to verify that expected columns exist, check type compatibility, or compare schemas from different sources.
-
-### Existence and Lookup Methods
-
-Check whether columns exist before accessing them:
-
-| Method                                             | Returns         | Purpose                                 |
-| -------------------------------------------------- | --------------- | --------------------------------------- |
-| `.has_column(column)`                              | `bool`          | Check if column exists (with qualifier) |
-| `.has_column_with_unqualified_name(name)`          | `bool`          | Check by name only                      |
-| `.has_column_with_qualified_name(qualifier, name)` | `bool`          | Check by qualified name                 |
-| `.is_column_from_schema(col)`                      | `bool`          | Check if Column reference is in schema  |
-| `.index_of_column(col)`                            | `Result<usize>` | Get column index (errors if not found)  |
-| `.maybe_index_of_column(col)`                      | `Option<usize>` | Get column index (None if not found)    |
-
-```rust,ignore
-use datafusion::prelude::*;
-use datafusion::common::Column;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "id" => [1_i64, 2_i64],
-        "name" => ["Alice", "Bob"]
-    )?;
-
-    let schema = df.schema();
-
-    // Check if column exists before using it
-    if schema.has_column_with_unqualified_name("email") {
-        println!("Email column found");
-    } else {
-        println!("Email column not found - using default");
-    }
-
-    // Safe index lookup
-    if let Some(idx) = schema.maybe_index_of_column(&Column::from("name")) {
-        println!("'name' is at index {}", idx);
-    }
-
-    Ok(())
-}
-```
-
-### Schema Validation Methods
-
-Validate schema structure and compatibility:
-
-| Method                                        | Returns      | Purpose                                     |
-| --------------------------------------------- | ------------ | ------------------------------------------- |
-| `.check_names()`                              | `Result<()>` | Verify no duplicate field names             |
-| `.matches_arrow_schema(schema)`               | `bool`       | Check if field names match Arrow schema     |
-| `.check_arrow_schema_type_compatible(schema)` | `Result<()>` | Verify type compatibility with Arrow schema |
-
-### Schema Comparison Methods
-
-Compare schemas for equivalence or compatibility:
-
-| Method                                               | Returns      | Purpose                                                      |
-| ---------------------------------------------------- | ------------ | ------------------------------------------------------------ |
-| `.logically_equivalent_names_and_types(other)`       | `bool`       | Loose comparison (ignores metadata, nullable, dict encoding) |
-| `.has_equivalent_names_and_types(other)`             | `Result<()>` | Strict comparison (errors with details on mismatch)          |
-| `DFSchema::datatype_is_logically_equal(dt1, dt2)`    | `bool`       | Compare types loosely (e.g., Dict<Utf8> == Utf8)             |
-| `DFSchema::datatype_is_semantically_equal(dt1, dt2)` | `bool`       | Compare types strictly (same representation)                 |
-
-```rust,ignore
-use datafusion::prelude::*;
-use datafusion::common::DFSchema;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-
-fn main() -> datafusion::error::Result<()> {
-    let schema_a = DFSchema::try_from(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true),
-    ]))?;
-
-    let schema_b = DFSchema::try_from(Schema::new(vec![
-        Field::new("id", DataType::Int64, true),  // Different nullability
-        Field::new("name", DataType::Utf8, true),
-    ]))?;
-
-    // Logical equivalence ignores nullability differences
-    if schema_a.logically_equivalent_names_and_types(&schema_b) {
-        println!("Schemas are logically equivalent");
-    }
-
-    // Strict check gives detailed error messages
-    match schema_a.has_equivalent_names_and_types(&schema_b) {
-        Ok(()) => println!("Schemas are equivalent"),
-        Err(e) => println!("Schema mismatch: {}", e),
-    }
-
-    Ok(())
-}
-```
-
-### Validation Patterns
-
-**Pre-transformation validation:**
-
-```rust,ignore
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "id" => [1_i64, 2_i64],
-        "amount" => [100.0, 200.0]
-    )?;
-
-    // Validate required columns exist before processing
-    let required_columns = ["id", "amount", "timestamp"];
-    let schema = df.schema();
-
-    for col_name in required_columns {
-        if !schema.has_column_with_unqualified_name(col_name) {
-            return Err(datafusion::error::DataFusionError::Plan(
-                format!("Required column '{}' not found in schema", col_name)
-            ));
-        }
-    }
-
-    // Proceed with transformation...
-    Ok(())
-}
-```
-
----
-
-## Applying Schemas and Modeling Data
-
-A schema defines the structure of your data—column names, types, nullability, and nested structures. Applying schemas when reading files enables planning-time validation, improves query performance, and ensures data quality. This section covers schema strategies for different file formats, handling schema evolution, partition pruning, and modeling nested data. <br> **See also:**
-
-- [Schemas and Data Types](concepts.md#schemas-and-data-types) for fundamentals and
-- [Creating DataFrames](./creating-dataframes.md) for file reading basics.
-
-**Jump to:**
-
-- [CSV](#strategy-1-text-formats-csv--ndjson--enforce-schemas)
-- [NDJSON](#strategy-1-text-formats-csv--ndjson--enforce-schemas)
-- [Parquet](#strategy-2-self-describing-formats-parquetavroarrow--merge--normalize)
-- [Partitions](#strategy-3-partitioned-datasets--pruning-with-listingtable)
-- [Nested Data](#strategy-4-nested-data--structlistmap-modeling)
-
-### Strategy 1: Text Formats (CSV & NDJSON) — Enforce Schemas
-
-**Text formats don't embed type information, so you must provide a schema for production workloads.**
-
-Text-based formats are not self-describing; they don't embed type information. Without an explicit schema, DataFusion must infer types from a sample of rows set by [`schema_infer_max_records`]. This is fast for exploration but risky in production, as data drift can cause silent errors.
-
-By providing a schema, you **enforce a contract** on the raw data, ensuring stability and correctness through planning-time validation.
-
-| Format     |   Alignment    | Key Behaviors                                                                                                                       |
-| :--------- | :------------: | :---------------------------------------------------------------------------------------------------------------------------------- |
-| **CSV**    | **Positional** | Fields are mapped to schema columns by their order. The schema dictates the name, type, and nullability for each position.          |
-| **NDJSON** | **Name-based** | JSON keys are mapped to schema fields by name. Order doesn't matter. This allows for more flexibility with missing or extra fields. |
-
-#### CSV — Positional Alignment
-
-Here, we dictate the exact types, including using `Decimal128` for currency to avoid floating-point errors. This prevents schema inference from incorrectly choosing `Int32` for an ID or `Float64` for money.
-
-**Alignment** refers to how fields map to schema columns. For CSV, mapping is **positional**: the first column maps to the first field in your schema, the second to the second, and so on. Header names (if present with [`has_header(true)`][`has_header`]) are read but field order determines the mapping.
-
-What the schema and options control:
-
-- **Types**: values are parsed into the declared Arrow types (e.g., `Decimal128(19,2)` for currency).
-- **Missing/extra columns**: by default, row length mismatches error; set [`truncated_rows(true)`][`truncated_rows`] to allow short rows and fill missing nullable columns with NULLs; extra columns still error.
-- **Format details**: single-byte `delimiter`, `quote`, optional `escape`, `comment`, and `terminator`; newlines-in-values can be enabled explicitly.
-
-```rust,ignore
-use datafusion::prelude::*;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    // Define the canonical schema for our sales data.
-    let sales_schema = Arc::new(Schema::new(vec![
-        Field::new("order_id", DataType::Int64, false),
-        Field::new("customer_id", DataType::Utf8, false),
-        Field::new("amount", DataType::Decimal128(19, 2), true),
-    ]));
-
-    // Configure CSV options with explicit schema
-    let _options = CsvReadOptions::new()
-        .schema(&sales_schema) // Enforce our canonical types
-        .has_header(true)
-        .delimiter(b',');
-
-    // In practice, you would read from a file:
-    // let df = ctx.read_csv("sales_data.csv", options).await?;
-
-    // Output example with enforced types:
-    // +----------+-------------+--------+
-    // | order_id | customer_id | amount |
-    // +----------+-------------+--------+
-    // | 1001     | CUST-001    | 99.99  |
-    // | 1002     | CUST-002    | 150.50 |
-    // | 1003     | CUST-001    | 75.25  |
-    // +----------+-------------+--------+
-
-    Ok(())
-}
-```
-
-**Production best practice:** Always provide explicit schemas for CSV in production. Schema inference samples only the first 1000 rows (default [`schema_infer_max_records`]) and can miss type variations in later data. Common pitfalls: IDs inferred as `Int32` then overflow, currency inferred as `Float64` (rounding errors), sparse columns inferred as `Utf8`.
-
-#### NDJSON — Name-Based Alignment with Flexible Structure
-
-NDJSON records are JSON objects; schemas are applied by field **name** (unlike CSV's positional alignment). This provides more flexibility for handling evolving data structures.
-
-Key behaviors:
-
-- **Alignment**: name-based mapping from JSON keys to schema fields—order doesn't matter.
-- **Missing keys**: with an explicit schema, missing fields become NULL; without a schema, only keys seen during inference are included (later unseen keys are ignored).
-- **Extra keys**: keys not present in the schema are ignored (no error, no column).
-- **Types**: when a schema is provided, JSON values are cast to the declared Arrow types; invalid casts raise errors.
-- **Nested data**: supports `Struct`, `List`, `Map` (CSV cannot express nested types).
-
-```rust,ignore
-use datafusion::prelude::*;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true), // nullable field
-    ]));
-
-    // Configure NDJSON options with explicit schema
-    let _options = NdJsonReadOptions::default().schema(&schema);
-
-    // Example data (data.ndjson):
-    // {"id": 1, "name": "Alice"}
-    // {"id": 2}  // 'name' is missing -> becomes NULL
-
-    // In practice: let df = ctx.read_json("data.ndjson", options).await?;
-
-    // Output example with NULL for missing 'name' field:
-    // +----+-------+
-    // | id | name  |
-    // +----+-------+
-    // | 1  | Alice |
-    // | 2  | NULL  |
-    // +----+-------+
-
-    Ok(())
-}
-```
-
-### Strategy 2: Self-Describing Formats (Parquet/Avro/Arrow) — Merge & Normalize
-
-**Self-describing formats embed schemas, but DataFusion automatically merges evolved schemas and you should normalize to canonical types.**
-
-Self-describing formats are powerful because they embed a schema in each file. In practice, schemas evolve: IDs widen from `Int32` to `Int64`, decimals gain precision, and new columns appear. DataFusion handles this by automatically merging file schemas into a compatible super‑schema when you read multiple files.
-
-**What auto-merge does:**
-
-- Types are widened: e.g., `Int32` with `Int64` → `Int64`; `Decimal128(19,2)` with `Decimal128(38,9)` → `Decimal128(38,9)`.
-- Columns are added: a column present only in some files appears in the merged schema as nullable.
-
-#### Example: Automatic schema merging
-
-```rust,ignore
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let ctx = SessionContext::new();
-
-    // When reading multiple Parquet files with evolved schemas,
-    // DataFusion automatically merges them:
-    //
-    // v1_sales.parquet (embedded schema):
-    //   id: Int32
-    //   amount: Decimal128(19, 2)
-    //
-    // v2_sales.parquet (evolved schema):
-    //   id: Int64
-    //   amount: Decimal128(38, 9)
-    //   region: Utf8  // new column added
-    //
-    // let df = ctx.read_parquet(
-    //     vec!["v1_sales.parquet", "v2_sales.parquet"],
-    //     ParquetReadOptions::default()
-    // ).await?;
-
-    // Resulting merged schema (computed by DataFusion):
-    //   id: Int64 (widened from Int32)
-    //   amount: Decimal128(38, 9) (widened)
-    //   region: Utf8 (nullable, since it's absent in v1)
-
-    // Output showing auto-merged data with NULLs for missing 'region':
-    // +----+--------+--------+
-    // | id | amount | region |
-    // +----+--------+--------+
-    // | 1  | 99.99  | NULL   |
-    // | 2  | 150.50 | NULL   |
-    // | 3  | 75.25  | WEST   |
-    // | 4  | 200.00 | EAST   |
-    // +----+--------+--------+
-
-    Ok(())
-}
-```
-
-#### Defensive pattern: enforce a canonical schema
-
-**Production best practice:** After reading self-describing formats, normalize to your application's canonical schema using [`.select()`] and [`.cast_to()`] to ensure stable downstream contracts.
-
-For production pipelines, enforce a strict, predictable schema after read. This lets you explicitly drop columns you don't need and ensures type consistency.
-
-```rust,ignore
-use datafusion::prelude::*;
-use datafusion::arrow::datatypes::DataType;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    // Example: normalizing to canonical schema after reading Parquet
-    let df = dataframe!(
-        "id" => [1_i32, 2_i32, 3_i64, 4_i64],  // Mixed types from different files
-        "amount" => [99.99, 150.50, 75.25, 200.00]
-    )?;
-
-    // Normalize to your application's canonical schema
-    let canonical_df = df.clone().select(vec![
-        col("id").cast_to(&DataType::Int64, df.schema())?.alias("id"),
-        col("amount").cast_to(&DataType::Float64, df.schema())?.alias("amount"),
-    ])?;
-
-    canonical_df.show().await?;
-    // Result: strict canonical schema
-    // +----+--------+
-    // | id | amount |
-    // +----+--------+
-    // | 1  | 99.99  |
-    // | 2  | 150.50 |
-    // | 3  | 75.25  |
-    // | 4  | 200.00 |
-    // +----+--------+
-
-    Ok(())
-}
-```
-
-### Strategy 3: Partitioned Datasets — Pruning with ListingTable
-
-**Hive-style partitioning lets DataFusion skip entire directories based on query filters, reducing data scanned.**
-
-For very large datasets, organizing files into a directory structure based on column values (e.g., `year` and `month`) is a highly effective performance strategy. DataFusion's [`ListingTable`] is designed for this layout. It performs partition pruning, using your query's filters to skip reading entire directories that don't match. Partition pruning can skip entire directories, reducing scanned data volume. Use [`.explain()`] to verify pruning in your query plan. (For more about explain, see [Reading Explain Plans](../../user-guide/explain-usage.md))
-
-**Example: Pruning a Parquet Dataset**
-
-Imagine your data is stored like this:
-
-```text
-/data/events/year=2023/month=12/...
-/data/events/year=2024/month=01/...
-/data/events/year=2024/month=02/...
-```
-
-The following code sets up a `ListingTable` that will only read files from the `year=2024` directories when a filter is applied.
-
-```rust,ignore
-use std::sync::Arc;
-use datafusion::prelude::*;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::datasource::file_format::parquet::ParquetFormat;
-use datafusion::datasource::listing::{ListingOptions, ListingTableConfig, ListingTableUrl};
-
-fn main() -> datafusion::error::Result<()> {
-    // 1. Define the schema of the DATA INSIDE the Parquet files.
-    //    Do NOT include the partition columns ('year', 'month') here.
-    let file_schema = Arc::new(Schema::new(vec![
-        Field::new("event_id", DataType::Utf8, false),
-        Field::new("payload", DataType::Utf8, true),
-    ]));
-
-    // 2. Describe the directory structure and file format.
-    //    The order of partition columns must match the directory nesting.
-    let listing_options = ListingOptions::new(Arc::new(ParquetFormat::default()))
-        .with_file_extension("parquet")
-        .with_table_partition_cols(vec![
-            ("year".into(),  DataType::Int32),
-            ("month".into(), DataType::Int8),
-        ]);
-
-    // 3. Configure the ListingTable (in practice you'd use an actual path)
-    let _config = ListingTableConfig::new(ListingTableUrl::parse("/data/events")?)
-        .with_listing_options(listing_options)
-        .with_schema(file_schema);
-
-    // In practice:
-    // let table = Arc::new(ListingTable::try_new(config)?);
-    // let df = ctx.read_table(table)?;
-    // let df_2024 = df.filter(col("year").eq(lit(2024)))?;
-    //
-    // Verify pruning with explain - look for partition pruning information:
-    // df_2024.explain(false, false)?.show().await?;
-
-    Ok(())
-}
-```
-
-### Strategy 4: Nested Data — Struct/List/Map Modeling
-
-Nested types preserve data relationships and avoid lossy flattening of hierarchical data.
-
-Real-world data is often hierarchical. Instead of flattening JSON or Parquet sources and losing valuable structure, you can use DataFusion's nested types (`Struct`, `List`, `Map`) to model your domain accurately.
-
-#### Defining Nested Schemas
-
-Here's how to define a schema for a complex object with nested fields, arrays, and key-value attributes.
-
-```rust,ignore
-use std::sync::Arc;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, Fields};
-
-fn main() {
-    // Struct: A nested object with its own fields.
-    let metadata_type = DataType::Struct(Fields::from(vec![
-        Field::new("source", DataType::Utf8, true),
-        Field::new("version", DataType::Int32, true),
-    ]));
-
-    // List: A variable-length array of a single type.
-    let tags_type = DataType::List(
-        Arc::new(Field::new("tag", DataType::Utf8, true))
-    );
-
-    // Map: Key-value pairs (represented as List<Struct<key,value>>)
-    let attributes_type = DataType::Map(
-        Arc::new(Field::new("entries",
-            DataType::Struct(Fields::from(vec![
-                Field::new("key", DataType::Utf8, false),
-                Field::new("value", DataType::Int64, true),
-            ])),
-            false
-        )),
-        false, // keys_sorted
-    );
-
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("metadata", metadata_type, true),
-        Field::new("tags", tags_type, true),
-        Field::new("attributes", attributes_type, true),
-    ]));
-
-    println!("Schema has {} fields", schema.fields().len());
-}
-```
-
-#### Querying Nested Fields
-
-Defining the structure is the first half; the real power comes from querying it directly.
-
-```rust,ignore
-use datafusion::prelude::*;
-use datafusion::functions_nested::expr_fn::array_element;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    // For nested field access, use bracket notation or get_field
-    // Pattern 1: Extract a nested field from a Struct.
-    // let sources_df = df.select(vec![
-    //     col("metadata")["source"].alias("source"),
-    // ])?;
-
-    // Pattern 2: Filter based on a nested field's value.
-    // let v2_plus_df = df.filter(
-    //     col("metadata")["version"].gt_eq(lit(2))
-    // )?;
-
-    // Pattern 3: Extract the first element from a List (1-based indexing).
-    // let first_tags_df = df.select(vec![
-    //     array_element(col("tags"), lit(1)).alias("first_tag"),
-    // ])?;
-
-    // Demonstrate array_element import is valid
-    let _expr = array_element(col("tags"), lit(1));
-
-    Ok(())
-}
-```
-
-**Pro-Tips for Type Selection:**
-
-- **Standard vs. Large**: Use `LargeUtf8` or `LargeList` only when a single value (e.g., one string) might exceed 2GB. Standard types are generally more efficient.
-- **Maps**: DataFusion does not enforce key uniqueness in maps. If your data might have duplicate keys, be prepared to handle them in your query logic.
-
----
 
 <!-- ==========================================================================
      TODO: CONSOLIDATE SCHEMA EVOLUTION SECTIONS
