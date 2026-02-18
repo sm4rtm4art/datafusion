@@ -147,6 +147,7 @@ To get started, see
    library-user-guide/extending-operators
    library-user-guide/profiling
    library-user-guide/query-optimizer
+   library-user-guide/using-the-dataframe-api
 
 .. .. _toc.contributor-guide:
 

@@ -355,7 +355,7 @@ async fn main() -> Result<()> {
 
 **Real-world data is messy — we create a DataFrame with common data quality problems to clean throughout the following sections.**
 
-Duplicates, inconsistent casing, nulls, missing values in essential columns, invalid formats, and outliers are everyday challenges. To highlight the benefits of the DataFrame API, the following sections form a narrative tutorial — we create our own dataset using the [`dataframe!`] macro with all these common problems baked in (see [Creating DataFrames](creating-dataframes.md#5-from-inline-data-using-the-dataframe-macro) for details):
+Duplicates, inconsistent casing, nulls, missing values in essential columns, invalid formats, and outliers are everyday challenges. To highlight the benefits of the DataFrame API, the following sections form a narrative tutorial — we create our own dataset using the [`dataframe!`] macro with all these common problems baked in (see [Creating DataFrames](../library-user-guide/dataframe-api/creating-dataframes.md#5-from-inline-data-using-the-dataframe-macro) for details):
 
 ```rust
 use datafusion::prelude::*;
@@ -394,14 +394,14 @@ The dataframe! macro results in the following DataFrame:
 +----------+------------+---------+----------+------------+
 ```
 
-> **Best Practice:** In production, define an explicit schema where `order_id` is non-nullable — the database would reject that last row at insert time. See [Schema Management](./schema-management.md) for how to enforce constraints upfront rather than cleaning them later.
+> **Best Practice:** In production, define an explicit schema where `order_id` is non-nullable — the database would reject that last row at insert time. See [Schema Management](../library-user-guide/dataframe-api/schema-management.md) for how to enforce constraints upfront rather than cleaning them later.
 
 ### Exploring the Data: Cheap to Expensive
 
 **Start with cheap operations, then sample, then analyze the full dataset.**
 
 DataFusion DataFrames are **immutable** — every transformation (`.filter()`, `.select()`, `.with_column()`) creates a new DataFrame, leaving the original unchanged. Combined with **lazy execution**, transformations build a logical plan without touching data until you call a terminal action (`.show()`, `.collect()`, `.count()`). This means `.schema()` is free (reads plan metadata), while `.describe()` triggers a full scan. Use this to your advantage: the original data is always safe, and you can validate your approach on cheap operations before running expensive ones.
-For more information, see the [DataFrame Execution part](./writing-dataframes.md#dataframe-execution)
+For more information, see the [DataFrame Execution part](../library-user-guide/dataframe-api/writing-dataframes.md#dataframe-execution)
 
 | Operation         | Cost      | What it does                          |
 | ----------------- | --------- | ------------------------------------- |
@@ -411,9 +411,10 @@ For more information, see the [DataFrame Execution part](./writing-dataframes.md
 | [`.count()`]      | Expensive | Scans all rows to count them          |
 | [`.describe()`]   | Expensive | Multiple aggregations on all rows     |
 
+(1-check-the-schema-free--understand-types-before-touching-data)=
 #### 1. Check the schema (free) — understand types before touching data:
 
-With the [`.schema()`] method, DataFusion only reads the metadata. For further reading, see the DataFusion DataFrame API documentation on [schema management](./schema-management.md).
+With the [`.schema()`] method, DataFusion only reads the metadata. For further reading, see the DataFusion DataFrame API documentation on [schema management](../library-user-guide/dataframe-api/schema-management.md).
 
 ```rust
 println!("{}", sales.schema());
@@ -509,7 +510,7 @@ sales.clone().show().await?;
 - Invalid date format ("invalid")
 - Suspicious outlier (99999.0)
 
-> **Warning:** [`.show()`] collects _all_ results into memory — use [`.show_limit(n)`][`.show_limit()`] for large datasets. To explore different parts, use [`.limit(offset, count)`][`.limit()`] to skip and sample (e.g., `.limit(1000, Some(100))` skips first 1000, shows next 100). For complete large-dataset workflows, see [Advanced DataFrame Topics](./dataframes-advance.md).
+> **Warning:** [`.show()`] collects _all_ results into memory — use [`.show_limit(n)`][`.show_limit()`] for large datasets. To explore different parts, use [`.limit(offset, count)`][`.limit()`] to skip and sample (e.g., `.limit(1000, Some(100))` skips first 1000, shows next 100). For complete large-dataset workflows, see [Advanced DataFrame Topics](../library-user-guide/dataframe-api/dataframes-advance.md).
 
 #### 4. Analyze statistics (expensive) — reveal hidden issues:
 
@@ -633,6 +634,7 @@ step1.show().await?;
 
 > **Learn More:** For complex predicates and filter pushdown optimization, see [Filtering Rows](#filtering-rows-with-filter) in the Deep Dive section.
 
+(step-2-cleaning-text-data)=
 ### Step 2: Cleaning Text Data
 
 **Text normalization ensures consistent matching for a robust data pipeline.**
@@ -682,7 +684,7 @@ step2.show().await?;
 
 > **Tip:** Joins failing unexpectedly? Two common culprits: trailing spaces (`" Alice"` ≠ `"Alice"`) and case mismatches (`"Bob"` ≠ `"bob"`). Normalize with [`trim()`] and [`lower()`] or [`upper()`] before joining.
 
-> **Learn More:** For the full range of string functions including [`substring()`], `replace()`, and regex operations, see [String Functions](#string-operations) in the Deep Dive section.
+> **Learn More:** For the full range of string functions including [`substring()`], `replace()`, and regex operations, see **Step 2: Cleaning Text Data** in this guide.
 
 ### Step 3: Type Conversion with Fail-Safe Handling
 
@@ -690,7 +692,7 @@ step2.show().await?;
 
 Our schema inspection revealed `date` is `Utf8` (string), not a proper date type. This matters: string sorting puts "2024-12-01" before "2024-2-01" (lexicographic), while date sorting handles them correctly. Date arithmetic (`date + interval '1 day'`) only works on date types. Type conversion is where many pipelines silently fail — a single malformed value like "invalid" or "2024/01/01" (wrong separator) can crash the entire query.
 
-> Recap from the [schema inspection](#1-check-the-schema-free--understand-types-before-touching-data:):
+> Recap from the [schema inspection](#1-check-the-schema-free--understand-types-before-touching-data):
 >
 > ```text
 > Field { name: "date", data_type: Utf8, nullable: true },
@@ -833,7 +835,7 @@ Order _#6_ had a null `status` — now filled with "unknown". This pattern is es
 
 > **Tip:** [`coalesce()`] returns the first non-null value from a list. For two-argument cases, [`nvl()`] is a shorthand: `nvl(col("status"), lit("unknown"))`.
 
-> **Learn More:** See [Null Handling Patterns](#null-handling-patterns) in the Deep Dive section.
+> **Learn More:** See [Step 4: Handling Remaining Nulls](#step-4-handling-remaining-nulls).
 
 ### Step 5: Removing Duplicates
 
@@ -883,7 +885,7 @@ The duplicate row (order_id=1, amount=100.0) that appeared twice is now collapse
 
 > **Tip:** Still seeing duplicates after [`.distinct()`]? It deduplicates on _all_ columns — rows that look identical but differ in one column aren't duplicates. Use [`.distinct_on()`] to specify exactly which columns define uniqueness.
 
-> **Learn More:** See [Deduplication Strategies](#deduplication-strategies) in the Deep Dive section.
+> **Learn More:** See [Step 5: Removing Duplicates](#step-5-removing-duplicates).
 
 ### Step 6: Computing Derived Columns
 
@@ -938,7 +940,7 @@ step6.clone().show().await?;
 
 > **Note:** [`date_part()`] returns `Float64` for consistency across date components. Common parts: `year`, `month`, `day`, `hour`, `minute`, `second`, `dow` (day of week), `doy` (day of year).
 
-> **Learn More:** See [Date and Time Operations](#date-and-time-operations) in the Deep Dive section.
+> **Learn More:** See [Step 6: Computing Derived Columns](#step-6-computing-derived-columns).
 
 ### Step 7: Aggregating for Insights
 
@@ -1029,7 +1031,7 @@ This audit trail helps identify upstream data quality issues — if 30% of rows 
 
 > **Tip:** Wrong totals? Verify your grouping keys first: `step6.select(vec![col("customer")]).distinct()?.show().await?` — hidden whitespace or case differences can split groups unexpectedly.
 
-> **Learn More:** See [Aggregation Patterns](#aggregation-patterns) in the Deep Dive section.
+> **Learn More:** See [Step 7: Aggregating for Insights](#step-7-aggregating-for-insights).
 
 ### What We Learned
 
@@ -1129,9 +1131,9 @@ Notice how **method chaining** creates a readable, linear pipeline — each step
 
 - The type conversion step showed how to gracefully handle parse failures instead of crashing — a pattern that's awkward to express in SQL but natural in DataFrames.
 
-- Choose based on your context: SQL for ad-hoc queries and complex window functions, DataFrames for type-safe pipelines and dynamic composition. The next section, [Deep Dive: Transformation Reference](#deep-dive-transformation-reference), provides detailed coverage of each operation with more examples and edge cases.
+- Choose based on your context: SQL for ad-hoc queries and complex window functions, DataFrames for type-safe pipelines and dynamic composition. For detailed operation coverage and additional examples, see [Transformations](../library-user-guide/dataframe-api/transformations.md).
 
-After that, [Advanced DataFrame Patterns](#advanced-dataframe-patterns) explores methods that have **no SQL equivalent** — like [`.with_column()`] for adding columns without re-selecting everything, [`.union_by_name()`] for schema-flexible unions, and [`.describe()`] for instant summary statistics.
+After that, [Advanced DataFrame Topics](../library-user-guide/dataframe-api/dataframes-advance.md) explores methods that have **no SQL equivalent** — like [`.with_column()`] for adding columns without re-selecting everything, [`.union_by_name()`] for schema-flexible unions, and [`.describe()`] for instant summary statistics.
 
 ---
 

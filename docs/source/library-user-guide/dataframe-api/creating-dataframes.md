@@ -17,11 +17,11 @@
   under the License.
 -->
 
-# Creating DataFrames
+# Creation of DataFusion DataFrames
 
 **The "birth" phase of the DataFrame lifecycle: from data source to lazy query plan.**
 
-Every query starts with data. Whether you're reading Parquet from S3, executing SQL, receiving Arrow batches from a Flight stream, or constructing plans programmatically—all paths converge to a lazy [`DataFrame`] backed by a [`LogicalPlan`][logicalplan]. This guide covers the _when_ and _how_ of each creation method.
+Every query starts with data. Whether you're reading Parquet from S3, executing SQL, receiving Arrow batches from a Flight stream, or constructing plans programmatically—all paths converge to a lazy [`DataFrame`] backed by a [`LogicalPlan`]. This guide covers the _when_ and _how_ of each creation method.
 
 In the [DataFrame lifecycle](./index.md#the-dataframe-lifecycle), creation is where you bind a data source to a query plan. The DataFrame doesn't execute yet—it's a recipe waiting to run. For the conceptual model, see [Concepts](./concepts.md). For what happens next: [Transform](./transformations.md) → [Write](./writing-dataframes.md).
 
@@ -57,7 +57,7 @@ To understand _how_ to create a DataFrame, we must first understand _what_ we ar
 
 **All creation methods normalize to the same lazy `LogicalPlan`, regardless of whether you start with SQL or the DataFrame API.**
 
-Whether you read a CSV from disk, stream Arrow batches from a network socket, or parse a SQL query, DataFusion normalizes them all into the same structure: a lazy [`DataFrame`] backed by a [`LogicalPlan`][logicalplan].
+Whether you read a CSV from disk, stream Arrow batches from a network socket, or parse a SQL query, DataFusion normalizes them all into the same structure: a lazy [`DataFrame`] backed by a [`LogicalPlan`].
 
 - **The Universal Adapter**:<br>
   The DataFrame API decouples _storage_ from _compute_. You can join a Parquet file from S3 with an in-memory Arrow batch and a PostgreSQL table (via [`TableProvider`]) in a single query.
@@ -146,7 +146,7 @@ DATAFRAME CREATION PATHWAYS
 - **Mutable session vs. per-query snapshot**:<br>
   [`SessionContext`] is mutable (register tables/UDFs/object stores, change config). When you create a [`DataFrame`], DataFusion captures a [`SessionState`] snapshot for that query; later changes to [`SessionContext`] do not affect that [`DataFrame`].
 - **SQL parser vs DataFrame builder**:<br>
-  The SQL API ([`ctx.sql(...)`][`.sql()`]) parses text into a [`LogicalPlan`][logicalplan] and returns a [`DataFrame`] (using the catalog to resolve names like `FROM table_name`, which is why registration matters). The DataFrame API builds the same kind of plan programmatically. Both paths converge on the same [`DataFrame`] abstraction.
+  The SQL API ([`ctx.sql(...)`][`.sql()`]) parses text into a [`LogicalPlan`] and returns a [`DataFrame`] (using the catalog to resolve names like `FROM table_name`, which is why registration matters). The DataFrame API builds the same kind of plan programmatically. Both paths converge on the same [`DataFrame`] abstraction.
 - **Transformations vs actions**:<br>
   Transformations return a new [`DataFrame`] (updated plan, same [`SessionState`]). Actions such as [`.collect()`] and [`.execute_stream()`] execute the plan and produce results.
 
@@ -164,7 +164,7 @@ DATAFRAME CREATION PATHWAYS
 
 DataFusion is an "out of the box" query engine, but for a working query engine and optimal results _query engines have rules_: data sources must be registered or scanned, names must be resolved, and schemas must align. This section covers the catalog model that makes these rules work.
 
-[`SessionContext`][sessioncontext] is the entry point for creating DataFrames—it owns the catalog (registered tables), configuration, and runtime. When you create a [`DataFrame`], it captures a snapshot of this state as [`SessionState`], which is why SQL and the DataFrame API seamlessly interoperate.
+[`SessionContext`] is the entry point for creating DataFrames—it owns the catalog (registered tables), configuration, and runtime. When you create a [`DataFrame`], it captures a snapshot of this state as [`SessionState`], which is why SQL and the DataFrame API seamlessly interoperate.
 
 > **Already familiar with DataFusion's catalog?** <br>
 > Skip to [How to create a DataFrame](#how-to-create-a-dataframe).<br>
@@ -228,7 +228,7 @@ DataFusion resolves table names in both SQL (`FROM ...`) and the DataFrame API (
 - **Default namespace:**<br>
   Unqualified names resolve to `datafusion.public` (default catalog + schema). This is a namespace convention, not an access-control boundary.
 - **Lifetime:**<br>
-  Registrations are in-memory, scoped to the [`SessionContext`][sessioncontext]. For persistence, implement a custom [`CatalogProvider`].
+  Registrations are in-memory, scoped to the [`SessionContext`]. For persistence, implement a custom [`CatalogProvider`].
 - **Case sensitivity:**<br>
   Unquoted identifiers fold to lowercase; quote to preserve case (`"Sales"`).
 
@@ -342,7 +342,7 @@ Because every creation method produces a [`DataFrame`] backed by the same intern
 >
 > **Default rule:** <br> Parquet, remote storage, or multi-file → register. Small, local, one-off → direct read.
 
-#### The Big Picture
+## The Big Picture
 
 For a more detailes, visual representation of the DataFrame creation process, see the diagram below:
 
@@ -620,11 +620,6 @@ DataFusion natively supports five file formats (other formats like ORC or Iceber
 > For analytics, prefer **columnar formats** (Parquet, Arrow IPC). Columnar storage lets DataFusion read only the needed columns, drastically reducing I/O. Row-based formats (Avro, CSV, JSON) must read entire rows even when you need one field.
 
 ---
-
-[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
-[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/sql/index.html
-[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
 
 ### Parquet — The Analytical Standard
 
@@ -1501,7 +1496,7 @@ async fn main() -> Result<()> {
 > Prefer one API within a pipeline and switch at natural boundaries (e.g., define a view in SQL, then continue with DataFrame transforms), rather than ping‑ponging between APIs step-by-step.
 
 > **No performance penalty**:<br>
-> Both APIs compile down to the same [`LogicalPlan`][logicalplan]—choose based on ergonomics, not speed.
+> Both APIs compile down to the same [`LogicalPlan`]—choose based on ergonomics, not speed.
 
 For advanced patterns like SQL-first workflows, round-trip transformations, and registering DataFrames as views, see [From SQL Queries](#3-from-sql-queries).
 
@@ -1580,7 +1575,7 @@ async fn main() -> Result<()> {
 > - **SQL `information_schema`**: Use for interactive exploration, debugging, or when you need SQL-standard portability
 
 > **Catalog lifetime**:<br>
-> Registered tables live in the [`SessionContext`]'s in-memory catalog. When the context is dropped, all registrations are lost—there is no persistent catalog by default. For long-running applications, keep the context alive or re-register on startup. For persistent catalogs, see [Custom Catalog Implementations](../catalogs.md#custom-catalog-implementations).
+> Registered tables live in the [`SessionContext`]'s in-memory catalog. When the context is dropped, all registrations are lost—there is no persistent catalog by default. For long-running applications, keep the context alive or re-register on startup. For persistent catalogs, see [Catalogs](../catalogs.md).
 
 #### Advanced: Custom TableProviders
 
@@ -1806,7 +1801,7 @@ For deeper guidance on when to choose which API, see [When to Choose Which?](con
 
 - [Two Paths to the Same Plan](concepts.md#two-paths-to-the-same-plan-parser-vs-builder) — How SQL and DataFrame APIs converge
 - [When to Choose Which?](concepts.md#when-to-choose-which) — Decision guide for API selection
-- [SQL Reference](../../user-guide/sql/index.md) — Full SQL syntax, functions, and data types
+- [SQL Reference](../../user-guide/sql/index.rst) — Full SQL syntax, functions, and data types
 
 **API Documentation:**
 
@@ -1959,13 +1954,13 @@ When constructing `RecordBatch`es manually, these invariants must hold:
 - **Nullable columns**: Must be built with `Option<T>`; non-nullable columns must not contain `None`
 - **Multiple batches**: Schemas must be identical (names, types, order, nullability)
 
-> **Need help debugging?** See the full checklist in [What is a RecordBatch?](../../user-guide/arrow-introduction.md#what-is-a-recordbatch-and-why-batch)
+> **Need help debugging?** See the full checklist in [Arrow Introduction](../../user-guide/arrow-introduction.md)
 
 #### Record Batch References
 
 **DataFusion:**
 
-- [What is a RecordBatch?](../../user-guide/arrow-introduction.md#what-is-a-recordbatch-and-why-batch) — RecordBatch fundamentals and debugging
+- [Arrow Introduction](../../user-guide/arrow-introduction.md) — RecordBatch fundamentals and debugging
 - [`SessionContext::read_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch) — One-shot DataFrame from RecordBatch
 - [`SessionContext::register_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch) — Register RecordBatch as table
 
@@ -2295,7 +2290,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Access the query tree directly—for plan manipulation, federation, or building your own query DSL.**
 
-A DataFrame wraps a [`LogicalPlan`][logicalplan] and [`SessionState`][sessioncontext]—the query tree and execution context. This section shows how to extract, manipulate, and reconstruct DataFrames at the plan level—giving you full control over query structure.
+A DataFrame wraps a [`LogicalPlan`] and [`SessionState`]—the query tree and execution context. This section shows how to extract, manipulate, and reconstruct DataFrames at the plan level—giving you full control over query structure.
 
 #### When you need this
 
@@ -2382,6 +2377,8 @@ async fn test_plan_manipulation() -> Result<()> {
 
 > **`DataFrame::new()` vs `execute_logical_plan()`**: Use `DataFrame::new()` for pure plan wrapping. Use `execute_logical_plan()` when your plan might contain DDL (CREATE TABLE, DROP, etc.)—it handles those statements before returning a DataFrame.
 
+(advanced-plan-rewriting-with-treenoderewriter)=
+
 #### Advanced: Plan rewriting with TreeNodeRewriter
 
 The [`TreeNodeRewriter`] trait lets you walk and transform every node in a plan tree—not just append to the top like `df.filter()`. Your rewriter visits each node (bottom-up by default), and you decide whether to transform it, replace it, or leave it unchanged. This is the mechanism behind multi-tenant isolation, audit logging, and query policy injection.
@@ -2444,7 +2441,7 @@ impl TreeNodeRewriter for TenantIsolationRewriter {
 **Guides:**
 
 - [Building Logical Plans](../../library-user-guide/building-logical-plans.md) — Comprehensive plan construction techniques
-- [Query Planning Architecture](../../contributor-guide/architecture.md#query-planning) — How plans flow through the engine
+- [Query Planning Architecture](../../contributor-guide/architecture.md) — How plans flow through the engine
 
 **Deep dives:**
 
@@ -2493,7 +2490,7 @@ Every method above converges to the same result: a lazy `DataFrame` backed by a 
 | [Best Practices](best-practices.md)                          | Performance tuning and correctness tips                               |
 | [Building Logical Plans](../building-logical-plans.md)       | Work directly with `LogicalPlan` / `LogicalPlanBuilder`               |
 | [Arrow Introduction](../../user-guide/arrow-introduction.md) | Arrow basics: `RecordBatch`, schemas, and columnar memory             |
-| [SQL Reference](../../user-guide/sql/index.md)               | Full SQL syntax, functions, and data types                            |
+| [SQL Reference](../../user-guide/sql/index.rst)              | Full SQL syntax, functions, and data types                            |
 
 ### API Documentation (docs.rs)
 
@@ -2534,22 +2531,22 @@ Every method above converges to the same result: a lazy `DataFrame` backed by a 
 <!-- Internal documentation links -->
 
 [arrow flight]: https://arrow.apache.org/blog/2019/10/13/introducing-arrow-flight/
-[arrow format]: ../../user-guide/arrow-introduction.md#what-is-a-recordbatch-and-why-batch
+[arrow format]: ../../user-guide/arrow-introduction.md
 [catalog schema]: https://datafusion.apache.org/library-user-guide/catalogs.html
 [information_schema]: ../../user-guide/sql/information_schema.md
 
 <!-- Core types (alphabetized) -->
 
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
 [`catalogprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
-[logicalplan]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
 [`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/struct.MemTable.html
 [`object_store`]: https://docs.rs/object_store/latest/object_store/
 [`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
 [`runtimeenv`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.Session.html#tymethod.runtime_env
 [`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[sessioncontext]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
 [`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
 [`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
 [`tablescan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/logical_plan/struct.TableScan.html

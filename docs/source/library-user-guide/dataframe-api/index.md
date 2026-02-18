@@ -19,7 +19,7 @@
 
 # DataFrame API Documentation
 
-This guide provides comprehensive documentation for using DataFusion's [`DataFrame`] API in Rust applications. For an introduction to DataFrames and their conceptual foundation, see the [User Guide](../../user-guide/dataframe.md).
+This documentation provides comprehensive documentation for using DataFusion's [`DataFrame`] API in Rust applications. For an introduction to DataFrames and their conceptual foundation, see the [User Guide](../../user-guide/dataframe.md).
 
 ## Overview
 
@@ -35,6 +35,18 @@ DataFusion [`DataFrame`]s are modeled after the [Pandas DataFrame] interface and
 ```{contents}
 :local:
 :depth: 2
+```
+
+```{toctree}
+:maxdepth: 1
+
+concepts
+creating-dataframes
+schema-management
+transformations
+writing-dataframes
+best-practices
+dataframes-advance
 ```
 
 ## The DataFrame Lifecycle
@@ -59,20 +71,24 @@ The documentation follows the **lifecycle of a DataFrame**—from creation to ex
 | Learn what DataFrames are conceptually  | [User Guide](../../user-guide/dataframe.md)                                        |
 | Understand Arrow & RecordBatches        | [Arrow Introduction](../../user-guide/arrow-introduction.md)                       |
 | Learn about data types                  | [Data Types](../../user-guide/sql/data_types.md)                                   |
+|                                         |                                                                                    |
 | **Create DataFrames**                   |                                                                                    |
 | Create my first DataFrame               | [Creating DataFrames](creating-dataframes.md)                                      |
 | Understand SessionContext & LogicalPlan | [Concepts](concepts.md)                                                            |
+|                                         |                                                                                    |
 | **Transform data**                      |                                                                                    |
 | Filter, join, or aggregate data         | [Transformations](transformations.md)                                              |
 | Mix SQL with DataFrames                 | [Transformations § SQL](transformations.md#mixing-sql-and-dataframes)              |
+|                                         |                                                                                    |
 | **Execute and write results**           |                                                                                    |
-| Execute DataFrames and get results      | [Writing & Executing](writing-dataframes.md#dataframe-execution-in-memory-results) |
+| Execute DataFrames and get results      | [Writing & Executing](writing-dataframes.md#dataframe-execution) |
 | Save results to files                   | [Writing DataFrames](writing-dataframes.md#writing-dataframes-persistent-storage)  |
-| Stream large results                    | [Streaming Execution](writing-dataframes.md#streaming-execution)                   |
+| Stream large results                    | [Streaming Execution](writing-dataframes.md#partitioned--streaming-execution)                   |
+|                                         |                                                                                    |
 | **Optimize & Debug**                    |                                                                                    |
 | Improve query performance               | [Best Practices](best-practices.md)                                                |
 | Debug query plans                       | [Best Practices § Debugging](best-practices.md#debugging-techniques)               |
-| Configure batch sizes                   | [Best Practices § Configuration](best-practices.md#physical-optimizer-controls)    |
+| Configure batch sizes                   | [Best Practices § Configuration](best-practices.md#configuration-reference)    |
 
 ## Common Operations Quick Reference
 

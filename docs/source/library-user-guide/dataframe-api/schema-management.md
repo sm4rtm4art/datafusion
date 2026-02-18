@@ -17,14 +17,19 @@
   under the License.
 -->
 
-# Schema Management (DFSchema API)
+# Schema Management with DataFrameSchema
 
 **The “health” phase of the DataFrame lifecycle: inspect, validate, and evolve schema.**
 
 Schema management defines the structural contract of your data—names, types, and nullability—as it flows through DataFusion. Explicit schemas are critical for both correctness and performance, enabling the optimizer to push down predicates, select vectorized kernels, and prevent silent schema drift. You manage this contract via the [`DFSchema`] API, which wraps underlying Arrow types with the query-planning context needed for robust, predictable execution.
 
-> **Methodes Style Note:** <br>
-> In this guide, method notation follows a consistent pattern: DataFrame methods use `df.method()` (for example, `df.select(...)`), DFSchema methods use `df.schema().method()` (for example, `df.schema().fields()`), and associated functions use `DFSchema::method()` (for example, `DFSchema::try_from(...)`). Standalone functions use `function()` (for example, `col()`), and constructors use `Type::new()` (for example, `SessionContext::new()`).
+> **Method Style Note:** <br>
+> In this document, method notation follows a consistent pattern:
+>
+> - **DataFrame methods** use `df.method()` (for example, `df.select(...)`)
+> - **DFSchema method**s use `df.schema().method()` (for example, `df.schema().fields()`)
+> - **Associated functions** use `DFSchema::method()` (for example, `DFSchema::try_from(...)`).
+> - **Standalone functions** use `function()` (for example, `col()`), and constructors use `Type::new()` (for example, `SessionContext::new()`).
 
 ```{contents}
 :local:
@@ -33,7 +38,9 @@ Schema management defines the structural contract of your data—names, types, a
 
 ## Introduction
 
-**Schema management is the core of DataFusion's query planning and execution engine.**
+**Schema management connects data modeling, query planning, and execution correctness across the DataFusion ecosystem.**
+
+In analytical systems, schema is the contract that binds source data, planner decisions, and runtime behavior. In DataFusion, that contract flows from data sources into the `LogicalPlan` and surfaces as `DFSchema` on each `DataFrame`, where you inspect, validate, and evolve structure safely.
 
 DataFusion uses the term "schema" for four distinct concepts. They fall into two layers:
 
@@ -286,10 +293,12 @@ The query engine uses the **primary properties** to plan and execute queries eff
 
 In the remainder of this section, we will focus on four practical aspects of schema management:
 
-- [1. Column Names](#1-column-names)
-- [2. Column Order](#2-column-order)
-- [3. Column Count](#3-column-count)
-- [4. Column Types](#4-column-types)
+- [1. Column Names](#column-names)
+- [2. Column Order](#column-order)
+- [3. Column Count](#column-count)
+- [4. Column Types](#column-types)
+
+(column-names)=
 
 #### 1. Column Names
 
@@ -303,6 +312,8 @@ The column [`field.name`][`field`] is the primary identifier for a column in the
 
 > **Best Practice:** <br>
 > Enforce a consistent naming convention (e.g., all **snake_case** or **camelCase**) at your ingestion boundary.<br>
+
+(column-order)=
 
 #### 2. Column Order
 
@@ -322,6 +333,8 @@ DataFusion's DataFrame API is **name-based, not positional**. For operations lik
 > FROM table_b
 > ```
 
+(column-count)=
+
 #### 3. Column Count
 
 When combining DataFrames with [`.union_by_name()`], differences in column count are handled gracefully: missing columns are filled with NULL values. This deliberate behavior supports schema evolution—new columns appear with NULL for historical rows, and dropped columns remain explicit rather than causing silent failures.
@@ -331,6 +344,8 @@ When combining DataFrames with [`.union_by_name()`], differences in column count
 
 > **Important:** <br>
 > While [`.union_by_name()`] handles _missing_ columns automatically, it does **not** silently handle _type mismatches_ for columns that exist in both DataFrames. When the same column name appears with different types (e.g., `Int32` vs `Int64`), DataFusion's [type coercion analyzer][`TypeCoercion`] attempts to find a common type. If no safe coercion path exists, the query will fail during analysis—forcing you to be explicit about how to resolve the ambiguity.
+
+(column-types)=
 
 #### 4. Column Types
 
@@ -362,6 +377,8 @@ Nested types follow the same schema rules but add complexity in coercion and com
 ### Schema Field Features
 
 Properties define _what_ a column is (name, type). Features define _how_ it behaves. Nullability directly affects query execution—validity bitmaps, null-safe operations, and schema merging rules. Metadata provides semantic meaning without affecting computation—it travels with the data, but the query engine doesn't use it for optimization.
+
+(schema-field-nullability)=
 
 #### Nullability
 
@@ -399,8 +416,6 @@ DataFusion supports metadata at two levels, both accessible via [`DFSchema`]:
 - **Field-level**: [`field.metadata()`][`field.metadata()`] — annotations per column (accessed via [`df.schema().fields()`] or [`df.schema().inner().fields()`][`.inner()`])
 
 For the full metadata API, see the [`DFSchema` documentation][`DFSchema`].
-
----
 
 ---
 
@@ -590,9 +605,7 @@ Now that you understand schema structure and type coercion, you're ready to work
 - **[Transforming Schemas](#transforming-schemas)** — Modify qualifiers, combine schemas, handle nullability
 - **[Validating Schemas](#validating-schemas)** — Check existence, compare schemas, verify compatibility
 - **[Concepts: Handling Null Values](./concepts.md#handling-null-values)** — Deep dive into NULL behavior in expressions, filters, and joins
-- [Struct Coercion](/user-guide/sql/struct_coercion) — How DataFusion handles structs and their fields
-
----
+- **Type coercion internals:** [`TypeCoercion`] analyzer behavior for nested and scalar types
 
 ---
 
@@ -724,8 +737,6 @@ async fn main() -> datafusion::error::Result<()> {
 **Use [`.unnest_columns()`] to expand `List` or `Struct` columns into flat top-level columns.**
 
 This changes the schema by replacing the nested column with its inner fields (for `Struct`) or repeating rows for each element (for `List`). See [Strategy 4: Nested Data](#strategy-nested-data) for schema modeling details.
-
----
 
 ---
 
@@ -964,8 +975,6 @@ When working with qualified schemas—typically after joins or when implementing
 
 > **Tip:** <br>
 > Most of these methods are wrappers around [`.iter()`] with different filter/return semantics. If you need a custom lookup pattern, iterating directly with `.iter()` is often simpler than finding the right method name.
-
----
 
 ---
 
@@ -1260,8 +1269,6 @@ fn main() {
 
 ---
 
----
-
 ## Schema Inference
 
 **Schema inference derives column names and types from data samples—useful for exploration, but unreliable for production.**
@@ -1327,7 +1334,7 @@ fn main() {
 
 A schema defines the structure of your data—column names, types, nullability, and nested structures. Applying schemas when reading files enables planning-time validation, improves query performance, and ensures data quality. This section covers schema strategies for different file formats, handling schema evolution, partition pruning, and modeling nested data. <br> **See also:**
 
-- [Schemas and Data Types](concepts.md#schemas-and-data-types) for fundamentals and
+- [Data Model & Schema](./concepts.md#data-model--schema) for fundamentals and
 - [Creating DataFrames](./creating-dataframes.md) for file reading basics.
 
 **Jump to:**
@@ -1648,8 +1655,6 @@ fn main() {
 
 ---
 
----
-
 ## Transforming Schemas
 
 **Modify existing schemas by changing qualifiers, combining schemas, or handling nullability.**
@@ -1937,7 +1942,7 @@ fn main() -> datafusion::error::Result<()> {
 
 **After combining schemas via [`users_schema.join(&contact_schema)`][dfschema::join] or [`base_schema.merge(&overlapping_schema)`][dfschema::merge], nullable fields often appear—requiring strategies to fill, filter, or preserve NULL values.**
 
-As described in [Nullability](#nullability), the widening rule applies: if a column is nullable in **any** input schema, it remains nullable in the combined result. The patterns below address what to do with the resulting NULLs.
+As described in [Nullability](#schema-field-nullability), the widening rule applies: if a column is nullable in **any** input schema, it remains nullable in the combined result. The patterns below address what to do with the resulting NULLs.
 
 ```rust
 use datafusion::prelude::*;
@@ -1995,7 +2000,7 @@ async fn main() -> datafusion::error::Result<()> {
 **See also:**<br>
 
 - [Concepts: Handling Null Values](./concepts.md#handling-null-values) for SQL NULL semantics and three-valued logic.
-- [Nullability](#nullability) for the widening rule when schemas are merged.
+- [Nullability](#schema-field-nullability) for the widening rule when schemas are merged.
 - [Default Values](#default-values) for applying defaults during schema creation.
 
 ---
@@ -2195,8 +2200,6 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 
 ---
 
----
-
 <!-- ==========================================================================
      REFERENCE List as Limiter for Focusing on the Above sections
 
@@ -2237,7 +2240,6 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 [`.tree_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.tree_string
 [`df.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
 [`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`dfschema::field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
 [`check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
 [dfschema::join]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join

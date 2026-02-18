@@ -936,7 +936,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-Version new schemas when fields change. Store version in metadata (`schema.metadata.insert("version", "2")`). Test that DataFrames match expected versions (see [Schema Validation](#schema-validation)). Document breaking changes in a migration guide.
+Version new schemas when fields change. Store version in metadata (`schema.metadata.insert("version", "2")`). Test that DataFrames match expected versions (see **Schema Validation (Structure & Types)**). Document breaking changes in a migration guide.
 
 <!-- TODO: MOVE to "### Reference" subsection within consolidated "## Schema Evolution & Versioning" -->
 
@@ -1047,9 +1047,9 @@ Rules of thumb:
 
 - **Prefer additive and widening changes**; add new fields as nullable.
 - **Avoid in‑place renames**; publish aliases during transition.
-- **Keep a canonical schema** and validate against it (see [Schema Reuse and Versioning](#schema-reuse-and-versioning), [Schema Validation](#schema-validation)).
+- **Keep a canonical schema** and validate against it (see [Schema Reuse and Versioning](#schema-reuse-and-versioning), **Schema Validation (Structure & Types)**).
 
-See also: [Handling Missing Data & Nullability](#handling-missing-data--nullability), [Automatic Schema Merging for File Sources](#automatic-schema-merging-for-file-sources), [Performance Considerations](#performance-considerations).
+See also: [Schema Management](./schema-management.md), [Automatic Schema Merging](#automatic-schema-merging), [Performance Considerations](#performance-considerations).
 
 <!-- TODO: MERGE with Pattern 3 (Migration Testing) into "### Evolution Best Practices" -->
 
@@ -1289,8 +1289,6 @@ X    END THIGHTENING!
 X
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 -->
-
----
 
 ---
 
@@ -1835,7 +1833,7 @@ This guide is designed for community expansion. Areas where contributions are es
 
 1. Choose an area that matches your expertise
 2. Add working, tested examples with clear explanations
-3. Submit a PR — see [CONTRIBUTING.md](../../../../CONTRIBUTING.md)
+3. Submit a PR — see [CONTRIBUTING.md](https://github.com/apache/datafusion/blob/main/CONTRIBUTING.md)
 
 ---
 
@@ -2147,7 +2145,7 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 > **See also:** <br>
-> For complete patterns with error handling, thresholds, and CI/CD integration, see [Transformations § Data Constraint Validation](transformations.md#data-constraint-validation).
+> For complete patterns with error handling, thresholds, and CI/CD integration, see [Transformations](transformations.md).
 
 #### Validating Value Constraints
 
@@ -2780,12 +2778,12 @@ async fn log_schema_result(
 }
 ```
 
-You can wrap calls to a helper like `robust_read_with_schema_recovery` with `log_schema_result` so every schema issue is tagged with the file path and strategy in your logs. For comprehensive monitoring patterns—including metrics, sampling, and alerting—consult [Production Patterns](./dataframes-advance.md#7-production-patterns), which expands on these examples.
+You can wrap calls to a helper like `robust_read_with_schema_recovery` with `log_schema_result` so every schema issue is tagged with the file path and strategy in your logs. For comprehensive monitoring patterns—including metrics, sampling, and alerting—consult [Advanced DataFrame Topics](./dataframes-advance.md), which expands on these examples.
 
 **See also:**
 
-- [Error Handling & Recovery](./creating-dataframes.md#error-handling--recovery) — I/O and inference failure patterns.
-- [Transformations](./transformations.md#type-casting) — Details on casting and coercion.
+- [Creating DataFrames](./creating-dataframes.md) — I/O and inference failure patterns.
+- [Schema Management](./schema-management.md) — Details on casting and coercion.
 - [Advanced DataFrame Topics](./dataframes-advance.md) — Deep dives into productionizing DataFusion.
 
 ---
@@ -3235,7 +3233,7 @@ Once diagnosed, choose the strategy that fits your mismatch type.
 
 **Best for:** Handling added/removed columns or shuffled column order. **This strategy solves ~90% of real-world schema mismatches.**
 
-Use [`.union_by_name()`]. Unlike standard SQL unions which match by position, this method matches by column name and fills missing columns with `NULL`. For more information see the section [The Anatomy of a DataFusion Schema](#the-anatomy-of-a-datafusion-schema).
+Use [`.union_by_name()`]. Unlike standard SQL unions which match by position, this method matches by column name and fills missing columns with `NULL`. For more information see [Schema Management](./schema-management.md).
 
 ```rust
 use datafusion::prelude::*;
@@ -3268,7 +3266,7 @@ async fn main() -> datafusion::error::Result<()> {
 Use [`.cast_to()`] inside a [`.with_column()`] transformation.
 
 > **The Golden Rule of Casting:**
-> Always cast the **narrower** type up to the **widest** common type (e.g., `Int32` → `Int64`). This is safe and prevents data loss. Never cast down unless you are certain values won't be truncated. For a detailed hierarchy of safe conversions, see [Type Coercion Hierarchy](#mode-2-strict-matching-for-joins-and-unions).
+> Always cast the **narrower** type up to the **widest** common type (e.g., `Int32` → `Int64`). This is safe and prevents data loss. Never cast down unless you are certain values won't be truncated. For a detailed hierarchy of safe conversions, see [Schema Management](./schema-management.md#type-coercion-auto-alignment-vs-explicit-casting).
 
 ```rust
 use datafusion::prelude::*;
@@ -3317,7 +3315,7 @@ let df_fixed = df_incoming.select(vec![
 
 ### Automatic Schema Merging
 
-DataFusion automatically attempts to merge schemas when reading multiple files (e.g., `ctx.read_parquet(...)`). As detailed in [Strategy 2: Self-Describing Formats](#strategy-2-self-describing-formats-parquetavroarrow--merge--normalize), this process promotes types (widening) and handles missing columns (nullability).
+DataFusion automatically attempts to merge schemas when reading multiple files (e.g., `ctx.read_parquet(...)`). As detailed in [Schema Management](./schema-management.md#applying-schemas-and-modeling-data), this process promotes types (widening) and handles missing columns (nullability).
 
 **If automatic merging fails**, it is usually due to a strict incompatibility (e.g., `Int64` vs `String`). In these cases, you must fall back to **manual alignment**: read the files as separate DataFrames, apply **Strategy B (Casting)**, and then union them.
 

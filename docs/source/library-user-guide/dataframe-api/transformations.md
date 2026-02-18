@@ -22,7 +22,7 @@
 - nested functions https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html ,
 -  maybe even datetime (https://docs.rs/datafusion/latest/datafusion/functions/datetime/index.html)  -->
 
-# DataFrame Transformations
+# Transformations with DataFrame API
 
 **The “life” phase of the DataFrame lifecycle: build and refine a lazy query plan.**
 
@@ -101,7 +101,7 @@ This table maps SQL operations to their DataFrame equivalents. Methods marked **
 | **Distinct**    |   [`DISTINCT`][`select`]   |             [`.distinct()`]              | Removes duplicate rows based on all columns.                                                |
 | **Distinct**    | [`DISTINCT ON`] (Postgres) |            [`.distinct_on()`]            | **Unique**: Deduplicates based on specific columns, keeping the "first" row per sort order. |
 
-> **Note:** While you can mix SQL and DataFrames (see [Concepts](../concepts.md)), mastering these native methods unlocks the full power of programmatic data manipulation.
+> **Note:** While you can mix SQL and DataFrames (see [Concepts](concepts.md)), mastering these native methods unlocks the full power of programmatic data manipulation.
 
 ### The Methodical Differences: Why DataFrames Feel Different
 
@@ -185,7 +185,9 @@ The DataFrame API isn't always the best choice. Be honest about trade-offs:
 | **Tool Integration** | Works with BI tools, JDBC/ODBC             | Requires custom integration         |
 | **Team Familiarity** | Universal SQL knowledge                    | Rust + DataFrame API learning curve |
 
-#### When Row-Based ['TableProviders'] Outperform Columnar
+(when-row-based-tableproviders-outperform-columnar)=
+
+#### When Row-Based [`TableProvider`] Outperform Columnar
 
 DataFusion's columnar engine excels at analytical workloads, but **row-based databases (i.e. Postgres, MySQL, Oracle...) via TableProvider can be faster** for certain operations:
 
@@ -209,7 +211,7 @@ When to use DataFusion's columnar engine instead of [`TableProvider`]:
 
 **Practical guidance:**
 
-- **Push down what you can:** DataFusion's TableProvider interface supports predicate and projection pushdown — filters and column lists reach the source DB
+- **Push down what you can:** DataFusion's [`TableProvider`] interface supports predicate and projection pushdown — filters and column lists reach the source DB
 - **Consider the transfer cost:** If 90% of data would be filtered at the source, let the source do it
 - **Profile, don't assume:** Use [`.explain()`] to see what gets pushed down vs. executed in DataFusion
 
@@ -306,8 +308,6 @@ _For operations unique to DataFrames (no SQL equivalent), see [DataFrame-Unique 
 
 DataFusions DataFrame-API provides methods for every projection need: simple name-based selection via [`.select_columns()`], expression-based computation with [`.select()`], adding columns with [`.with_column()`], renaming via [`.with_column_renamed()`], and removal with [`.drop_columns()`]. Projection pushdown ensures only requested columns are read from the data source.
 
-[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
-
 **SQL equivalent:**
 
 ```sql
@@ -324,7 +324,7 @@ FROM table
 > - **SQL shines:** Familiar [`SELECT`] syntax; more readable for simple projections; [`SELECT *`][`select`] for quick exploration
 
 **Performance note:**
-<br> Projection is where **columnar vs row-based TableProviders** differ most — columnar sources (i.e. Parquet, Delta Lake ...) read only requested columns, while row-based sources (i.e. Postgres, MySQL, Oracle...) read full rows and discard unwanted columns during transfer.
+<br> Projection is where **columnar vs row-based [`TableProvider`]** differ most — columnar sources (i.e. Parquet, Delta Lake ...) read only requested columns, while row-based sources (i.e. Postgres, MySQL, Oracle...) read full rows and discard unwanted columns during transfer.
 
 #### Basic Selection
 
@@ -885,8 +885,6 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
----
-
 ### Aggregation Patterns
 
 **Aggregation collapses rows into summary statistics—transforming thousands of individual records into meaningful totals, averages, and counts that reveal patterns in your data.**
@@ -1104,8 +1102,6 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
----
-
 ### When DataFrames Collide: Join Patterns
 
 **Joins are the backbone of relational data processing—the operation that links separate tables into unified, queryable datasets by matching rows on shared keys.**
@@ -1270,7 +1266,7 @@ Pick whichever reads better for your use case.
 > **DataFusion-specific advantage:** Unlike many DataFrame libraries, DataFusion exposes the _full_ set of join types ([`LeftSemi`], [`RightSemi`], [`LeftAnti`], [`RightAnti`], [`LeftMark`], [`RightMark`]) as first-class operations—no need to emulate anti-joins with outer joins and null checks.
 
 **Performance note:** <br>
-For joins via row-based [`TableProviders`], consider whether the join should happen at the source. If both tables are in Postgres with foreign key indexes, the DB's index-backed joins may outperform transferring data to DataFusion. For cross-source joins or large analytical joins without indexes, DataFusion's hash/sort-merge algorithms excel.
+For joins via row-based [`TableProvider`], consider whether the join should happen at the source. If both tables are in Postgres with foreign key indexes, the DB's index-backed joins may outperform transferring data to DataFusion. For cross-source joins or large analytical joins without indexes, DataFusion's hash/sort-merge algorithms excel.
 
 #### How Joins Execute
 
@@ -1504,6 +1500,8 @@ DataFusion's [`.join()`] preserves columns from both sides. When join keys share
 
 > **Pro tip for time-dependent data:** <br>
 > Multi-key joins on temporal columns work well when truncated to appropriate granularity using [`date_trunc()`]. Joining on `DATE` (day) has minimal edge cases (~0.004% at midnight); joining on raw `TIMESTAMP` (milliseconds) risks silent mismatches.
+
+(intermediate-leftrightfull-joins)=
 
 #### Intermediate: Left/Right/Full Joins
 
@@ -3869,6 +3867,8 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
+(advanced-dataframe-patterns)=
+
 ## DataFrame-Unique Methods
 
 **Some DataFrame methods have no SQL equivalent—these are the programmatic superpowers that justify using the DataFrame API.**
@@ -3920,7 +3920,7 @@ For a more detailed overview, the following table list all the methods unique to
 
 ### Schema Manipulation
 
-These methods modify column structure without requiring you to enumerate all columns—a common pain point in SQL. For more see the [Schema Management](../schema-management.md).
+These methods modify column structure without requiring you to enumerate all columns—a common pain point in SQL. For more see the [Schema Management](schema-management.md).
 
 #### Adding and Replacing Columns
 
@@ -4698,8 +4698,6 @@ async fn main() -> Result<()> {
 
 > **Use case:** Complex pipelines where some transformations are easier in DataFrame (programmatic column manipulation) and others are easier in SQL (complex joins, window functions with familiar syntax).
 
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-
 ### Methods with SQL Equivalents
 
 These methods have SQL counterparts but offer ergonomic advantages for programmatic use.
@@ -4871,6 +4869,8 @@ Both compile to the same optimized plan—choose based on ergonomics, not perfor
 
 <!--TODO Set the builder methodolgy at the very top-->
 
+(builder-methodology-architecting-with-dataframe)=
+
 ## Builder Methodology: Architecting with DataFrames
 
 **The DataFrame API isn't just SQL with different syntax—it's a programmatic _builder_ for query plans that integrates with Rust's type system, control flow, and tooling.**
@@ -4916,7 +4916,7 @@ This architecture unlocks patterns impossible in SQL: dynamic query construction
 | Pattern                                                         | What It Enables                           | SQL Limitation                       |
 | --------------------------------------------------------------- | ----------------------------------------- | ------------------------------------ |
 | [Builder Pattern & Laziness](#the-builder-pattern-and-laziness) | Reuse intermediate plans as variables     | CTEs are query-scoped                |
-| [Dynamic Construction](#dynamic-pipeline-construction)          | Rust `if/else` modifies the plan          | String concatenation, injection risk |
+| Dynamic Construction                                            | Rust `if/else` modifies the plan          | String concatenation, injection risk |
 | [Encapsulation](#encapsulation-and-reusability)                 | Functions returning `Expr` or `DataFrame` | UDFs are hard to deploy/test         |
 | [Memory & Streaming](#memory-management--streaming)             | Control collect vs stream execution       | No equivalent control                |
 | [Error Handling](#error-handling-and-observability)             | Compile-time + runtime error separation   | All errors at runtime                |
@@ -4974,7 +4974,7 @@ You chain method calls, storing intermediate DataFrames in Rust variables. Only 
 > **Fluent Interface:** <br>
 > This chaining style is known as a [Fluent Interface][fluent_interface]—a design pattern where methods return `self` (or a modified copy) to enable readable chains. If you know Spark's DataFrame API, DataFusion's architecture is conceptually similar to [Spark's Catalyst Optimizer][catalyst_optimizer], but implemented in Rust.
 
-> **See also:** [Concepts § Lazy Evaluation](concepts.md#lazy-evaluation) for a deeper dive into how DataFusion builds and optimizes logical plans.
+> **See also:** [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations) for a deeper dive into how DataFusion builds and optimizes logical plans.
 
 **In rust code:**
 
@@ -5047,6 +5047,8 @@ The practical benefit: you can inspect, branch, or reuse any intermediate DataFr
 >     Ok(())
 > }
 > ```
+
+(dynamic-pipeline-construction)=
 
 ### Dynamic Pipeline Construction
 
@@ -5728,7 +5730,7 @@ This section covers three complementary approaches:
 | **Constraint Validation** | Business rules (price > 0, not null)   | Every pipeline—reject/flag bad data             |
 | **Quality Inspection**    | Distribution tracking, bias detection  | ML pipelines, auditing, compliance              |
 
-> **Schema validation** is covered in detail in [Schema Management § Schema and Data Validation](schema-management.md#schema-and-data-validation). This section focuses on constraint validation and quality inspection.
+> **Schema validation** is covered in detail in [Schema Management § Validating Schemas](schema-management.md#validating-schemas). This section focuses on constraint validation and quality inspection.
 
 #### Data Constraint Validation
 
@@ -5958,8 +5960,6 @@ These patterns come from research on [ML pipeline inspection][blue elephants ins
 
 ---
 
----
-
 ## Mixing SQL and DataFrames
 
 DataFusion's SQL and DataFrame APIs are two interfaces to the same query engine. Because both compile to identical [`LogicalPlan`] structures, you can mix them freely within a single application—no performance penalty, no translation overhead.
@@ -6097,6 +6097,8 @@ These systems are **not competitors to DataFusion**—they solve different probl
 > **Note:** <br>
 > For relationship-heavy data (social graphs, recommendation engines, fraud detection), consider specialized **graph databases** like [Neo4j] or [Amazon Neptune]. These excel at traversing connections—a workload where both relational joins and columnar scans struggle.
 
+(the-federation-pattern)=
+
 #### The Federation Pattern
 
 DataFusion's [`TableProvider`] trait enables a **federation architecture**: connect diverse data sources and let each system do what it does best.
@@ -6130,7 +6132,7 @@ For deeper exploration of the topics covered in this section:
 **Federation & TableProviders:**
 
 - [datafusion-table-providers](https://github.com/datafusion-contrib/datafusion-table-providers) — Community implementations for PostgreSQL, MySQL, SQLite, and more
-- [Querying Postgres from DataFusion](https://datafusion.apache.org/library-user-guide/custom-table-providers.html) — Tutorial on building custom `TableProvider` implementations
+- [Querying Postgres from DataFusion](https://datafusion.apache.org/library-user-guide/custom-table-providers.html) — Tutorial on building custom [`TableProvider`] implementations
 - [InfluxDB 3.0 FDAP Architecture](https://www.influxdata.com/glossary/fdap-stack/) — Real-world federation: DataFusion as the query layer for a time-series database
 
 **DataFrame Paradigm Research:**
@@ -6158,16 +6160,16 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 
 ### DataFusion: Official Documentation
 
-| Resource                                                         | Description                                          |
-| ---------------------------------------------------------------- | ---------------------------------------------------- |
-| [DataFrame API Overview](index.md)                               | Entry point to this documentation series             |
-| [Creating DataFrames](creating-dataframes.md)                    | Data ingestion patterns                              |
-| [DataFrame Concepts](concepts.md)                                | `SessionContext`, `LogicalPlan`, lazy evaluation     |
-| [Writing DataFrames](writing-dataframes.md)                      | Output formats and sinks                             |
-| [Best Practices](best-practices.md)                              | Performance optimization patterns                    |
-| [Advanced Topics](dataframes-advance.md)                         | Custom UDFs, `TableProvider`, ecosystem integrations |
-| [SQL User Guide](../../user-guide/sql/index.rst)                 | SQL dialect reference                                |
-| [Expression Functions](../../user-guide/sql/scalar_functions.md) | Scalar, aggregate, and window functions              |
+| Resource                                                         | Description                                            |
+| ---------------------------------------------------------------- | ------------------------------------------------------ |
+| [DataFrame API Overview](index.md)                               | Entry point to this documentation series               |
+| [Creating DataFrames](creating-dataframes.md)                    | Data ingestion patterns                                |
+| [DataFrame Concepts](concepts.md)                                | `SessionContext`, `LogicalPlan`, lazy evaluation       |
+| [Writing DataFrames](writing-dataframes.md)                      | Output formats and sinks                               |
+| [Best Practices](best-practices.md)                              | Performance optimization patterns                      |
+| [Advanced Topics](dataframes-advance.md)                         | Custom UDFs, [`TableProvider`], ecosystem integrations |
+| [SQL User Guide](../../user-guide/sql/index.rst)                 | SQL dialect reference                                  |
+| [Expression Functions](../../user-guide/sql/scalar_functions.md) | Scalar, aggregate, and window functions                |
 
 ### DataFusion: Examples & Source
 
@@ -6176,8 +6178,8 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 | [dataframe.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe.rs)                                 | Basic DataFrame operations           |
 | [dataframe_transformations.rs](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/dataframe_transformations.rs) | Examples from this guide             |
 | [expr_api.rs][`expr_api`]                                                                                                                | Complex expression building patterns |
-| [custom_datasource.rs](../../library-user-guide/custom-table-providers.md)                                                               | Building a `TableProvider`           |
-| [All Examples](../../../../datafusion-examples)                                                                                          | Complete example collection          |
+| [custom_datasource.rs](../../library-user-guide/custom-table-providers.md)                                                               | Building a [`TableProvider`]         |
+| [All Examples](https://github.com/apache/datafusion/tree/main/datafusion-examples)                                                       | Complete example collection          |
 
 ### DataFusion Ecosystem
 
@@ -6360,7 +6362,6 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 [`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.nvl.html
 [`replace()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.replace.html
 [`row_number()`]: https://docs.rs/datafusion/latest/datafusion/functions_window/row_number/fn.row_number.html
-[`scalar_subquery()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.scalar_subquery.html
 [`stddev()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.stddev.html
 [`string_agg()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.string_agg.html
 [`substring()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.substring.html
@@ -6395,7 +6396,7 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 [`join`]: ../../user-guide/sql/select.md#join-clause
 [`left anti join`]: ../../user-guide/sql/select.md#left-anti-join
 [`left semi join`]: ../../user-guide/sql/select.md#left-semi-join
-[`left`]: ../../user-guide/sql/select.md#left-join
+[`sql_left`]: ../../user-guide/sql/select.md#left-join
 [`limit`]: ../../user-guide/sql/select.md#limit-clause
 [`natural join`]: ../../user-guide/sql/select.md#natural-join
 [`offset`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.OFFSET.html
@@ -6405,7 +6406,7 @@ Resources for going deeper on DataFusion DataFrame transformations, optimization
 [`to_date`]: ../../user-guide/sql/scalar_functions.md#to_date
 [`union`]: ../../user-guide/sql/select.md#union-clause
 [`where`]: ../../user-guide/sql/select.md#where
-[concepts]: ../concepts.md#mixing-sql-and-dataframes
+[concepts]: concepts.md#two-paths-to-the-same-plan-parser-vs-builder
 [`expr_api`]: ../../library-user-guide/working-with-exprs.md
 [explain usage]: ../../user-guide/explain-usage.md
 [predicate pushdown]: https://docs.rs/datafusion/latest/datafusion/physical_plan/filter_pushdown/struct.PushedDownPredicate.html

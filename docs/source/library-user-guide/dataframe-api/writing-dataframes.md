@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Writing and Executing DataFrames
+# Writing and Executing of DataFusion DataFrames
 
 **The final phase of the DataFrame lifecycle: from lazy plan to materialized results.**
 
@@ -1550,7 +1550,7 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 [`null`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html#method.null
 [`quote`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html#method.quote
 [`writerbuilder`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/csv/struct.WriterBuilder.html
-[predicate pushdown]: creating-dataframes.md#predicate-pushdown-filtering-at-source
+[predicate pushdown]: creating-dataframes.md
 [partitioned datasets]: schema-management.md#strategy-3-partitioned-datasets--pruning-with-listingtable
 [parquet-pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
 [parquet-pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
@@ -1642,7 +1642,6 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 [`.show_limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show_limit
 [`.to_string()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.to_string
 [`.cache()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.cache
-[`.create_physical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.create_physical_plan
 
 <!-- Write method references -->
 
@@ -1655,7 +1654,6 @@ Once registered, [`.write_table()`] works unchanged—your DataFrame code stays 
 [`.with_delimiter()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_delimiter
 [`.with_has_header()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_has_header
 [`.with_quote()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_quote
-[`.with_compression()`]: https://docs.rs/datafusion/latest/datafusion/config/struct.CsvOptions.html#method.with_compression
 
 <!-- Example references -->
 

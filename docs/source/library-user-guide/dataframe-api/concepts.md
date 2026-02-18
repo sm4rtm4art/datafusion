@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# DataFusion DataFrame Concepts
+# Concepts of DataFusion DataFrame API
 
 **What DataFrames are, where they live, and why they matter in the query engine landscape.**
 
@@ -25,14 +25,19 @@ Data-driven projects demand efficient processing of large, diverse datasets. Dat
 
 The DataFrame API's builder architecture, originated in the known python pandas library, makes it uniquely suited for programmatic query construction: readable, maintainable pipelines with dynamic filters, conditional logic, and seamless Rust integration. What the builder pattern can't express elegantly (complex window functions, CTEs), the SQL-API covers. And when Apache Arrows columnar OLAP processing isn't the right fit, DataFusion's `TableProvider` interface lets you integrate row-oriented systems with predicate pushdown.
 
-This guide explores the conceptual foundation: what a DataFrame _is_ (a `LogicalPlan` paired with a frozen `SessionState`), how it flows through the execution pipeline, and where DataFusion fits in the broader data systems landscape. For hands-on examples, see: [Create](creating-dataframes.md) → [Transform](transformations.md) → [Write](writing-dataframes.md).
+This documentation explores the conceptual foundation: what a DataFrame _is_ (a `LogicalPlan` paired with a frozen `SessionState`), how it flows through the execution pipeline, and where DataFusion fits in the broader data systems landscape. For hands-on examples, see:
+
+- [Create](creating-dataframes.md)
+- [Schema](schema-management.md)
+- [Transform](transformations.md)
+- [Write](writing-dataframes.md)
 
 > **Style Note:** <br>
 > DataFrame methods use `.method()` syntax (e.g., `.collect()`) to reflect chaining. Standalone functions use `func()` (e.g., `col()`), constructors use `Type::new()`. Rust types use `PascalCase` (e.g., `RecordBatch`).
 
 ```{contents}
-::local:
-::depth: 2
+:local:
+:depth: 2
 ```
 
 ## Introduction
@@ -41,7 +46,8 @@ This guide explores the conceptual foundation: what a DataFrame _is_ (a `Logical
 
 DataFusion provides two entry points to the same query engine: the **SQL-API** (SQL strings parsed via [`sqlparser`] with [configurable dialect]) and the **DataFrame-API** (a builder pattern constructing plans programmatically). Both compile to the same [`LogicalPlan`] and execute identically—the choice is about ergonomics, not performance. Throughout this documentation, we use PostgreSQL syntax when comparing the APIs—it's well documented, widely understood, and DataFusion's default semantics (NULL handling, sort order) closely follow PostgreSQL conventions.
 
-**But why a builder-API alongside a parser-based SQL-API?** <br>
+#### Datafram builder-API alongside a parser-based SQL-API?
+
 The builder pattern offers ergonomics that parser patterns like the SQL-API cannot match—readable pipelines that flow top-to-bottom, composable query fragments you can extract into functions and reuse, and Rust's type system catching schema errors at compile time. When your query depends on runtime conditions or maintainability matters as much as correctness, the builder pattern shines.
 
 These trade-offs—when to choose SQL, when to choose the DataFrame-API, and how to mix them freely—are explored in [Two Paths to the Same Plan](#two-paths-to-the-same-plan-parser-vs-builder) and [Mixing SQL and DataFrames](#mixing-sql-and-dataframes).
@@ -139,7 +145,7 @@ The diagram below traces the journey—from lazy plan to concrete results—and 
 
 ---
 
----
+(mixing-sql-and-dataframes)=
 
 ## Two Paths to the Same Plan: Parser vs Builder
 
@@ -266,8 +272,6 @@ Neither is "better"—they're tools for different situations. Since both compile
 
 ---
 
----
-
 ## SessionContext: The Entry Point for DataFrames
 
 **The [`SessionContext`] is your reproducible gateway to DataFusion**<br>
@@ -373,8 +377,6 @@ ExecutionPlan  ← Null handling semantics implemented here
   ↓ executes
 RecordBatches  ← Actual null values (bitmaps) in Arrow format
 ```
-
----
 
 ---
 
@@ -652,11 +654,11 @@ fn main() -> Result<()> {
 > - Null semantics: [PostgreSQL NULL Handling](https://www.postgresql.org/docs/current/functions-comparison.html) (DataFusion follows these conventions)
 > - Join null equality: [`NullEquality`]
 > - Sort API: [`DataFrame::sort()`], [PostgreSQL ORDER BY](https://www.postgresql.org/docs/current/queries-order.html)
-> - Practical patterns: [Transformations guide](transformations.md#dataframe-transformations)
+> - Practical patterns: [Transformations guide](transformations.md)
 
 ---
 
----
+(relationship-between-logicalplans-and-dataframes)=
 
 ## DataFrame Structure: LogicalPlan + SessionState
 
@@ -881,8 +883,6 @@ async fn main() -> Result<()> {
 >
 > - [Building Logical Plans](../building-logical-plans.md) — advanced [`LogicalPlanBuilder`] usage
 > - [`LogicalPlanBuilder` API docs][logicalplanbuilder] — full method reference
-
----
 
 ---
 
@@ -1215,7 +1215,7 @@ async fn main() -> Result<()> {
 > **Performance tip:** <br> > [`.explain(true, false)`][`.explain()`] shows the optimized logical plan; [`.explain(true, true)`][`.explain()`] adds runtime statistics (actually runs the query). Start with the plan, profile if needed. For more details, see [`.explain()` examples].
 
 **Data source matters:** <br>
-For in-memory data (like [`dataframe!]` a datafusion macro), optimizations focus on operation order and algorithm selection. For file-based sources (Parquet, CSV), additional optimizations kick in—predicate pushdown to skip row groups, projection pushdown to read only needed columns. See [Creation-Time Optimizations](creating-dataframes.md#creation-time-optimizations) for file-specific tuning.
+For in-memory data (like [`dataframe!]` a datafusion macro), optimizations focus on operation order and algorithm selection. For file-based sources (Parquet, CSV), additional optimizations kick in—predicate pushdown to skip row groups, projection pushdown to read only needed columns. See [Creating DataFrames: From Files](creating-dataframes.md#1-from-files) for file-specific tuning.
 
 **Execution-Level Optimizations** <br>
 
@@ -1327,8 +1327,6 @@ How DataFrames defer work until an action, why [`.clone()`] appears everywhere, 
 - [`DataFrame`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html) — struct reference
 - [`SessionContext`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html) — entry point
 - [`LogicalPlan`](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html) — plan structure
-
----
 
 ---
 
@@ -1455,8 +1453,6 @@ The following diagram shows how these concepts connect—multiple frontends feed
 
 ---
 
----
-
 ## Architectural Fit: When to Use DataFusion
 
 **The right tool for the right job—knowing DataFusion's sweet spot saves you from architectural dead-ends.**
@@ -1494,8 +1490,6 @@ DataFusion is a **query engine foundation** optimized for read-heavy, scan-orien
 
 **The OLAP sweet spot:** <br>
 DataFusion is optimized for read-heavy analytical queries where you scan large amounts of data, filter aggressively, and aggregate results. If your workload involves frequent small writes, point lookups, or requires sub-millisecond response times, a different architecture is likely a better fit.
-
----
 
 ---
 
@@ -1537,8 +1531,6 @@ Know what you want? Find the method here:
 
 > **SessionState matters**: <br>
 > Methods marked ⚠️ drop the snapshot. They're great for inspection, but to execute later use [`.into_parts()`] to preserve deterministic semantics (timestamps, timezone, config, UDF catalog). See "Re-use plan later" in the cheat-sheet for the safest way to extract and modify a plan.
-
----
 
 ---
 
@@ -1619,8 +1611,8 @@ Know what you want? Find the method here:
 
 [`.explain()` examples]: ../../user-guide/explain-usage.md
 [configuration]: ../../user-guide/configs.md#default-null-ordering
-[config-partitions]: ../../user-guide/configs.md#target_partitions
-[`target_partitions`]: ../../user-guide/configs.md#target_partitions
+[config-partitions]: ../../user-guide/configs.md
+[`target_partitions`]: ../../user-guide/configs.md
 
 <!-- Core Types (with backticks for inline code style) -->
 

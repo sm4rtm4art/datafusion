@@ -904,7 +904,7 @@ This guide is designed for community expansion. Each section has **Extension Poi
 
 1. Choose an Extension Point that matches your expertise
 2. Add working examples with clear explanations
-3. Submit a PR — see [CONTRIBUTING.md](../../../../CONTRIBUTING.md)
+<!-- 3. Submit a PR — see CONTRIBUTING.md in the repository root -->
 
 ---
 
