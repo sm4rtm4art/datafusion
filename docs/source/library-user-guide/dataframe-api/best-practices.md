@@ -816,6 +816,484 @@ Rules of thumb for `FairSpillPool` or `GreedyMemoryPool` sizing:
 
 ---
 
+<!--
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+X
+X    BEGINN THIGHTENING!  THIS PART IS FROM SCHEMA MANAGEMENT
+X
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+-->
+
+<!-- ==========================================================================
+     TODO: CONSOLIDATE SCHEMA EVOLUTION SECTIONS
+
+     Current structure (verbose, overlapping):
+       - ## Schema Reuse and Versioning
+         - ### The `TableProvider` Schema Contract
+         - ### Type Control with Macros and Literals
+       - ## Schema Evolution Patterns
+         - ### Common Evolution Scenarios (table)
+         - ### Pattern 1: Forward-Compatible Schema Design
+         - ### Pattern 2: Schema Adapter Layer
+         - ### Pattern 3: Schema Migration Testing
+         - ### Pattern 4: Handling Breaking Changes
+         - ### Execution Strategy & Common Pitfalls
+         - ### References
+
+     Proposed consolidated structure:
+       - ## Schema Evolution & Versioning
+         - ### Centralized Schema Patterns (from Schema Reuse intro)
+         - ### Common Evolution Scenarios (KEEP - the table)
+         - ### Evolution Best Practices (MERGE Pattern 1 + Pattern 3)
+         - ### Migration Patterns (MERGE Pattern 2 + Pattern 4)
+         - ### Reference
+           - TableProvider Schema Contract
+           - Type Control with Macros and Literals
+           - Further Reading links
+
+     Key changes:
+     1. Rename "## Schema Reuse and Versioning" to "## Schema Evolution & Versioning"
+     2. Keep centralized schemas code example
+     3. Keep the "Common Evolution Scenarios" table (it's excellent)
+     4. Merge Pattern 1 (Forward-Compatible) + Pattern 3 (Migration Testing)
+        -> "Evolution Best Practices" - focus on additive changes + testing
+     5. Merge Pattern 2 (Adapter Layer) + Pattern 4 (Breaking Changes)
+        -> "Migration Patterns" - focus on handling divergent/breaking schemas
+     6. Move "TableProvider Schema Contract" and "Type Control" to Reference subsection
+     7. Merge "Further Reading" section into Reference
+     ========================================================================== -->
+
+## Schema Reuse and Versioning
+
+**Centralized schemas prevent drift; explicit versioning tracks evolution.**
+
+Scattered schema definitions—inlined in readers, duplicated in tests—inevitably diverge. By centralizing schemas in a dedicated module and versioning them explicitly (v1, v2, v3), you create a single source of truth that all components reference. This makes schema changes visible in code review, enables compatibility testing between versions, and documents exactly which contract each pipeline component expects.
+
+```rust,ignore
+// schemas.rs - Single source of truth for all schemas
+use std::sync::Arc;
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+
+// v1 schema (baseline, backward‑compatible contract):
+//   id:        Int64, required
+//   name:      Utf8,  nullable
+//   email:     Utf8,  nullable
+pub fn customer_schema_v1() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("email", DataType::Utf8, true),
+    ]))
+}
+
+// v2 schema (adds created_at; remains backward compatible):
+//   id:         Int64, required
+//   name:       Utf8,  nullable
+//   email:      Utf8,  nullable
+//   created_at: Timestamp(Microsecond, "UTC"), required  <-- New field
+pub fn customer_schema_v2() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("email", DataType::Utf8, true),
+        Field::new("created_at", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), false),
+    ]))
+}
+
+fn main() {
+    // Usage: centralized schemas for reuse
+    let v1 = customer_schema_v1();
+    let v2 = customer_schema_v2();
+    println!("v1 has {} fields, v2 has {} fields", v1.fields().len(), v2.fields().len());
+
+    // Test validates against v1 compatibility
+    assert!(customer_schema_v2().field_with_name("id").is_ok());
+}
+```
+
+In practice, you would use these schemas with readers:
+
+```rust,ignore
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Demonstrate schema versioning concept
+    // In practice:
+    // let df_v1 = ctx.read_csv("customers_old.csv",
+    //     CsvReadOptions::new().schema(&customer_schema_v1())
+    // ).await?;
+    // let df_v2 = ctx.read_csv("customers_new.csv",
+    //     CsvReadOptions::new().schema(&customer_schema_v2())
+    // ).await?;
+
+    // When fusing v1 and v2 data:
+    // - Add missing columns with NULLs
+    // - Align types via cast_to
+    // - Use union_by_name for name-based alignment
+
+    Ok(())
+}
+```
+
+Version new schemas when fields change. Store version in metadata (`schema.metadata.insert("version", "2")`). Test that DataFrames match expected versions (see [Schema Validation](#schema-validation)). Document breaking changes in a migration guide.
+
+<!-- TODO: MOVE to "### Reference" subsection within consolidated "## Schema Evolution & Versioning" -->
+
+### The `TableProvider` Schema Contract
+
+When you implement a custom [`TableProvider`], its [`schema()`][tableprovider::schema] method is a strict contract. The optimizer, join planner, and union logic all rely on it being stable and consistent across every call. Violating this contract can lead to query failures or silent data corruption.
+
+| ✅ Best Practice                                                                       | ❌ Anti-Pattern                                                      |
+| :------------------------------------------------------------------------------------- | :------------------------------------------------------------------- |
+| Return the exact same [`SchemaRef`] on every call (cloning an `Arc<Schema>` is cheap). | Never change field order, types, or nullability between scans.       |
+| Define the schema once when the provider is created and store it.                      | Derive the schema dynamically from the underlying data on each call. |
+
+Example (standalone): capture one `SchemaRef` at construction and return clones on every call. In a real [`TableProvider`], [`.schema()`] would delegate to the stored `SchemaRef`.
+
+```rust,ignore
+use std::sync::Arc;
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+
+// Minimal, self-contained example showing a stable schema contract
+struct MySource {
+    schema: SchemaRef,
+}
+
+impl MySource {
+    fn new() -> Self {
+        let schema: SchemaRef = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new(
+                "created_at",
+                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+                false
+            ),
+        ]));
+        Self { schema }
+    }
+
+    // Stable across calls: always clone the stored SchemaRef
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
+fn main() {
+    let src = MySource::new();
+    let s1 = src.schema();
+    let s2 = src.schema();
+    assert_eq!(s1.as_ref(), s2.as_ref()); // same logical schema every time
+}
+```
+
+<!-- TODO: MOVE to "### Reference" subsection within consolidated "## Schema Evolution & Versioning" -->
+
+### Type Control with Macros and Literals
+
+The [`dataframe!`] macro infers types from Rust literals—integers default to `Int32`, not `Int64`—which breaks [`.union()`] and [`.join()`] when types don't match exactly. (See also: [DataFrame macro](./creating-dataframes.md#5-from-inline-data-using-the-dataframe-macro)) Either cast after creation or use typed arrays from the start:
+
+```rust,ignore
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::DataType;
+use datafusion::arrow::array::Int64Array;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Problem: inferred as Int32
+    let df = dataframe!("id" => [1, 2])?;
+
+    // Solution 1: Cast to match schema
+    let df = df.clone().with_column("id",
+        col("id").cast_to(&DataType::Int64, df.schema())?
+    )?;
+
+    // Solution 2: Use typed arrays
+    let _df = dataframe!(
+        "id" => Int64Array::from(vec![1_i64, 2_i64])
+    )?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+---
+
+## Schema Evolution Patterns
+
+**Schema evolution is the ongoing change of field names, types, and presence as data and systems grow.**
+In DataFusion, some changes are absorbed automatically (name‑aligned unions, file‑level schema merging) while others require explicit normalization. This section shows what typically changes, how DataFusion handles it, and why you should still normalize to a canonical schema to keep pipelines stable and predictable.
+
+### Common Evolution Scenarios
+
+| Change Type                 | Risk Level |             Example             | Migration Strategy                 |
+| :-------------------------- | :--------: | :-----------------------------: | :--------------------------------- |
+| **Add nullable column**     |    Low     |  New `customer_segment` field   | Automatic via [`.union_by_name()`] |
+| **Add non-nullable column** |   Medium   | Required `created_at` timestamp | Backfill or schema adapter         |
+| **Widen type**              |    Low     |        `Int32` → `Int64`        | Automatic cast in readers          |
+| **Narrow type**             |    High    |        `Int64` → `Int32`        | Validate then explicit cast        |
+| **Rename column**           |    High    |    `custId` → `customer_id`     | Adapter layer with aliases         |
+| **Remove column**           |   Medium   |      Drop deprecated field      | [`.select()`] to exclude           |
+| **Change semantics**        |    High    |       `amount` USD → EUR        | Migration script required          |
+
+Guidance:
+
+- **Iterative ingestion**: align types with [`.cast_to()`] and merge shape with [`.union_by_name()`].
+- **Self‑describing formats**: rely on automatic merge, then normalize via [`.select()`] and `.cast_to()`.
+- **Renames/semantic shifts**: add an adapter layer until upstream and downstream agree.
+
+Rules of thumb:
+
+- **Prefer additive and widening changes**; add new fields as nullable.
+- **Avoid in‑place renames**; publish aliases during transition.
+- **Keep a canonical schema** and validate against it (see [Schema Reuse and Versioning](#schema-reuse-and-versioning), [Schema Validation](#schema-validation)).
+
+See also: [Handling Missing Data & Nullability](#handling-missing-data--nullability), [Automatic Schema Merging for File Sources](#automatic-schema-merging-for-file-sources), [Performance Considerations](#performance-considerations).
+
+<!-- TODO: MERGE with Pattern 3 (Migration Testing) into "### Evolution Best Practices" -->
+
+### Pattern 1: Forward-Compatible Schema Design
+
+Design schemas that can evolve without breaking existing readers or writers. By adding new fields as nullable and widening types (e.g., `Int32 → Int64` ), you preserve backward compatibility—old data remains valid and old queries continue to work, while new code can leverage the enhanced schema. This approach keeps pipelines stable as requirements grow, avoiding the cost and risk of rewriting historical data.
+
+```rust,ignore
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use std::sync::Arc;
+
+// V1: Initial schema
+pub fn orders_schema_v1() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("customer_id", DataType::Int64, false),
+        Field::new("amount", DataType::Decimal128(19, 2), false),
+    ]))
+}
+
+// V2: Add optional columns (backward compatible)
+pub fn orders_schema_v2() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("customer_id", DataType::Int64, false),
+        Field::new("amount", DataType::Decimal128(19, 2), false),
+        Field::new("region", DataType::Utf8, true),
+        Field::new("created_at", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), true),
+    ]))
+}
+
+// V3: Widen precision (backward compatible)
+pub fn orders_schema_v3() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("customer_id", DataType::Int64, false),
+        Field::new("amount", DataType::Decimal128(38, 9), false),
+        Field::new("region", DataType::Utf8, true),
+        Field::new("created_at", DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), true),
+    ]))
+}
+
+fn main() {
+    let v1 = orders_schema_v1();
+    let v2 = orders_schema_v2();
+    let v3 = orders_schema_v3();
+    println!("v1: {} fields, v2: {} fields, v3: {} fields",
+        v1.fields().len(), v2.fields().len(), v3.fields().len());
+}
+```
+
+<!-- TODO: MERGE with Pattern 4 (Breaking Changes) into "### Migration Patterns" -->
+
+### Pattern 2: Schema Adapter Layer
+
+When source schemas diverge—legacy systems use `custId` vs. `customer_id`, or decimal precision drifts from `Decimal128(19,2)` to `Decimal128(38,9)`—a schema adapter normalizes variants before they reach your core logic. By inspecting the incoming schema and applying targeted renames ([`.alias()`]) and type casts ([`.cast_to()`]), you isolate schema churn at the pipeline's edge. Upstream systems evolve at different paces while your queries work against a single, stable contract.
+
+```rust,ignore
+use datafusion::prelude::*;
+use datafusion::arrow::datatypes::DataType;
+use datafusion::error::Result;
+
+/// Adapter that normalizes various legacy schemas to current canonical schema
+async fn normalize_orders(df: DataFrame) -> Result<DataFrame> {
+    let schema = df.schema();
+
+    // Detect schema version and adapt accordingly
+    let normalized = if schema.field_with_name("custId").is_ok() {
+        // Legacy schema: rename and cast
+        df.select(vec![
+            col("orderId").alias("order_id"),
+            col("custId").cast_to(&DataType::Int64, schema)?.alias("customer_id"),
+            col("amt").cast_to(&DataType::Decimal128(38, 9), schema)?.alias("amount"),
+        ])?
+
+    } else if schema.field_with_name("customer_id").is_ok() {
+        // Modern schema: just ensure types are correct
+        df.select(vec![
+            col("order_id"),
+            col("customer_id").cast_to(&DataType::Int64, schema)?,
+            col("amount").cast_to(&DataType::Decimal128(38, 9), schema)?,
+        ])?
+    } else {
+        return Err(datafusion::error::DataFusionError::Plan(
+            "Unrecognized orders schema".to_string()
+        ));
+    };
+
+    Ok(normalized)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Modern schema example
+    let df = dataframe!(
+        "order_id" => [1001_i64],
+        "customer_id" => [42_i64],
+        "amount" => [9.99]
+    )?;
+
+    let normalized = normalize_orders(df).await?;
+    normalized.show().await?;
+    Ok(())
+}
+```
+
+<!-- TODO: MERGE with Pattern 1 (Forward-Compatible) into "### Evolution Best Practices" -->
+
+### Pattern 3: Schema Migration Testing
+
+Seemingly harmless schema edits—dropping a field, narrowing a type, tightening nullability—can break pipelines or corrupt data. Guard against this with backward‑compatibility tests. For each new version, verify:
+
+1. **Consistancy** every v1 field still exists in v2
+2. **Types** are identical or widened (e.g., `Int32 → Int64`, `Decimal(19,2) → Decimal(38,9)`)
+3. **Bullability** does not tighten (nullable → required is forbidden; required → nullable is safe).
+
+These checks encode additive/widening evolution and catch regressions early (see also [avro-evolution], [kleppmann]).
+
+```rust,ignore
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use std::sync::Arc;
+
+fn orders_schema_v1() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("customer_id", DataType::Int64, false),
+    ]))
+}
+
+fn orders_schema_v2() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("customer_id", DataType::Int64, false),
+        Field::new("region", DataType::Utf8, true),  // New nullable field
+    ]))
+}
+
+fn is_widening(from: &DataType, to: &DataType) -> bool {
+    use DataType::*;
+    matches!(
+        (from, to),
+        (Int8, Int16 | Int32 | Int64) |
+        (Int16, Int32 | Int64) |
+        (Int32, Int64) |
+        (Float32, Float64)
+    )
+}
+
+fn main() {
+    let v1 = orders_schema_v1();
+    let v2 = orders_schema_v2();
+
+    // Verify backward compatibility: all v1 fields exist in v2
+    for v1_field in v1.fields() {
+        let v2_field = v2.field_with_name(v1_field.name())
+            .expect(&format!("Field '{}' missing in v2", v1_field.name()));
+
+        assert!(
+            v2_field.data_type() == v1_field.data_type() ||
+            is_widening(v1_field.data_type(), v2_field.data_type()),
+            "Type changed for '{}'", v1_field.name()
+        );
+    }
+    println!("Schema v2 is backward compatible with v1");
+}
+```
+
+<!-- TODO: MERGE with Pattern 2 (Adapter Layer) into "### Migration Patterns" -->
+
+### Pattern 4: Handling Breaking Changes
+
+**Use a multi-phase migration to safely roll out incompatible schema changes.**
+
+Some changes are inherently breaking—renaming core fields, dropping columns, or narrowing types. A “big bang” cutover is risky and hard to roll back. A staged migration protects downstream consumers with a no‑downtime path, clear observability, and a deterministic rollback plan (see also [avro-evolution], [kleppmann]).
+
+**Phase 1: Dual Writing**
+
+```rust,ignore
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::dataframe::DataFrameWriteOptions;
+
+// Write data in both old and new formats during the transition
+async fn write_dual_format(df: DataFrame) -> Result<()> {
+    // Write v1 format for old consumers (minimal, stable contract)
+    let v1_df = df.clone().select(vec![
+        col("order_id"),
+        col("customer_id"),
+        col("amount"),
+    ])?;
+    // v1_df.write_parquet("data/v1/orders", DataFrameWriteOptions::default()).await?;
+
+    // Write v2 format for new consumers
+    // df.write_parquet("data/v2/orders", DataFrameWriteOptions::default()).await?;
+
+    // Demonstrate the pattern compiles
+    let _ = v1_df;
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let df = dataframe!(
+        "order_id" => [1_i64],
+        "customer_id" => [42_i64],
+        "amount" => [9.99],
+        "region" => ["WEST"]
+    )?;
+    write_dual_format(df).await?;
+    Ok(())
+}
+```
+
+**Phase 2: Migration and Validation**
+
+- Deploy new code that reads from v2.
+- Keep v1 available as a fallback.
+- Monitor v1/v2 read volumes, error rates, and data parity.
+
+**Phase 3: Cleanup**
+
+- Remove v1 read paths and decommission dual‑writing.
+- Archive or delete v1 data.
+
+### Execution Strategy & Common Pitfalls
+
+| ✅ Best Practices                                                   | ❌ Common Pitfalls                                                                                                 |
+| :------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------- |
+| Use feature flags to canary the new schema, then broaden rollout.   | “Big bang” cutovers without a dual‑writing phase and a tested rollback plan.                                       |
+| Backfill v2 so consumers see a consistent historical view.          | Relying on silent positional unions in SQL; prefer name‑aligned [`.union_by_name()`] with explicit casts/defaults. |
+| Define success metrics (error rates, data parity) before you begin. | Failing to coordinate timelines and impact with downstream teams.                                                  |
+
+<!--
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+X
+X    END THIGHTENING!
+X
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+-->
+
+---
+
+---
+
 ## Robust Execution
 
 **Production-ready DataFrame execution requires careful attention to errors, observability, and resource limits.** This section covers patterns for building reliable, observable, and maintainable DataFrame pipelines.
@@ -1855,14 +2333,12 @@ DataFusion excels at data-level validation—checking ranges, detecting duplicat
 **Use external validators when you encounter:**
 
 1. **Complex format validation** that requires parsing algorithms:
-
    - Email addresses, phone numbers, URLs
    - Financial identifiers (IBAN, BIC, credit card numbers)
    - Geographic data (postal codes, coordinates)
    - Industry standards (ISBN, VIN, MAC addresses)
 
 2. **Business rule engines** that maintain state across records:
-
    - Order workflow state machines
    - Approval chain validation
    - Complex discount eligibility rules
