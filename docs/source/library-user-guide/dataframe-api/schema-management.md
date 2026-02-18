@@ -23,7 +23,7 @@
 
 Schema management defines the structural contract of your data—names, types, and nullability—as it flows through DataFusion. Explicit schemas are critical for both correctness and performance, enabling the optimizer to push down predicates, select vectorized kernels, and prevent silent schema drift. You manage this contract via the [`DFSchema`] API, which wraps underlying Arrow types with the query-planning context needed for robust, predictable execution.
 
-> **Style Note:** <br>
+> **Methodes Style Note:** <br>
 > In this guide, method notation follows a consistent pattern: DataFrame methods use `df.method()` (for example, `df.select(...)`), DFSchema methods use `df.schema().method()` (for example, `df.schema().fields()`), and associated functions use `DFSchema::method()` (for example, `DFSchema::try_from(...)`). Standalone functions use `function()` (for example, `col()`), and constructors use `Type::new()` (for example, `SessionContext::new()`).
 
 ```{contents}
@@ -31,7 +31,13 @@ Schema management defines the structural contract of your data—names, types, a
 :depth: 2
 ```
 
-## Where Schemas Come From
+## Introduction
+
+**Schema management is the core of DataFusion's query planning and execution engine.**
+
+DataFusion uses the term "schema" for four distinct concepts. They fall into two layers:
+
+### Where Schemas Come From
 
 **A schema is the structural contract of your data—it defines column names, types, and constraints that enable the query engine to plan and execute efficiently.**
 
@@ -122,11 +128,13 @@ DataFusion uses the term "schema" for four distinct concepts. They fall into two
 | **Arrow Schema** ([`Schema`])       | The generic columnar schema from Apache Arrow. Defines field names, data types, and nullability. Knows nothing about table names or query context. | [`TableProvider::schema()`] returns `SchemaRef` |
 | **Arrow SchemaRef** ([`SchemaRef`]) | Simply `Arc<Schema>`—a reference-counted pointer for passing schemas cheaply between functions without cloning.                                    | `df.schema().inner()` returns `&SchemaRef`      |
 
-> **Why `DFSchema` instead of Arrow's `Schema`?** <br>
-> Arrow's `Schema` describes _data_. `DFSchema` describes the _plan_—it adds table qualifiers for column resolution during query planning. When you need the underlying Arrow schema, use [`.inner()`] (returns `&SchemaRef`) or [`.as_arrow()`] (returns `&Schema`).
+#### Why `DFSchema` instead of Arrow's `Schema`?
 
-> **Logical vs Physical Schema:** <br>
-> [`df.schema()`][`.schema()`] returns the **logical** schema—what the plan _expects_ to produce. The actual physical memory layout during execution (e.g., dictionary encoding for strings, or nullable flags adjusted by optimizer passes) may differ. This is handled transparently by the physical plan; you rarely need to worry about it unless implementing a custom [`TableProvider`].
+Arrow's `Schema` describes _data_. `DFSchema` describes the _plan_—it adds table qualifiers for column resolution during query planning. When you need the underlying Arrow schema, use [`.inner()`] (returns `&SchemaRef`) or [`.as_arrow()`] (returns `&Schema`).
+
+#### Logical vs Physical Schema:
+
+[`df.schema()`][`.schema()`] returns the **logical** schema—what the plan _expects_ to produce. The actual physical memory layout during execution (e.g., dictionary encoding for strings, or nullable flags adjusted by optimizer passes) may differ. This is handled transparently by the physical plan; you rarely need to worry about it unless implementing a custom [`TableProvider`].
 
 ### How Schemas are Determined
 
@@ -592,9 +600,9 @@ Now that you understand schema structure and type coercion, you're ready to work
 
 **Every DataFrame method that adds, removes, renames, or reshapes columns creates a new [`LogicalPlan`] node with its own [`DFSchema`]—the original DataFrame is never mutated.**
 
-This is the main interface for schema changes at the DataFrame level. All schema-modifying methods work through projections: they build a new plan whose output schema reflects the change. The underlying `DFSchema` is updated automatically—you never need to construct one by hand for these operations.
+This is the main interface for schema changes at the DataFrame level. Most schema-modifying methods (`.select()`, `.select_columns()`, `.drop_columns()`, `.with_column()`, `.with_column_renamed()`) build a new projection plan. Methods like [`.unnest_columns()`] use dedicated logical plan nodes, but still produce a new DataFrame with a new output schema. You never need to construct `DFSchema` manually for these operations.
 
-**SQL equivalent:** `SELECT expr AS name, ... FROM ...` (every schema change is a projection).
+**SQL equivalent:** Most changes map to `SELECT expr AS name, ... FROM ...`; nested reshaping maps closer to `UNNEST`-style operations.
 
 | Method                     | Signature                  | Schema Effect                            |
 | :------------------------- | :------------------------- | :--------------------------------------- |
@@ -715,7 +723,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Use [`.unnest_columns()`] to expand `List` or `Struct` columns into flat top-level columns.**
 
-This changes the schema by replacing the nested column with its inner fields (for `Struct`) or repeating rows for each element (for `List`). See [Strategy 4: Nested Data](#strategy-4-nested-data--structlistmap-modeling) for schema modeling details.
+This changes the schema by replacing the nested column with its inner fields (for `Struct`) or repeating rows for each element (for `List`). See [Strategy 4: Nested Data](#strategy-nested-data) for schema modeling details.
 
 ---
 
@@ -2132,15 +2140,13 @@ fn main() -> datafusion::error::Result<()> {
 
 ---
 
-                                              |
-
 ### References
 
 See also:
 
-- [Handling Missing Data & Nullability](#handling-missing-data--nullability)
-- [Automatic Schema Merging for File Sources](#automatic-schema-merging-for-file-sources)
-- [Performance Considerations](#performance-considerations)
+- [Handling Nullability in Transformations](#handling-nullability-in-transformations)
+- [Strategy 2: Self-Describing Formats](#strategy-self-describing-formats)
+- [Strategy 3: Partitioned Datasets](#strategy-partitioned-datasets)
 
 Further reading:
 

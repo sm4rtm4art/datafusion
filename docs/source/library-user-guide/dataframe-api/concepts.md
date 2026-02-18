@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# DataFrame Concepts
+# DataFusion DataFrame Concepts
 
 **What DataFrames are, where they live, and why they matter in the query engine landscape.**
 

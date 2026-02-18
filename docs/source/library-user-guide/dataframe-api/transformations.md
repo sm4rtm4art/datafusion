@@ -37,6 +37,8 @@ This guide compares the DataFrame API to DataFusion's [SQL API](../using-the-sql
 :depth: 2
 ```
 
+## Introduction
+
 Transformations allow you to shape, filter, enrich, and analyze your data through a series of composable, type-safe operations. Unlike SQL, where queries are often monolithic strings, DataFrames allow you to **build queries programmatically**. This approach shines when you need to:
 
 - **Chain operations** into readable, logical pipelines.

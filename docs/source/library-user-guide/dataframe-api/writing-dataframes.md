@@ -32,6 +32,8 @@ DataFusion uses **lazy evaluation**: all transformations ([`.filter()`], [`.sele
 :depth: 2
 ```
 
+## Introduction
+
 Unlike SQL clients where every query implicitly executes and displays results, DataFusion's Rust API gives you **explicit control** over the final phase. This design enables memory-conscious patterns: collect small results entirely, stream large datasets batch-by-batch, cache expensive computations for reuse, or write directly to storage without intermediate buffering.
 
 The following diagram illustrates where execution fits in the DataFrame architecture:
