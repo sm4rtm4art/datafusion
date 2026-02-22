@@ -25,8 +25,17 @@ Every query starts with data. Whether you're reading Parquet from S3, executing 
 
 In the [DataFrame lifecycle](./index.md#the-dataframe-lifecycle), creation is where you bind a data source to a query plan. The DataFrame doesn't execute yet—it's a recipe waiting to run. For the conceptual model, see [Concepts](./concepts.md). For what happens next: [Transform](./transformations.md) → [Write](./writing-dataframes.md).
 
-> **Style Note:** <br>
-> In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+:::{admonition} Style Note
+:class: note
+
+In this document, all code elements are highlighted with backticks.
+
+- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
+- standalone functions `method()` (e.g `col()`)
+- static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
+- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+
+:::
 
 ```{contents}
 :local:
@@ -462,47 +471,47 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Warning: Cloud Storage (S3, GCS, Azure)** <br>
-> DataFusion does not bundle cloud connectors by default. To use `s3://`, `gs://`, or `az://` paths, you must first register the corresponding `ObjectStore` with your `SessionContext`.
->
-> <details>
-> <summary><strong>Quick Start: S3 Registration</strong></summary>
->
-> ```rust,no_run
-> use std::sync::Arc;
->
-> use datafusion::error::Result;
-> use datafusion::execution::object_store::ObjectStoreUrl;
-> use datafusion::object_store::ObjectStore;
-> use datafusion::prelude::*;
->
-> #[tokio::main]
-> async fn main() -> Result<()> {
->     // no_run: requires configuring a cloud object store (credentials, network, etc.)
->     let ctx = SessionContext::new();
->
->     // Create an object store implementation for your cloud provider.
->     // For a complete S3 setup (AmazonS3Builder, credentials), see:
->     // https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/query-aws-s3.rs
->     let store: Arc<dyn ObjectStore> = todo!();
->
->     // Register `s3://<bucket>` (or `gs://...`, `az://...`) before reading.
->     let url = ObjectStoreUrl::parse("s3://my-bucket")?;
->     ctx.runtime_env().register_object_store(url.as_ref(), store);
->
->     let df = ctx
->         .read_parquet("s3://my-bucket/data.parquet", ParquetReadOptions::default())
->         .await?;
->
->     // Execute with an action such as:
->     // df.collect().await?;
->     Ok(())
-> }
-> ```
->
-> </details>
->
-> See [**Advanced: Object Store Configuration**](dataframes-advance.md#object-store-configuration) for setup details.
+**Warning: Cloud Storage (S3, GCS, Azure)** <br>
+DataFusion does not bundle cloud connectors by default. To use `s3://`, `gs://`, or `az://` paths, you must first register the corresponding `ObjectStore` with your `SessionContext`.
+
+<details>
+<summary><strong>Quick Start: S3 Registration</strong></summary>
+
+```rust,no_run
+use std::sync::Arc;
+
+use datafusion::error::Result;
+use datafusion::execution::object_store::ObjectStoreUrl;
+use datafusion::object_store::ObjectStore;
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // no_run: requires configuring a cloud object store (credentials, network, etc.)
+    let ctx = SessionContext::new();
+
+    // Create an object store implementation for your cloud provider.
+    // For a complete S3 setup (AmazonS3Builder, credentials), see:
+    // https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/query-aws-s3.rs
+    let store: Arc<dyn ObjectStore> = todo!();
+
+    // Register `s3://<bucket>` (or `gs://...`, `az://...`) before reading.
+    let url = ObjectStoreUrl::parse("s3://my-bucket")?;
+    ctx.runtime_env().register_object_store(url.as_ref(), store);
+
+    let df = ctx
+        .read_parquet("s3://my-bucket/data.parquet", ParquetReadOptions::default())
+        .await?;
+
+    // Execute with an action such as:
+    // df.collect().await?;
+    Ok(())
+}
+```
+
+</details>
+
+See [**Advanced: Custom Data Sources**](dataframes-advance.md#custom-data-sources) for setup details.
 
 ---
 

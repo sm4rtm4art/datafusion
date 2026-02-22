@@ -32,8 +32,17 @@ This documentation explores the conceptual foundation: what a DataFrame _is_ (a 
 - [Transform](transformations.md)
 - [Write](writing-dataframes.md)
 
-> **Style Note:** <br>
-> DataFrame methods use `.method()` syntax (e.g., `.collect()`) to reflect chaining. Standalone functions use `func()` (e.g., `col()`), constructors use `Type::new()`. Rust types use `PascalCase` (e.g., `RecordBatch`).
+:::{admonition} Style Note
+:class: note
+
+In this document, all code elements are highlighted with backticks.
+
+- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
+- standalone functions `method()` (e.g `col()`)
+- static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
+- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+
+:::
 
 ```{contents}
 :local:

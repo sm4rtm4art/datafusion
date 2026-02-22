@@ -17,20 +17,41 @@
   under the License.
 -->
 
+# Transformations with DataFrame API
+
+<!-- TODO: Diskuss Mayor refractoring!
+
+Way to much content!
+
+- every mayor Methods (join, merge, filter..) As individuall document.
+- Concept part adatping
+-  Futher ideas: ???
+
+>
+
+
 <!-- TODO:
 - Add encoding https://docs.rs/datafusion/latest/datafusion/functions/encoding/index.html
 - nested functions https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html ,
 -  maybe even datetime (https://docs.rs/datafusion/latest/datafusion/functions/datetime/index.html)  -->
 
-# Transformations with DataFrame API
-
 **The “life” phase of the DataFrame lifecycle: build and refine a lazy query plan.**
 
-Transformations are where you shape and analyze data: once you [create](./creating-dataframes.md) a DataFrame, you can filter, select, join, aggregate, sort, and enrich data by composing methods that build a [`LogicalPlan`]. In the [DataFrame lifecycle metaphor](./index.md#the-dataframe-lifecycle), this is the "life" phase—execution and persistence happen later (see [Writing & Executing](./writing-dataframes.md)).
+Transformations are where you re-shape and analyze data: once you [create](./creating-dataframes.md) a DataFrame, you can filter, select, join, aggregate, sort, and enrich data by composing methods that build a [`LogicalPlan`]. In the [DataFrame lifecycle metaphor](./index.md#the-dataframe-lifecycle), this is the "life" phase—execution and persistence happen later (see [Writing & Executing](./writing-dataframes.md)).
 
 This guide compares the DataFrame API to DataFusion's [SQL API](../using-the-sql-api.md). Both compile to the same [`LogicalPlan`], so the choice is primarily about ergonomics: DataFrames shine for programmatic composition and IDE tooling; SQL shines for concise, declarative queries and portability. For the conceptual model, see [DataFrame Concepts](./concepts.md#introduction).
 
-> **Style Note:** In this guide, all code elements are highlighted with backticks. DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API. This distinguishes them from standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`). Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+:::{admonition} Style Note
+:class: note
+
+In this document, all code elements are highlighted with backticks.
+
+- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
+- standalone functions `method()` (e.g `col()`)
+- static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
+- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+
+:::
 
 ```{contents}
 :local:
@@ -79,6 +100,10 @@ For a deeper dive, see:
 
 For most data transformations, the choice between SQL-API and DataFrame-APIs is primarily about ergonomics—both produce identical execution plans. However, the DataFrame API is more than just "SQL with different syntax." The DataFrame API is a programmatic **builder** for query plans, whereas the SQL API is a declarative **parser** for query strings. Research on [DataFrame Algebra][dataframe algebra] shows that the DataFrame paradigm offers a distinct way of _expressing_ data transformations. These patterns were established by the [pandas library][pandas] and continuously refined by projects like [Apache Spark] for efficient parallel, multi-node computation.
 
+---
+
+<!--TODO: SHORTEN AND REBASE IN CONCPTS -->
+
 ## API Ergonomics: DataFrame vs SQL
 
 **The DataFusion DataFrame-API and SQL-API share the same execution engine—but the _experience_ of writing them is fundamentally different.**
@@ -101,7 +126,9 @@ This table maps SQL operations to their DataFrame equivalents. Methods marked **
 | **Distinct**    |   [`DISTINCT`][`select`]   |             [`.distinct()`]              | Removes duplicate rows based on all columns.                                                |
 | **Distinct**    | [`DISTINCT ON`] (Postgres) |            [`.distinct_on()`]            | **Unique**: Deduplicates based on specific columns, keeping the "first" row per sort order. |
 
-> **Note:** While you can mix SQL and DataFrames (see [Concepts](concepts.md)), mastering these native methods unlocks the full power of programmatic data manipulation.
+:::{note}
+While you can mix SQL and DataFrames (see [Concepts](concepts.md)), mastering these native methods unlocks the full power of programmatic data manipulation.
+:::
 
 ### The Methodical Differences: Why DataFrames Feel Different
 
@@ -122,6 +149,8 @@ Consider building a search API where filters depend on user input:
 **SQL approach** — string concatenation:
 
 ```rust
+use datafusion::prelude::*;
+
 fn main() {
     let filter_department: Option<&str> = Some("Sales");
 
@@ -131,6 +160,23 @@ fn main() {
     }
 }
 ```
+
+<!--  SPHINX CODE WITH EMPHASIZING THE CODE (DON'T GET TESTED)
+```{code-block} rust
+:caption: **SQL approach** — string concatenation:
+:emphasize-lines: 5
+use datafusion::prelude::*;
+
+fn main() {
+    let filter_department: Option<&str> = Some("Sales");
+
+    let mut query = "SELECT * FROM employees WHERE 1=1".to_string();
+    if let Some(dept) = filter_department {
+        query.push_str(&format!(" AND department = '{}'", dept));
+    }
+}
+```
+-->
 
 This pattern has three problems:
 
@@ -156,6 +202,28 @@ async fn main() -> datafusion::error::Result<()> {
     Ok(())
 }
 ```
+
+<!--  SPHINX CODE WITH EMPHASIZING THE CODE (DON'T GET TESTED)
+
+```{code-block} rust
+:caption: **DataFrame approach** — type-safe, composable:
+:emphasize-lines: 10
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let employees_df = dataframe!("department" => ["Sales", "Engineering"])?;
+    let filter_department: Option<&str> = Some("Sales");
+
+    let mut result = employees_df;
+    if let Some(dept) = filter_department {
+        result = result.filter(col("department").eq(lit(dept)))?;
+    }
+    result.show().await?;
+    Ok(())
+}
+```
+-->
 
 Values pass through [`lit()`], never interpolated into strings — injection-proof by design. The optimizer automatically combines multiple [`.filter()`] calls into a single predicate.
 
@@ -271,13 +339,19 @@ If you know SQL, you already know _what_ these operations do. The difference is 
 
 <!--TODO: References !-->
 
-> **Going deeper:** For comprehensive method documentation, see [docs.rs]. For SQL semantics, refer to [PostgreSQL docs] or [Spark SQL documentation][spark docs].
+:::{admonition} Going deeper
+:class: tip
+
+For comprehensive method documentation, see [docs.rs]. For SQL semantics, refer to [PostgreSQL docs] or [Spark SQL documentation][spark docs].
+:::
 
 Rather than covering each operation in isolation, we'll demonstrate them together in a realistic **data cleaning workflow** — the kind of pipeline you'd actually build. This approach shows how DataFrame **ergonomics** shine: operations like [`.describe()`] give you summary statistics in one line, while SQL would require multiple aggregations (see below) and many more.
 
 Along the way, you'll see **method chaining** in action — more on that pattern in [Advanced DataFrame Patterns](#advanced-dataframe-patterns). For a full comparison of when to use DataFrames vs SQL, see [Finding Balance](#finding-balance-when-to-use-which) above.
 
 <!-- TODO moeve to the user guide Dataframes.md -->
+
+<!-- TODO:  EXTRA SUBFILE -->
 
 ## Deep Dive: Transformation Reference
 
@@ -294,7 +368,8 @@ Use this section when you know _what_ operation you need but want to understand 
 
 _For operations unique to DataFrames (no SQL equivalent), see [DataFrame-Unique Methods](#dataframe-unique-methods)._
 
-**Jump to:**
+:::{admonition}**Jump to:**
+:class: seealso
 
 | Data Shaping                                                  | Filtering & Combining                               | Advanced                              |
 | ------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------- |
@@ -302,7 +377,12 @@ _For operations unique to DataFrames (no SQL equivalent), see [DataFrame-Unique 
 | [Aggregation](#aggregation-patterns)                          | [Joins](#when-dataframes-collide-join-patterns)     | [Subqueries](#subqueries)             |
 | [Sorting and Limiting](#sorting-and-limiting)                 | [Set Operations](#set-operations-and-deduplication) | [Reshaping Data](#reshaping-data)     |
 
-### Selection and Projection Mastery
+:::
+
+---
+
+<!-- TODO: PLACE IN EXTRA SUBFILE
+## Selection and Projection Mastery
 
 **Projection controls the shape of your output—choosing which columns to keep, computing derived values, and reducing memory footprint by discarding what you don't need.**
 
@@ -318,13 +398,33 @@ col_a + col_b AS col_sum
 FROM table
 ```
 
-> **Trade-off: DataFrame vs SQL**
->
-> - **DataFrame shines:** Type-safe column references catch typos at compile time; programmatic column selection from schema; projection pushdown happens automatically
-> - **SQL shines:** Familiar [`SELECT`] syntax; more readable for simple projections; [`SELECT *`][`select`] for quick exploration
+<!--  SPHINX CODE WITH EMPHASIZING THE CODE (DON'T GET TESTED)
 
-**Performance note:**
-<br> Projection is where **columnar vs row-based [`TableProvider`]** differ most — columnar sources (i.e. Parquet, Delta Lake ...) read only requested columns, while row-based sources (i.e. Postgres, MySQL, Oracle...) read full rows and discard unwanted columns during transfer.
+```{code-block} sql
+:caption: **SQL equivalent:**
+:emphasize-lines: 0
+SELECT
+    col_a,
+    col_b AS col_b_renamed,
+    col_a + col_b AS col_sum
+FROM table
+```
+-->
+<!-->
+
+:::{admonition} **Trade-off: DataFrame vs SQL**
+:class: important
+
+- **DataFrame shines:** Type-safe column references catch typos at compile time; programmatic column selection from schema; projection pushdown happens automatically
+- **SQL shines:** Familiar [`SELECT`] syntax; more readable for simple projections; [`SELECT *`][`select`] for quick exploration
+
+:::
+
+:::{admonition} **Performance note:**
+:class: important
+
+Projection is where **columnar vs row-based [`TableProvider`]** differ most — columnar sources (i.e. Parquet, Delta Lake ...) read only requested columns, while row-based sources (i.e. Postgres, MySQL, Oracle...) read full rows and discard unwanted columns during transfer.
+:::
 
 #### Basic Selection
 
@@ -606,13 +706,24 @@ async fn main() -> datafusion::error::Result<()> {
 
 This makes SQL expressions discoverable, testable, and traceable—rather than buried inline where they drift and multiply.
 
+-->
+
 ---
 
-### Filtering Excellence
+<!-- TODO : PLACE IN EXTRA SUBFILE
+
+## Filtering Excellence
 
 **Filtering controls which rows survive—applying predicates to discard irrelevant data early, before expensive joins or aggregations consume resources.**
 
-Where [projection](#selection-and-projection-mastery) shapes columns, filtering shapes rows. The [`.filter()`] method accepts any boolean expression built from these building blocks:
+<!-------------------Check Reference
+
+[projection](#selection-and-projection-mastery)
+--------------------------------------------->
+
+<!--
+
+Where projection shapes columns, filtering shapes rows. The [`.filter()`] method accepts any boolean expression built from these building blocks:
 
 | Predicate Type   | Methods                           | Example                                   |
 | :--------------- | :-------------------------------- | :---------------------------------------- |
@@ -634,7 +745,7 @@ Predicate pushdown ensures filters reach the data source, letting formats like P
 **Performance note:** <br>
 DataFusion excels at **predicate pushdown** — filters reach data sources so Parquet skips entire row groups and databases apply indexes. For highly selective point lookups (`WHERE id = 123`) on indexed row-based databases, the source DB may be faster. For complex multi-column predicates or full scans, DataFusion's vectorized evaluation wins.
 
-#### Basic Filtering
+### Basic Filtering
 
 **Start simple:** most filters are single-column comparisons. <br>
 Build the predicate with [`col()`] for the column, a comparison method like [`.gt()`], and [`lit()`] for the literal value. The pattern reads naturally: `col("price").gt(lit(100))` means "price greater than 100".
@@ -666,7 +777,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### Intermediate: Complex Predicates
+### Intermediate: Complex Predicates
 
 **Real-world filters combine multiple conditions.** <br>
 Chain predicates with [`.and()`] and [`.or()`], check set membership with [`in_list()`], match patterns with [`.like()`] (case-sensitive) or [`.ilike()`] (case-insensitive), and validate ranges with [`.between()`].
@@ -762,7 +873,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Operator precedence:** [`.and()`] binds tighter than [`.or()`], just like SQL. Use parentheses (method chaining order) to make intent explicit: `a.and(b).or(c)` means `(a AND b) OR c`.
 
-#### Advanced: Dynamic Filter Building
+### Advanced: Dynamic Filter Building
 
 **This is where DataFrames truly outshine SQL.** When filter criteria come from user input, configuration, or runtime logic, building queries dynamically showcases two critical safety advantages:
 
@@ -831,7 +942,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **Why [`unwrap_or_else`] instead of [`unwrap()`]?** <br>
 > Calling [`unwrap()`] on `None` panics—crashing your program. Here, [`reduce()`] returns `None` when the conditions vector is empty (no filters provided). Instead of panicking, [`unwrap_or_else`] lets us provide a fallback: [`lit(true)`][`lit()`] matches all rows. This is a common Rust pattern for gracefully handling "no input" cases.
 
-#### Anti-Pattern: Multiple Sequential Filters
+### Anti-Pattern: Multiple Sequential Filters
 
 **Each [`.filter()`] call creates a separate node in the logical plan.** While DataFusion's optimizer _can_ merge adjacent filters, combining them yourself is clearer, guarantees a single predicate evaluation, and makes your intent explicit.
 
@@ -875,7 +986,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Why it matters:** The fragmented version creates 3 filter nodes; the combined version creates 1. In complex queries, this compounds—affecting plan readability and optimization opportunities.
 
-#### Filter Troubleshooting
+### Filter Troubleshooting
 
 | Symptom          | Cause                                                                  | Fix                                                 |
 | :--------------- | :--------------------------------------------------------------------- | :-------------------------------------------------- |
@@ -883,9 +994,13 @@ async fn main() -> datafusion::error::Result<()> {
 | Nulls vanishing  | `col("x").eq(lit(false))` removes `NULL` too (`NULL = false` → `NULL`) | Add `.or(col("x").is_null())`                       |
 | Slow filter      | Predicate not pushed to data source                                    | Check [`.explain()`]—filter should be _inside_ scan |
 
+-->
+
 ---
 
-### Aggregation Patterns
+<!-- TODO: PLACE IN EXTRA SUBFILE
+
+## Aggregation Patterns
 
 **Aggregation collapses rows into summary statistics—transforming thousands of individual records into meaningful totals, averages, and counts that reveal patterns in your data.**
 
@@ -906,7 +1021,7 @@ Without grouping columns (empty `vec![]`), aggregations summarize the entire Dat
 **Performance note:** <br>
 Aggregations are **column-wise analytics** — exactly where DataFusion's columnar approach excels. Vectorized operations on compressed Arrow arrays outperform row-by-row processing for large datasets. However, if your data resides in a row-based database via [`TableProvider`] and you're doing a simple `COUNT(*)` or `SUM` on an indexed column, pushing the aggregation to the source may avoid data transfer entirely.
 
-#### Basic Aggregation
+### Basic Aggregation
 
 Group rows by one or more columns, then compute summary statistics for each group. Import aggregate functions from `datafusion::functions_aggregate::expr_fn` and use [`.alias()`] to name the output columns.
 
@@ -949,7 +1064,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Limitation:** The _result_ of [`.aggregate()`] contains only grouping columns and aggregated expressions—the `employee` column is gone. If you need it, include it in the group-by or aggregate it (e.g., `array_agg(col("employee"))`). The original DataFrame is immutable; `employees_df` still has all columns.
 
-#### Intermediate: Multi-Level Grouping and HAVING-Style Filtering
+### Intermediate: Multi-Level Grouping and HAVING-Style Filtering
 
 To replicate SQL's [`HAVING`] clause, chain [`.filter()`] _after_ [`.aggregate()`]—the filter sees the aggregated column names.
 
@@ -987,19 +1102,25 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Key insight:** In SQL, [`HAVING`] filters _after_ grouping while [`WHERE`] filters _before_ ([SQL clause order]). In DataFrames, method order achieves the same: `.filter().aggregate()` = WHERE, `.aggregate().filter()` = HAVING.
 
-#### Advanced: All Aggregate Functions
+### Advanced: All Aggregate Functions
 
 DataFusion provides a comprehensive set of aggregate functions beyond the basics. Import them from [`datafusion::functions_aggregate::expr_fn`][expr_fn] and combine multiple aggregations in a single [`.aggregate()`] call for efficiency.
 
-| Category    | Functions                                                                          |
-| :---------- | :--------------------------------------------------------------------------------- |
-| Basic       | [`count()`], [`sum()`], [`avg()`], [`min()`], [`max()`]                            |
-| Statistical | [`stddev()`], [`var_sample()`], [`var_pop()`], [`median()`], [`approx_median()`]\* |
-| Distinct    | [`count_distinct()`], [`approx_distinct()`]\*                                      |
-| Conditional | `sum(when(...).otherwise(...))` — aggregate only matching rows                     |
-| Collection  | [`array_agg()`], [`string_agg()`]                                                  |
+| Category    | Functions                                                                           |
+| :---------- | :---------------------------------------------------------------------------------- |
+| Basic       | [`count()`], [`sum()`], [`avg()`], [`min()`], [`max()`]                             |
+| Statistical | [`stddev()`], [`var_sample()`], [`var_pop()`], [`median()`], [`approx_median()`]\*  |
+| Distinct    | [`count_distinct()`], [`approx_distinct()`]\*                                       |
+| Conditional | [`sum(when(...).otherwise(...))`][`CaseBuilder`]\*\* — aggregate only matching rows |
+| Collection  | [`array_agg()`], [`string_agg()`]                                                   |
 
-_\*Approximate functions_ use probabilistic algorithms (e.g., [HyperLogLog] for [`approx_distinct()`]) that trade exactness for speed and memory. Use them on large datasets where exact results would be too expensive—typical error is <2%.
+**\*Approximate functions** use probabilistic algorithms (e.g., [HyperLogLog] for [`approx_distinct()`]) that trade exactness for speed and memory. Use them on large datasets where exact results would be too expensive—typical error is <2%.
+
+\*\* **conditional** -functions are available through the [`CaseBuilder`] struct.
+See::
+
+- [`when()`]
+- [`otherwise()`]
 
 The following example demonstrates several aggregate functions in a single call:
 
@@ -1044,7 +1165,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Tip:** See the full list of aggregate functions in the [Aggregate Functions Reference](../../user-guide/sql/aggregate_functions.md).
 
-#### Advanced: Aggregation Without Grouping
+### Advanced: Aggregation Without Grouping
 
 Pass an empty `vec![]` as the grouping columns to aggregate the entire DataFrame into a single row—equivalent to SQL without a `GROUP BY` clause.
 
@@ -1080,7 +1201,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### Aggregation Troubleshooting
+### Aggregation Troubleshooting
 
 | Symptom          | Cause                                        | Fix                                                                           |
 | :--------------- | :------------------------------------------- | :---------------------------------------------------------------------------- |
@@ -1088,7 +1209,7 @@ async fn main() -> datafusion::error::Result<()> {
 | Column not found | Non-aggregated columns disappear             | Include in group-by or aggregate (e.g., [`array_agg()`])                      |
 | Nulls skipped    | Aggregate functions ignore `NULL` by default | Use [`count(*)`][`count()`] for row count, or [`coalesce()`] to replace nulls |
 
-#### Further Reading
+### Further Reading
 
 **DataFusion Resources:**
 
@@ -1102,7 +1223,11 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
-### When DataFrames Collide: Join Patterns
+-->
+
+<!-- TODO: PLACE IN EXTRA SUBFILE
+
+## When DataFrames Collide: Join Patterns
 
 **Joins are the backbone of relational data processing—the operation that links separate tables into unified, queryable datasets by matching rows on shared keys.**
 
@@ -1119,18 +1244,18 @@ Master joins, and you unlock the full power of relational data processing.
 >
 > For most workflows, the DataFrame API is fully sufficient. Fall back to SQL for these edge cases.
 
-#### Why Joins Matter
+### Why Joins Matter
 
 Real-world data rarely lives in a single table. Customers are in one file, orders in another, products in a third. Joins let you:
 
 - **Enrich** records by attaching related data (customer name → their orders)
 - **Filter** by relationships (only customers _with_ orders, or _without_)
-- **Reconcile** datasets (find what's in A but not B, or in both)
+- **Reconcile** datasets (find what's in A but not B, in both)
 - **Validate** data quality—anti-joins reveal orphaned records (orders referencing non-existent customers), broken foreign keys, or rows dropped during ETL
 
 Without joins, you'd be stuck writing nested loops or manual lookups. DataFusion's join engine handles the matching efficiently—you describe _what_ to combine, not _how_.
 
-#### How Joins Work
+### How Joins Work
 
 Every join has three ingredients:
 
@@ -1158,7 +1283,7 @@ Since we cannot cover a tutorial for joins, please follow other tutorials as but
 | [PostgreSQL JOIN docs]          | Authoritative reference—DataFusion follows PostgreSQL semantics    |
 | [NULL handling in joins]        | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
 
-#### DataFrame API vs SQL
+### DataFrame API vs SQL
 
 **Two paths, same destination.** Both APIs compile to the same internal [`LogicalPlan`] and benefit from identical optimizer passes—the difference is _how_ you construct the query:
 
@@ -1220,55 +1345,55 @@ After optimization, both methods produce equivalent plans—**no performance dif
 
 Pick whichever reads better for your use case.
 
-> **Gotcha: [`.join_on()`] uses AND, not OR**
->
-> Multiple expressions passed to [`.join_on()`] are combined with [`AND`]:
->
-> ```rust
-> use datafusion::prelude::*;
->
-> #[tokio::main]
-> async fn main() -> datafusion::error::Result<()> {
->     let left = dataframe!("a" => [1], "b" => [2])?.alias("l")?;
->     let right = dataframe!("a2" => [1], "b2" => [2])?.alias("r")?;
->     // This means: a = a2 AND b = b2 (not OR!)
->     let joined = left.join_on(right, JoinType::Inner, [col("l.a").eq(col("r.a2")), col("l.b").eq(col("r.b2"))])?;
->     joined.show().await?;
->     Ok(())
-> }
-> ```
->
-> For [`OR`] logic, build a single expression:
->
-> ```rust
-> use datafusion::prelude::*;
->
-> #[tokio::main]
-> async fn main() -> datafusion::error::Result<()> {
->     let left = dataframe!("a" => [1], "b" => [2])?.alias("l")?;
->     let right = dataframe!("a2" => [1], "b2" => [2])?.alias("r")?;
->     // Match if EITHER a or b matches
->     let joined = left.join_on(right, JoinType::Inner, [col("l.a").eq(col("r.a2")).or(col("l.b").eq(col("r.b2")))])?;
->     joined.show().await?;
->     Ok(())
-> }
-> ```
+**Gotcha: [`.join_on()`] uses AND, not OR**
 
-> **Trade-off: DataFrame vs SQL**
->
-> | DataFrame API Advantages                                                                                                                                                   | SQL Advantages                                                        |
-> | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-> | **First-class Semi/Anti joins** — `JoinType::LeftAnti`, `LeftSemi` etc. are explicit; no workarounds needed (unlike PySpark where you'd use `LEFT JOIN` + `WHERE IS NULL`) | **Visual clarity** — Multi-table joins read naturally in SQL syntax   |
-> | **Type-safe composition** — Build joins conditionally with `if/else`; compiler catches column typos                                                                        | **Familiar syntax** — Standard `ON` clause understood by any SQL user |
-> | **Chained transformations** — `.join().filter().select()` flows naturally                                                                                                  | **Copy-paste ready** — Test queries directly in SQL tools             |
-> | **Complex conditions** — [`.join_on()`] accepts any `Expr`, not just column equality                                                                                       | **Self-documenting** — SQL is often readable by non-programmers       |
->
+Multiple expressions passed to [`.join_on()`] are combined with [`AND`]:
+
+```rust
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let left = dataframe!("a" => [1], "b" => [2])?.alias("l")?;
+    let right = dataframe!("a2" => [1], "b2" => [2])?.alias("r")?;
+    // This means: a = a2 AND b = b2 (not OR!)
+    let joined = left.join_on(right, JoinType::Inner, [col("l.a").eq(col("r.a2")), col("l.b").eq(col("r.b2"))])?;
+    joined.show().await?;
+    Ok(())
+}
+```
+
+For [`OR`] logic, build a single expression:
+
+```rust
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let left = dataframe!("a" => [1], "b" => [2])?.alias("l")?;
+    let right = dataframe!("a2" => [1], "b2" => [2])?.alias("r")?;
+    // Match if EITHER a or b matches
+    let joined = left.join_on(right, JoinType::Inner, [col("l.a").eq(col("r.a2")).or(col("l.b").eq(col("r.b2")))])?;
+    joined.show().await?;
+    Ok(())
+}
+```
+
+**Trade-off: DataFrame vs SQL**
+
+| DataFrame API Advantages                                                                                                                                                   | SQL Advantages                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **First-class Semi/Anti joins** — `JoinType::LeftAnti`, `LeftSemi` etc. are explicit; no workarounds needed (unlike PySpark where you'd use `LEFT JOIN` + `WHERE IS NULL`) | **Visual clarity** — Multi-table joins read naturally in SQL syntax   |
+| **Type-safe composition** — Build joins conditionally with `if/else`; compiler catches column typos                                                                        | **Familiar syntax** — Standard `ON` clause understood by any SQL user |
+| **Chained transformations** — `.join().filter().select()` flows naturally                                                                                                  | Copy-paste ready\*\* — Test queries directly in SQL tools             |
+| **Complex conditions** — [`.join_on()`] accepts any `Expr`, not just column equality                                                                                       | **Self-documenting** — SQL is often readable by non-programmers       |
+
 > **DataFusion-specific advantage:** Unlike many DataFrame libraries, DataFusion exposes the _full_ set of join types ([`LeftSemi`], [`RightSemi`], [`LeftAnti`], [`RightAnti`], [`LeftMark`], [`RightMark`]) as first-class operations—no need to emulate anti-joins with outer joins and null checks.
 
 **Performance note:** <br>
 For joins via row-based [`TableProvider`], consider whether the join should happen at the source. If both tables are in Postgres with foreign key indexes, the DB's index-backed joins may outperform transferring data to DataFusion. For cross-source joins or large analytical joins without indexes, DataFusion's hash/sort-merge algorithms excel.
 
-#### How Joins Execute
+### How Joins Execute
 
 Under the hood, DataFusion selects from [several join algorithms] based on your data:
 
@@ -1307,7 +1432,7 @@ All join algorithms leverage [Arrow]'s columnar format: instead of copying rows,
 >
 > The result: you describe _what_ to join, and the optimizer handles _how_—often matching or exceeding hand-tuned imperative code.
 
-#### Join Types at a Glance
+### Join Types at a Glance
 
 Joins control how rows from two tables are matched and combined. The key decisions are:
 
@@ -1330,7 +1455,7 @@ Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and 
 
 > **Learn more:** You may want to check out this source [Join tutorial] or [Semi and Anti joins explained].
 
-#### Basic: The Inner Join
+### Basic: The Inner Join
 
 This example establishes `customers_df` and `orders_df`—used throughout this section. Note: Carol has no orders, and order 104 has no matching customer (orphan).
 
@@ -1390,7 +1515,7 @@ If you need rows that exist in _both_ DataFrames (identical schemas, all columns
 >
 > As a sanity check, if you need to see what's _missing_, use [Outer Joins](#intermediate-leftrightfull-joins) (or other oposit joins like left vs. right) instead—`NULL` values reveal exactly where data gaps exist.
 
-#### Intermediate: Multi-Key Joins
+### Intermediate: Multi-Key Joins
 
 Join on multiple columns when a single key isn't enough to uniquely identify matches—common with composite keys or temporal constraints.
 
@@ -1503,7 +1628,7 @@ DataFusion's [`.join()`] preserves columns from both sides. When join keys share
 
 (intermediate-leftrightfull-joins)=
 
-#### Intermediate: Left/Right/Full Joins
+### Intermediate: Left/Right/Full Joins
 
 Where Inner Join keeps only the intersection (rows matching on both sides), **"partial" outer joins (left, right and full) preserve rows that don't match**—filling missing columns with `NULL`. This makes data gaps visible instead of silently dropping them.
 
@@ -1515,7 +1640,7 @@ Where Inner Join keeps only the intersection (rows matching on both sides), **"p
 
 Left Join handles ~90% of outer join use cases. Right Join can usually be rewritten as Left Join by swapping tables. Full Join is for reconciliation scenarios.
 
-##### Left Join — Enrich Your Primary Data
+#### Left Join — Enrich Your Primary Data
 
 Keep **all rows from the left table**, enrich with matching data from the right table. No match? Right-side columns become `NULL`.
 
@@ -1628,7 +1753,7 @@ Use [`.alias()`] to create two "views" of the same DataFrame, then join with qua
 - **Sequential comparison:** this_year.sales vs last_year.sales (join on product_id)
 - **Finding pairs:** "Which products are often bought together?" (order_items self-join)
 
-##### Right Join — Find Orphaned Records
+#### Right Join — Find Orphaned Records
 
 Keep all rows from the right table—useful for finding records that reference non-existent parents (like order 104 referencing customer 99).
 
@@ -1674,7 +1799,7 @@ async fn main() -> datafusion::error::Result<()> {
 **Tip:** <br>
 Right Join is just Left Join with swapped tables. `A.join(B, Right)` = `B.join(A, Left)`. Most teams use Left Join exclusively for consistency—put your "main" table first.
 
-##### Full Join — Complete Reconciliation
+#### Full Join — Complete Reconciliation
 
 Keep **all rows from both tables**. Where there's no match, fill the "other side" with NULLs. This is the only join that guarantees you see _everything_—matched, unmatched left, AND unmatched right.
 
@@ -1771,7 +1896,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 This pattern is invaluable for ETL pipelines, data migration validation, and debugging referential integrity issues.
 
-#### Intermediate: Semi and Anti Joins
+### Intermediate: Semi and Anti Joins
 
 **What makes them special?** <br>
 Semi and Anti joins are **filtering joins**—they filter the left table based on existence in the right table, but **never add columns** from the right table. This is fundamentally different from Inner/Left/Right/Full joins which combine data.
@@ -1789,7 +1914,7 @@ Semi and Anti joins are **filtering joins**—they filter the left table based o
 | Left Join + WHERE NULL     | Joins everything first, then filters                                | Anti join filters during join—more efficient                     |
 | `IN (SELECT ...)` subquery | Can be slower, harder to optimize                                   | Semi join is the optimized physical plan for `IN`                |
 
-##### LeftSemi — "Which Rows Have Matches?"
+#### LeftSemi — "Which Rows Have Matches?"
 
 Returns left rows that have **at least one match** in the right table. Even if a customer has 10 orders, they appear only once.
 
@@ -1847,7 +1972,7 @@ async fn main() -> datafusion::error::Result<()> {
 - Find products that have been sold (exist in order_items)
 - Filter to "things that are referenced somewhere"
 
-##### LeftAnti — "Which Rows Have No Matches?"
+#### LeftAnti — "Which Rows Have No Matches?"
 
 Returns left rows that have **zero matches** in the right table. The inverse of Semi join.
 
@@ -1904,7 +2029,7 @@ async fn main() -> datafusion::error::Result<()> {
 - Data cleanup: "Find records missing required relationships"
 - Complement of Semi: `Semi ∪ Anti = Full Left Table`
 
-##### Why Not Just Use Left Join + Filter?
+#### Why Not Just Use Left Join + Filter?
 
 A common question: "Can't I just do Left Join and filter for NULLs?"
 
@@ -1959,7 +2084,7 @@ Both produce the same result, but Anti join:
 
 > **Mark joins:** <br> > [`LeftMark`]/[`RightMark`] are used internally to decorrelate `EXISTS` subqueries. They return all rows from one side plus an extra boolean "mark" column indicating whether any match exists on the other side. Most DataFrame code won't use them directly, but you may see them in `EXPLAIN` plans for complex SQL with `EXISTS` predicates.
 
-#### Advanced: Multi-Way Joins
+### Advanced: Multi-Way Joins
 
 **Chain [`.join()`] calls to combine 3+ tables—each join produces a new DataFrame that feeds into the next.**
 
@@ -2035,7 +2160,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **Tip:** <br>
 > Use Left Joins at intermediate steps if you need to preserve unmatched rows (e.g., customers without payments).
 
-##### Join Order Matters
+#### Join Order Matters
 
 The order you chain joins affects both **readability** and **performance**. General principles:
 
@@ -2090,7 +2215,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **Performance tip:** <br>
 > The optimizer reorders joins when beneficial, but good initial ordering reduces planning overhead. Use [`.explain()`] to see the actual execution plan.
 
-##### Managing Column Proliferation
+#### Managing Column Proliferation
 
 Multi-way joins accumulate columns from every table. With each join, you get **all columns from both sides**—including duplicate key columns. Chain [`.select()`] at the end to keep only what you need:
 
@@ -2142,7 +2267,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **When SQL might be clearer:** <br>
 > Multi-way joins with 4+ tables can become hard to read as chained method calls. Consider [`SessionContext::sql()`] for complex [star-schema queries][databricks_star_schema] where SQL's visual structure helps.
 
-#### Advanced: Join with Complex Conditions
+### Advanced: Join with Complex Conditions
 
 Sometimes you need more than simple column equality. Range joins ("orders placed within 7 days of signup"), inequality predicates ("amount > threshold"), or compound logic ("match on id AND status = 'active'") require expressions that [`.join()`] can't express with just column names.
 
@@ -2199,7 +2324,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **Tip:** <br>
 > When using [`.join_on()`], column names may clash between tables. Use [`.alias()`] to qualify references: `col("customers.id")` vs `col("orders.id")`.
 
-##### The `filter` Argument on Outer Joins
+#### The `filter` Argument on Outer Joins
 
 The [`.join()`] method's fifth parameter is [`filter: Option<Expr>`][join_filter_param]—easy to overlook in the signature but powerful for outer joins. This filter has **subtle but important semantics**: it applies only to _matched_ rows, not to preserved unmatched rows.
 
@@ -2259,7 +2384,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **Also applies to [`.join_on()`]:** <br>
 > Since [`.join_on()`] is implemented as [`.join()`] with empty key lists and combined `on_exprs` as `filter`, the same semantics apply.
 
-#### Anti-Pattern: Accidental Cartesian Product
+### Anti-Pattern: Accidental Cartesian Product
 
 Empty join keys produce a **Cartesian product**—every left row paired with every right row. This is almost never intentional and can crash your query or exhaust memory.
 
@@ -2329,7 +2454,7 @@ If a join returns unexpectedly many rows, check your keys. An empty or mismatche
 **If you need a Cartesian product:** <br>
 Use SQL via [`ctx.sql("SELECT ... FROM a CROSS JOIN b")`][`sessioncontext::sql()`]. The DataFrame API has no `JoinType::Cross`—empty keys with `Inner` produces the same result but reads like a bug.
 
-#### Join Troubleshooting
+### Join Troubleshooting
 
 Joins can silently produce unexpected results. When something looks wrong, check these common issues:
 
@@ -2340,7 +2465,7 @@ Joins can silently produce unexpected results. When something looks wrong, check
 | **Missing columns** | Wrong column names after join, schema mismatch                            | Inspect schema: [`.schema()`] and use [`.alias()`] to qualify               |
 | **Wrong matches**   | Keys have different types (string vs int), encoding issues                | Compare types: `df.schema().field_with_name("key")?.data_type()`            |
 
-##### Sanity Check: Did the Join Drop Too Much Data?
+#### Sanity Check: Did the Join Drop Too Much Data?
 
 DataFusion doesn't have built-in join validation, but you can build a simple check to catch silent data loss:
 
@@ -2394,7 +2519,7 @@ async fn main() -> datafusion::error::Result<()> {
 | **LeftSemi** | ≤ 100% (filtered)      | 0% = no matches at all             |
 | **LeftAnti** | Complement of Semi     | 100% = nothing matched             |
 
-##### **Quick Debugging Steps**
+#### **Quick Debugging Steps**
 
 **Step 1:** Inspect inputs before joining
 
@@ -2544,7 +2669,7 @@ HashJoinExec: mode=Partitioned, join_type=Inner
 
 > **Pro tip:** Use `.explain(true, true)?` (analyze=true) to see actual row counts and timing after execution—helps identify which join leg is the bottleneck.
 
-#### **Join Cheat Sheet**
+### **Join Cheat Sheet**
 
 Quick reference for choosing the right join pattern:
 
@@ -2559,7 +2684,7 @@ Quick reference for choosing the right join pattern:
 | Self-join (hierarchies)     | [`.alias()`] + [`.join()`] | `Inner/Left`     |
 | Cartesian product           | Prefer SQL `CROSS JOIN`    | Empty keys = bug |
 
-#### **Further Reading**
+### **Further Reading**
 
 Joins are fundamental yet often misunderstood. These resources provide deeper understanding:
 
@@ -2594,9 +2719,13 @@ Joins are fundamental yet often misunderstood. These resources provide deeper un
 | [NULL handling in joins]                                                  | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
 | [Understanding SQL Dialects][understanding sql dialects (medium-article)] | Medium article about different SQL dialects                        |
 
----
+-->
 
-### Sorting and Limiting
+--
+
+<!--TODO :  PLACE IN EXTRA SUBFILE-->
+
+## Sorting and Limiting
 
 **Sorting reorders rows by one or more columns; limiting truncates output to a fixed number of rows.**
 
@@ -2611,7 +2740,7 @@ Sorting is true to DataFusion's "excellent performance out of the box" philosoph
 > - **DataFrame:** Programmatic control over null placement; skip and fetch in one call
 > - **SQL:** Familiar `ORDER BY ... DESC NULLS LAST` syntax
 
-#### Basic Sorting
+### Basic Sorting
 
 **Single-column sorting is the most common case:** <br>
 Rank students by score, list products by price, or order events chronologically. The [`.sort()`] method takes a vector of sort expressions built with `col("column").sort(asc, nulls_first)` — two booleans that control direction and null placement.
@@ -2672,7 +2801,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 When in doubt, check your output with [`.show()`] before building further.
 
-#### Basic: Null Handling in Sorts
+### Basic: Null Handling in Sorts
 
 **NULLs require explicit handling** <br>
 the `nulls_first` boolean (second parameter in [`.sort(ascending, nulls_first)`][`.sort()`]) controls whether NULLs appear at the top or bottom of results.
@@ -2734,7 +2863,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **Tip:**<br>
 > When NULLs appear unexpectedly at the top or bottom of results, check the second boolean in `.sort(asc, nulls_first)`. Use `.filter(col("column").is_not_null())` before sorting to exclude them entirely.
 
-##### Quick Preview with [`.show_limit()`]
+#### Quick Preview with [`.show_limit()`]
 
 For debugging, [`.show_limit(n)`][`.show_limit()`] is a shorthand that executes and displays the first `n` rows:
 
@@ -2766,7 +2895,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Tip:** Use `.show_limit(5)` liberally during development to inspect intermediate results without materializing entire DataFrames.
 
-#### Basic: Limiting Results with [`.limit()`]
+### Basic: Limiting Results with [`.limit()`]
 
 The [`.limit()`] method controls how many rows to return. It takes two arguments that map directly to SQL's [`OFFSET`] and [`LIMIT`]:
 
@@ -2786,7 +2915,7 @@ The [`.limit()`] method controls how many rows to return. It takes two arguments
 > | `.sort(vec![col("x").sort(true, false)])` | [`.sort_by(vec![col("x")])`][`.sort_by()`]  | Sort ASC, nulls last |
 > | `.limit(0, Some(n))?.show().await?`       | [`.show_limit(n).await?`][`.show_limit(n)`] | Preview first n rows |
 
-##### Basic: Top N Results
+#### Basic: Top N Results
 
 **The "Top N" pattern retrieves only the first N rows after sorting.** <br>
 DataFusion recognizes this `.sort().limit(n)` combination and applies a [Top-K] optimization internally: instead of sorting the entire dataset then truncating, it maintains a heap of only N candidates — discarding rows that can't make the cut. This reduces both memory usage and execution time dramatically (benchmarks show [15x speedups][top-k]).
@@ -2829,7 +2958,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### Intermediate: Multi-Column Sorting
+### Intermediate: Multi-Column Sorting
 
 **When rows tie on the primary sort key, their relative order is undefined** — DataFusion may return them in any order, and that order can change between executions. Add a secondary sort key to break ties deterministically.
 
@@ -2876,7 +3005,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-##### Intermediate: Pagination
+#### Intermediate: Pagination
 
 **Pagination splits large result sets into smaller chunks** — essential for web APIs, dashboards, or any UI that can't display thousands of rows at once. Each "page" shows a slice of the sorted data: page 1 shows rows 1–10, page 2 shows rows 11–20, and so on.
 
@@ -2925,7 +3054,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **⚠️ Warning:** <br>
 > Each [`.limit()`] call re-executes the query from scratch — DataFusion doesn't "remember" where page 1 ended. Always apply the **same sort** before each [`.limit()`] call.
 
-##### Advanced: Cursor-Based Pagination
+#### Advanced: Cursor-Based Pagination
 
 **Offset-based pagination gets slower for higher page numbers** — to fetch page N, DataFusion must scan through all N×page_size rows, then discard most of them. Page 1 is fast; page 1000 scans 10,000 rows just to return 10.
 
@@ -2984,7 +3113,7 @@ async fn main() -> datafusion::error::Result<()> {
 **Further reading:**<br>
 [Understanding Offset and Cursor Pagination] — in-depth comparison with visual examples.
 
-#### Advanced: Sorting by Expressions
+### Advanced: Sorting by Expressions
 
 Sort keys aren't limited to column names — you can sort by **any expression**. This is powerful for computed rankings, case-insensitive ordering, or sorting by derived values.
 
@@ -3120,7 +3249,11 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
-### Set Operations and Deduplication
+<!--
+TODO: PLACE IN EXTRA SUBFILE
+-->
+
+## Set Operations and Deduplication
 
 **Set operations combine or compare DataFrames as if they were mathematical sets** <br>
 
@@ -3136,7 +3269,7 @@ These operations are essential for data pipelines: combining partitioned dataset
 **Performance note:** <br>
 Set operations and DISTINCT are **row-comparison operations** — fundamentally different from column-wise analytics. If your data resides in a row-based database (i.e.Postgres, MySQL, Oracle) via [`TableProvider`], consider pushing these operations to the source: indexed tables often deduplicate faster there than transferring data to DataFusion. For column-wise analytics (aggregations, filters, scans), DataFusion's columnar approach excels.
 
-#### Basic: Union and Distinct
+### Basic: Union and Distinct
 
 **Union** stacks two DataFrames vertically (row-wise). **Distinct** removes duplicate rows.
 
@@ -3195,7 +3328,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### Basic: Intersect and Except
+### Basic: Intersect and Except
 
 **Intersect** finds rows that exist in _both_ DataFrames. **Except** finds rows in the first DataFrame that _don't_ exist in the second.
 
@@ -3251,7 +3384,9 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
-### Window Functions
+<!-- TODO: PLACE IN EXTRA SUBFILE
+
+## Window Functions
 
 Window functions compute analytics (running totals, rankings, moving averages) **per row** without collapsing rows like `GROUP BY` does. Each row "sees" a window of related rows, defined by `PARTITION BY`, `ORDER BY`, and an optional frame.
 
@@ -3325,7 +3460,7 @@ Window functions require sorting by [`PARTITION BY`][window_function] and [`ORDE
 
 [window_function]: ../../user-guide/sql/window_functions.md
 
-#### Basic: Ranking
+### Basic: Ranking
 
 Ranking functions assign a position to each row based on sort order within a group. Common use cases include leaderboards, top-N queries, and pagination. The builder pattern constructs the window specification:
 
@@ -3443,7 +3578,7 @@ Different ranking functions handle ties (equal values) differently. Choose based
 
 For further reading, you may want to read [pyspark-rank-function-with-examples].
 
-#### Intermediate: Running Totals and Aggregates
+### Intermediate: Running Totals and Aggregates
 
 Aggregate functions like [`sum()`] and [`avg()`] become window functions when combined with the builder pattern. Instead of collapsing all rows into one result, they compute a value for each row based on its window frame—the set of rows considered for the calculation.
 
@@ -3537,7 +3672,7 @@ async fn main() -> datafusion::error::Result<()> {
 > **Window frame default behavior:** <br>
 > When you specify `.order_by()` without `.window_frame()`, the default frame is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`—which gives you a running total. This matches SQL standard behavior.
 
-#### Advanced: lead() and lag()
+### Advanced: lead() and lag()
 
 Compare each row with its neighbors—useful for calculating day-over-day changes, detecting trends, or finding gaps in sequences.
 
@@ -3628,7 +3763,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### **Troubleshooting Window Functions:**
+### **Troubleshooting Window Functions:**
 
 | Symptom                                    | Likely cause                   | Solution                                             |
 | ------------------------------------------ | ------------------------------ | ---------------------------------------------------- |
@@ -3641,9 +3776,14 @@ async fn main() -> datafusion::error::Result<()> {
 > **Tip:** <br>
 > When debugging, add `.sort()` after `.window()` to see results in a predictable order—window functions don't guarantee output row order.
 
+
+-->
+
 ---
 
-### Reshaping Data
+<!-- TODO: PLACE IN EXTRA SUBFILE
+
+## Reshaping Data
 
 **Reshaping transforms the structure of your data—changing rows to columns or columns to rows without altering the underlying values.** <br>
 
@@ -3658,7 +3798,7 @@ Unnesting is essential when working with nested JSON data, multi-valued fields, 
 
 > **See also:** [pandas.DataFrame.explode], [PySpark explode] — similar operations in other DataFrame libraries.
 
-#### Unnesting / Exploding Arrays
+### Unnesting / Exploding Arrays
 
 Unnesting expands each element of an array column into a **separate row**, duplicating the other columns. This is essential when working with nested JSON, multi-valued fields, or array columns from Parquet files.
 
@@ -3704,9 +3844,14 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **See also:** [PySpark explode] — similar operation in Spark DataFrames.
 
+
+-->
+
 ---
 
-### Subqueries
+<!-- TODO: PLACE IN EXTRA SUBFILE
+
+## Subqueries
 
 **Subqueries embed one query inside another—enabling comparisons against computed values or filtered datasets.** <br>
 
@@ -3723,7 +3868,7 @@ Use subqueries when a filter or expression depends on data from another query. I
 > - **DataFrame shines:** Type-safe subquery construction; reusable subquery plans as variables; subqueries can be built conditionally
 > - **SQL shines:** Nested syntax is more readable; familiar to SQL users; less boilerplate for simple cases
 
-#### Scalar Subqueries
+### Scalar Subqueries
 
 A scalar subquery returns **exactly one value** used in comparisons. Common use cases: filtering against an aggregate (average, max, count) or looking up a single reference value.
 
@@ -3776,7 +3921,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### IN Subqueries
+### IN Subqueries
 
 An IN subquery checks if a value **exists in a list** returned by another query. Common use cases: filtering by membership in a lookup table, finding related records, or excluding specific IDs.
 
@@ -3865,7 +4010,11 @@ async fn main() -> datafusion::error::Result<()> {
 - [Window Functions](../../user-guide/sql/window_functions.md) — all window functions
 - [Subqueries](../../user-guide/sql/subqueries.md) — SQL subquery patterns
 
+-->
+
 ---
+
+<!-- TODO : PLACE IN EXTRA SUBFILE
 
 (advanced-dataframe-patterns)=
 
@@ -4050,9 +4199,13 @@ async fn main() -> Result<()> {
 
 > **SQL workaround:** `SELECT id, name FROM ...` — must explicitly list every column to keep. With 20 columns, dropping 2 means listing 18.
 
+-->
+
 ---
 
-### Set Operations by Name
+<!-- TODO: PLACE IN EXTRA SUBFILE
+
+## Set Operations by Name
 
 **This is where DataFusion's [Arrow columnar design](../../user-guide/arrow-introduction.md) shines.**
 
@@ -4065,7 +4218,7 @@ Because Arrow schemas carry column names as metadata, DataFusion can align DataF
 | [`.union_by_name()`]          | Keeps all      | `UNION ALL` + reorder columns |
 | [`.union_by_name_distinct()`] | Removes        | `UNION` + reorder columns     |
 
-#### Union by Column Name
+### Union by Column Name
 
 [`.union_by_name()`] aligns DataFrames by column _name_, not position:
 
@@ -4167,7 +4320,7 @@ These methods let you combine SQL's familiar syntax with DataFrame's programmati
 | [`.parse_sql_expr()`] | SQL string        | `Expr`      | Single expression from config/user input  |
 | [`.select_exprs()`]   | SQL strings array | `DataFrame` | Multiple computed columns with SQL syntax |
 
-#### Parsing SQL Expressions
+### Parsing SQL Expressions
 
 [`.parse_sql_expr()`] converts a SQL expression string into a DataFusion `Expr`. Useful when you want SQL syntax for complex expressions but DataFrame chaining for the overall pipeline:
 
@@ -4205,7 +4358,7 @@ async fn main() -> Result<()> {
 
 > **Use case:** Dynamically building expressions from user input or configuration files while maintaining type safety in the rest of your pipeline.
 
-#### Selecting with SQL Expressions
+### Selecting with SQL Expressions
 
 [`.select_exprs()`] takes an array of SQL expression strings and projects them—combining SQL's concise syntax with DataFrame chaining:
 
@@ -4328,7 +4481,7 @@ These methods wrap common patterns into single, ergonomic calls.
 | [`.fill_null()`] | Replace nulls with default | `COALESCE` per column |
 | [`.cache()`]     | Materialize in memory      | None                  |
 
-#### Filling Null Values
+### Filling Null Values
 
 [`.fill_null()`] replaces null values with a default—in SQL you'd need `COALESCE` for each column:
 
@@ -4380,7 +4533,7 @@ async fn main() -> Result<()> {
 
 > **SQL equivalent:** `SELECT COALESCE(name, 'Unknown'), COALESCE(score, 0) FROM ...`—must list each column explicitly.
 
-#### Caching DataFrames
+### Caching DataFrames
 
 [`.cache()`] materializes a DataFrame into memory, useful when you need to reuse intermediate results:
 
@@ -4420,7 +4573,7 @@ These methods provide fine-grained control over how query results are produced�
 | [`.collect_partitioned()`]        | `Vec<Vec<RecordBatch>>` | Process partitions independently |
 | [`.execute_stream_partitioned()`] | Multiple streams        | Parallel streaming               |
 
-#### Streaming Results
+### Streaming Results
 
 [`.execute_stream()`] returns results as a stream rather than collecting into memory:
 
@@ -4450,7 +4603,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-#### Partition-Aware Execution
+### Partition-Aware Execution
 
 [`.collect_partitioned()`] and [`.execute_stream_partitioned()`] preserve the underlying data partitioning:
 
@@ -4572,7 +4725,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-#### Controlling Unnest Behavior with Options
+### Controlling Unnest Behavior with Options
 
 [`.unnest_columns_with_options()`] provides fine-grained control via [`UnnestOptions`]:
 
@@ -4654,7 +4807,14 @@ async fn main() -> Result<()> {
 
 [`unnestoptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
 
-### Bridging to SQL
+
+-->
+
+---
+
+<!--TODO : PLACE IN EXTRA SUBFILE -->
+
+## Bridging to SQL
 
 [`.into_view()`] converts a DataFrame into a [`TableProvider`] that can be registered as a SQL-queryable table—enabling hybrid workflows where you build with DataFrames and query with SQL.
 
@@ -4702,7 +4862,7 @@ async fn main() -> Result<()> {
 
 These methods have SQL counterparts but offer ergonomic advantages for programmatic use.
 
-#### DISTINCT ON (PostgreSQL-Style)
+### DISTINCT ON (PostgreSQL-Style)
 
 [`.distinct_on()`] keeps the first row for each unique value in specified columns. DataFusion also supports this via SQL (`SELECT DISTINCT ON (...)`), but the DataFrame method integrates naturally into pipelines:
 
@@ -4748,7 +4908,7 @@ FROM orders
 ORDER BY customer, order_date ASC;
 ```
 
-#### Aliasing DataFrames
+### Aliasing DataFrames
 
 [`.alias()`] applies a table qualifier to all columns—equivalent to SQL subquery aliasing (`SELECT * FROM (...) AS my_alias`), but useful for DataFrame self-joins:
 
@@ -4833,7 +4993,7 @@ async fn main() -> Result<()> {
 *SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../user-guide/crate-configuration.md).
 ```
 
-#### Quick Reference
+### Quick Reference
 
 | Method                     | One-Liner                                     |
 | -------------------------- | --------------------------------------------- |
@@ -4865,9 +5025,9 @@ async fn main() -> Result<()> {
 
 Both compile to the same optimized plan—choose based on ergonomics, not performance.
 
----
+## -->
 
-<!--TODO Set the builder methodolgy at the very top-->
+<!--TODO Set the builder methodolgy at the very top
 
 (builder-methodology-architecting-with-dataframe)=
 
@@ -5033,20 +5193,20 @@ If you're coming from SQL, you might think of intermediate results like CTEs (`W
 
 The practical benefit: you can inspect, branch, or reuse any intermediate DataFrame without re-executing the pipeline.
 
-> **Footgun:** DataFrame is _consumed_ by transformations. To reuse, call [`.clone()`]:
->
-> ```rust
-> use datafusion::prelude::*;
-> use datafusion::functions_aggregate::expr_fn::sum;
->
-> #[tokio::main]
-> async fn main() -> datafusion::error::Result<()> {
->     let sales = dataframe!("category" => ["A"], "price" => [100])?;
->     let filtered = sales.clone().filter(col("price").gt(lit(100)))?;  // sales still usable
->     let aggregated = sales.aggregate(vec![col("category")], vec![sum(col("price"))])?;  // sales consumed
->     Ok(())
-> }
-> ```
+**Footgun:** DataFrame is _consumed_ by transformations. To reuse, call [`.clone()`]:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::functions_aggregate::expr_fn::sum;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let sales = dataframe!("category" => ["A"], "price" => [100])?;
+    let filtered = sales.clone().filter(col("price").gt(lit(100)))?;  // sales still usable
+    let aggregated = sales.aggregate(vec![col("category")], vec![sum(col("price"))])?;  // sales consumed
+    Ok(())
+}
+```
 
 (dynamic-pipeline-construction)=
 
@@ -5343,6 +5503,12 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 Compare this to SQL where you'd either write multiple query variants or resort to string concatenation—both error-prone and hard to test. Here, the logic is explicit, the types are checked, and you can unit-test `build_sales_query` with different parameter combinations.
+
+-->
+
+---
+
+<!-- TODO: PLACE IN EXTRA SUBFILE-->
 
 ### Memory Management & Streaming
 
@@ -5665,7 +5831,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### Soft Failures with [`try_cast()`] (Value-Level)
+### Soft Failures with [`try_cast()`] (Value-Level)
 
 While graceful degradation handles source-level failures, **soft failures** handle issues at the **individual value level**. When data quality is uncertain—strings that might not be numbers, dates in mixed formats—[`try_cast()`] converts invalid values to `NULL` instead of failing the entire query.
 
@@ -5715,7 +5881,9 @@ async fn main() -> datafusion::error::Result<()> {
 | **Graceful Degradation** | Schema | Missing columns, schema variations   | Check column exists before using |
 | **Soft Failures**        | Value  | Unparseable strings, type mismatches | [`try_cast()`] returns NULL      |
 
-### Data Validation & Quality
+<!-- TODO: PLACE IN EXTRA SUBFILE
+
+## Data Validation & Quality
 
 **Validation protects your pipeline at multiple levels: schema validation ensures structure, constraint validation ensures values, and quality inspection tracks how transformations affect your data.**
 
@@ -5732,7 +5900,7 @@ This section covers three complementary approaches:
 
 > **Schema validation** is covered in detail in [Schema Management § Validating Schemas](schema-management.md#validating-schemas). This section focuses on constraint validation and quality inspection.
 
-#### Data Constraint Validation
+### Data Constraint Validation
 
 Once schema validation confirms your DataFrame has the right structure, constraint validation ensures **values** meet business rules: no negative prices, required fields populated, values within expected ranges.
 
@@ -5751,7 +5919,7 @@ DataFusion's DataFrame-API provides **composable validation primitives**—filte
 | **Flag-based**      | Marks rows, keeps all    | Need to report issues but preserve data      |
 | **Aggregate-based** | Produces quality summary | Monitoring data health, CI/CD checks         |
 
-##### **Filter-Based Constraints (Reject Invalid Rows)**
+### Filter-Based Constraints (Reject Invalid Rows)
 
 Use this when downstream processing requires clean data. Invalid rows are removed before they can cause calculation errors or corrupt aggregations.
 
@@ -5803,7 +5971,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-##### **Flag-Based Constraints (Mark Issues, Keep All)**
+#### Flag-Based Constraints (Mark Issues, Keep All)
 
 Use this when you need to preserve all data but identify problems. Downstream processes can filter on `is_valid` or handle invalid rows differently.
 
@@ -5867,7 +6035,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-##### **Aggregate-Based Constraints (Quality Report)**
+#### Aggregate-Based Constraints (Quality Report)
 
 Use this for monitoring pipelines, CI/CD quality gates, or dashboards. Produces a single-row summary of data health without modifying the data itself.
 
@@ -5958,7 +6126,12 @@ These patterns come from research on [ML pipeline inspection][blue elephants ins
 
 > **The takeaway:** Think of DataFrames as _query builders_, not _data containers_. Build the plan with Rust's full power, let DataFusion optimize it, then execute once.
 
+
+-->
+
 ---
+
+<!-- TODO : MERGE WITH OTHER AND PLACE IN EXTRA SUBFILE
 
 ## Mixing SQL and DataFrames
 
@@ -6063,7 +6236,11 @@ DataFusion is a **columnar (OLAP) query engine** optimized for:
 - **Columnar file formats:** Parquet, Arrow IPC, CSV/JSON scanning
 - **Data lake/lakehouse patterns:** Query files directly without loading into a database
 
-For a detailed breakdown of columnar vs. row-based trade-offs, see the [When Row-Based TableProviders Outperform Columnar](#when-row-based-tableproviders-outperform-columnar) section earlier in this document.
+<!--Check Reference
+[When Row-Based TableProviders Outperform Columnar](#when-row-based-tableproviders-outperform-columnar)
+-->
+
+For a detailed breakdown of columnar vs. row-based trade-offs, see the When Row-Based TableProviders Outperform Columnar section earlier in this document.
 
 #### When OLTP Systems Excel
 
@@ -6152,7 +6329,7 @@ For deeper exploration of the topics covered in this section:
 - [MongoDB vs PostgreSQL](https://www.mongodb.com/resources/compare/mongodb-postgresql) — When document stores make sense
 - [The Log: What every software engineer should know](https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying) — Jay Kreps on data architecture patterns
 
----
+-->
 
 ## Further Reading
 

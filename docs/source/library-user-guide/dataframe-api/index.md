@@ -47,7 +47,10 @@ transformations
 writing-dataframes
 best-practices
 dataframes-advance
+Test-sphinx
 ```
+
+<!--Transformations/index.rst-->
 
 ## The DataFrame Lifecycle
 
@@ -65,30 +68,30 @@ The documentation follows the **lifecycle of a DataFrame**—from creation to ex
 
 ## Quick Navigation
 
-| I want to...                            | Go to                                                                              |
-| --------------------------------------- | ---------------------------------------------------------------------------------- |
-| **Understand the basics**               |                                                                                    |
-| Learn what DataFrames are conceptually  | [User Guide](../../user-guide/dataframe.md)                                        |
-| Understand Arrow & RecordBatches        | [Arrow Introduction](../../user-guide/arrow-introduction.md)                       |
-| Learn about data types                  | [Data Types](../../user-guide/sql/data_types.md)                                   |
-|                                         |                                                                                    |
-| **Create DataFrames**                   |                                                                                    |
-| Create my first DataFrame               | [Creating DataFrames](creating-dataframes.md)                                      |
-| Understand SessionContext & LogicalPlan | [Concepts](concepts.md)                                                            |
-|                                         |                                                                                    |
-| **Transform data**                      |                                                                                    |
-| Filter, join, or aggregate data         | [Transformations](transformations.md)                                              |
-| Mix SQL with DataFrames                 | [Transformations § SQL](transformations.md#mixing-sql-and-dataframes)              |
-|                                         |                                                                                    |
-| **Execute and write results**           |                                                                                    |
-| Execute DataFrames and get results      | [Writing & Executing](writing-dataframes.md#dataframe-execution) |
-| Save results to files                   | [Writing DataFrames](writing-dataframes.md#writing-dataframes-persistent-storage)  |
-| Stream large results                    | [Streaming Execution](writing-dataframes.md#partitioned--streaming-execution)                   |
-|                                         |                                                                                    |
-| **Optimize & Debug**                    |                                                                                    |
-| Improve query performance               | [Best Practices](best-practices.md)                                                |
-| Debug query plans                       | [Best Practices § Debugging](best-practices.md#debugging-techniques)               |
-| Configure batch sizes                   | [Best Practices § Configuration](best-practices.md#configuration-reference)    |
+| I want to...                            | Go to                                                                             |
+| --------------------------------------- | --------------------------------------------------------------------------------- |
+| **Understand the basics**               |                                                                                   |
+| Learn what DataFrames are conceptually  | [User Guide](../../user-guide/dataframe.md)                                       |
+| Understand Arrow & RecordBatches        | [Arrow Introduction](../../user-guide/arrow-introduction.md)                      |
+| Learn about data types                  | [Data Types](../../user-guide/sql/data_types.md)                                  |
+|                                         |                                                                                   |
+| **Create DataFrames**                   |                                                                                   |
+| Create my first DataFrame               | [Creating DataFrames](creating-dataframes.md)                                     |
+| Understand SessionContext & LogicalPlan | [Concepts](concepts.md)                                                           |
+|                                         |                                                                                   |
+| **Transform data**                      |                                                                                   |
+| Filter, join, or aggregate data         | [Transformations](transformations.md)                                             |
+| Mix SQL with DataFrames                 | [Transformations § SQL](transformations.md#mixing-sql-and-dataframes)             |
+|                                         |                                                                                   |
+| **Execute and write results**           |                                                                                   |
+| Execute DataFrames and get results      | [Writing & Executing](writing-dataframes.md#dataframe-execution)                  |
+| Save results to files                   | [Writing DataFrames](writing-dataframes.md#writing-dataframes-persistent-storage) |
+| Stream large results                    | [Streaming Execution](writing-dataframes.md#partitioned--streaming-execution)     |
+|                                         |                                                                                   |
+| **Optimize & Debug**                    |                                                                                   |
+| Improve query performance               | [Best Practices](best-practices.md)                                               |
+| Debug query plans                       | [Best Practices § Debugging](best-practices.md#debugging-techniques)              |
+| Configure batch sizes                   | [Best Practices § Configuration](best-practices.md#configuration-reference)       |
 
 ## Common Operations Quick Reference
 

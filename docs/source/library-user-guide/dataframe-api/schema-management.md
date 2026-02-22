@@ -23,13 +23,25 @@
 
 Schema management defines the structural contract of your data—names, types, and nullability—as it flows through DataFusion. Explicit schemas are critical for both correctness and performance, enabling the optimizer to push down predicates, select vectorized kernels, and prevent silent schema drift. You manage this contract via the [`DFSchema`] API, which wraps underlying Arrow types with the query-planning context needed for robust, predictable execution.
 
-> **Method Style Note:** <br>
-> In this document, method notation follows a consistent pattern:
->
-> - **DataFrame methods** use `df.method()` (for example, `df.select(...)`)
-> - **DFSchema method**s use `df.schema().method()` (for example, `df.schema().fields()`)
-> - **Associated functions** use `DFSchema::method()` (for example, `DFSchema::try_from(...)`).
-> - **Standalone functions** use `function()` (for example, `col()`), and constructors use `Type::new()` (for example, `SessionContext::new()`).
+In this guide, all code elements are highlighted with backticks.
+
+- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
+- standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`).
+- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+
+:::{admonition} Style Note
+:class: note
+
+In this document, method notation follows a consistent pattern:
+
+- **DataFrame methods** use `df.method()` (for example, `df.select(...)`)
+- **DFSchema method**s use `df.schema().method()` (for example, `df.schema().fields()`)
+- **Associated functions** use `DFSchema::method()` (for example, `DFSchema::try_from(...)`).
+- **Standalone functions** use `function()` (for example, `col()`), and constructors use `Type::new()` (for example, `SessionContext::new()`).
+
+:::
+
+</details>
 
 ```{contents}
 :local:
@@ -40,7 +52,7 @@ Schema management defines the structural contract of your data—names, types, a
 
 **Schema management connects data modeling, query planning, and execution correctness across the DataFusion ecosystem.**
 
-In analytical systems, schema is the contract that binds source data, planner decisions, and runtime behavior. In DataFusion, that contract flows from data sources into the `LogicalPlan` and surfaces as `DFSchema` on each `DataFrame`, where you inspect, validate, and evolve structure safely.
+In analytical systems, schema is the contract that binds source data, planner decisions, and runtime behavior. In DataFusion, that contract flows from data sources into the [`LogicalPlan`] and surfaces as [`DFSchema`] on each [`DataFrame`], where you inspect, validate, and evolve structure safely.
 
 DataFusion uses the term "schema" for four distinct concepts. They fall into two layers:
 
@@ -806,14 +818,6 @@ The most commonly used methods for both patterns:
 | [`df.schema().metadata()`][`df.schema().metadata()`] | `&HashMap<String, String>` | Access schema-level metadata |
 | [`df.schema().has_column_with_unqualified_name(name)`][`df.schema().has_column_with_unqualified_name()`] | `bool` | Check if column exists |
 | [`df.schema().field_with_unqualified_name(name)`][`df.schema().field_with_unqualified_name()`] | `Result<&Arc<Field>>` | Get field by name (returns error if not found) |
-
-[`has_column_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
-[`field_with_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
-[`df.schema().fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
-[`df.schema().iter()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.iter
-[`df.schema().metadata()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
-[`df.schema().has_column_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_unqualified_name
-[`df.schema().field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
 
 #### Error Handling Patterns
 
@@ -2208,6 +2212,14 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 <!-- ADD NEW REFERENCES BELOW  THEY WILL BE SORTET TOMOOROW !--->
 
 [`.with_functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_functional_dependencies
+[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`has_column_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
+[`field_with_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
+[`df.schema().fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
+[`df.schema().iter()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.iter
+[`df.schema().metadata()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
+[`df.schema().has_column_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_unqualified_name
+[`df.schema().field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
 
 <!-- DataFusion: DFSchema & Schema Methods -->
 
