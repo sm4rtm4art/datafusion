@@ -37,18 +37,22 @@ DataFusion [`DataFrame`]s are modeled after the [Pandas DataFrame] interface and
 :depth: 2
 ```
 
-```{toctree}
-:maxdepth: 1
+````{toctree}
+:maxdepth: 2
 
 concepts
-creating-dataframes
+Creating-Dataframes/index
+Creating-Dataframes/Creating-DataFrames-From-Files/index
 schema-management
+Schema-Management/index
 transformations
+Transformations/index
 writing-dataframes
+Writing-Dataframes/index
 best-practices
 dataframes-advance
 Test-sphinx
-```
+´´´
 
 <!--Transformations/index.rst-->
 
@@ -106,7 +110,7 @@ LIMIT 10                     df.limit(0, Some(10))?
 JOIN ... USING (id)          left.join(right, JoinType::Inner, &["id"], &["id"], None)?
 DISTINCT                     df.distinct()?
 UNION ALL                    df1.union(df2)?
-```
+````
 
 **Execution actions:**
 

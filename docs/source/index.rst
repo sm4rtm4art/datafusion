@@ -139,6 +139,10 @@ To get started, see
    library-user-guide/extending-sql
    library-user-guide/working-with-exprs
    library-user-guide/dataframe-api/index
+   library-user-guide/dataframe-api/creating-dataframes/index
+   library-user-guide/dataframe-api/schema-management/index
+   library-user-guide/dataframe-api/transformations/index
+   library-user-guide/dataframe-api/writing-dataframes/index
    library-user-guide/building-logical-plans
    library-user-guide/catalogs
    library-user-guide/functions/index

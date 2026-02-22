@@ -16,3 +16,21 @@
   specific language governing permissions and limitations
   under the License.
 -->
+
+# extension-links
+
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Creation Methods
+```

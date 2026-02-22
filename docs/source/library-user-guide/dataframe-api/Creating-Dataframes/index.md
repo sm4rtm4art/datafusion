@@ -54,6 +54,7 @@ In this document, all code elements are highlighted with backticks.
 
 ```{toctree}
 :maxdepth: 2
+:caption: Creation Methods
 
 catalog-and-context
 from-files
@@ -62,6 +63,7 @@ in-memory
 session-configuration
 streaming
 extension-links
+advanced
 ```
 
 ## Introduction
@@ -337,3 +339,110 @@ async fn main() -> Result<()> {
 **Background Reading:**
 
 - [Apache DataFusion: A Fast, Embeddable, Modular Analytic Query Engine (Section 5.2)][sigmod-paper]
+
+---
+
+## How to Create a DataFrame
+
+**DataFusion binds to data wherever it lives—multiple entry points, one destination—unifying files, in-memory batches, and custom sources (via [`TableProvider`]) into a single, lazy DataFrame.**
+
+The [previous section](#before-creating-a-dataframe) established how DataFusion organizes data: <br>
+[`SessionContext`] owns the catalog, tables are accessed through [`TableProvider`], and names resolve through the catalog hierarchy. Now we put that foundation to work.
+
+Creating a DataFrame constructs a [`LogicalPlan`] describing _what_ to compute. This may involve reading metadata or inferring schema (see [What happens immediately?](#1-from-files)), but actual record batch scanning happens only when you call an execution methode (i.e `.collect()`, `.show()`).
+
+Because every creation method produces a [`DataFrame`] backed by the same internal representation ([`LogicalPlan`] + [`SessionState`]), you can:
+
+- Read files directly for ad-hoc analysis
+- Register tables for SQL interoperability
+- Mix both approaches in the same pipeline
+
+**Choose based on where your data lives and how you'll access it:**
+
+| Category        | Method                                                             | Best for                                          | Prefer alternatives when                     |
+| --------------- | ------------------------------------------------------------------ | ------------------------------------------------- | -------------------------------------------- |
+| **Direct Read** | [1. Files](#1-from-files)                                          | Ad-hoc analysis, ETL pipelines, one-off scripts   | You need stable names or multi-query reuse   |
+| **Catalog**     | [2. Registered Table](#2-from-a-registered-table)                  | SQL interoperability, shared schemas, multi-query | Simple one-shot queries                      |
+| **SQL**         | [3. SQL Queries](#3-from-sql-queries)                              | Complex joins, CTEs, window functions             | Dynamic logic, programmatic column selection |
+| **Native**      | [4. RecordBatches](#4-from-arrow-recordbatches-the-native-pathway) | Arrow Flight, IPC, single batch processing        | Multiple batches (use [`MemTable`] instead)  |
+| **Testing**     | [5. Inline Data](#5-from-inline-data-using-the-dataframe-macro)    | Unit tests, small hand-authored examples          | Production ingestion or large datasets       |
+| **Advanced**    | [6. LogicalPlan](#6-advanced-constructing-from-a-logicalplan)      | Custom DSLs, federation, optimizer testing        | Higher-level methods (1–5) suffice           |
+
+> **Trade-offs:**
+>
+> - **Registration:** <br> Upfront metadata reads; requires refresh strategy if files change out-of-band.
+> - **Direct reads:** <br> No catalog state; metadata re-derived per call; not discoverable via SQL.
+>
+> **Default rule:** <br> Parquet, remote storage, or multi-file → register. Small, local, one-off → direct read.
+
+## The Big Picture
+
+For a more detailes, visual representation of the DataFrame creation process, see the diagram below:
+
+```text
+DATAFRAME CREATION PATHWAYS
+════════════════════════════════════════════════════════════════════════════
+
+[ 1. DATA SOURCES ]              (Where the data lives)
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────────────┐
+│ Files/Stores │ │ In-Memory    │ │ External DBs │ │ Iceberg, Delta, etc.  │
+│(Parquet/CSV) │ │ (Batches)    │ │ (Custom)     │ │ (via extensions)      │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────────┬────────────┘
+       │                │                │                    │
+       ▼                │                ▼                    ▼
+[ 2. TABLE PROVIDERS ]  ▼          (impl TableProvider trait)
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────────────┐
+│ ListingTable │ │   MemTable   │ │ Custom Table │ │ Extension-provided    │
+│ (File Scan)  │ │  (Batches)   │ │ Provider     │ │ TableProvider         │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────────┬────────────┘
+       │                │                │                    │
+       └────────────────┴────────┬───────┴────────────────────┘
+                                 │
+[ 3. ACCESS PATTERN ]            │   (How you introduce it to the Session)
+            ┌────────────────────▼────────────────────┐
+            │                                         │
+   ┌────────▼─────────┐                      ┌────────▼─────────┐
+   │  A. DIRECT READ  │                      │   B. REGISTER    │
+   │  (Ephemeral)     │                      │   (Named)        │
+   │                  │                      │                  │
+   │ read_parquet()   │                      │ register_parquet │
+   │ read_csv()       │                      │ register_csv     │
+   │ read_batch()     │                      │ register_table   │
+   │ read_json()      │                      │                  │
+   └────────┬─────────┘                      └────────┬─────────┘
+            │                                         │
+            │ (Returns DataFrame)                     │ (Stored in Catalog)
+            ▼                                         ▼
+[ 4. THE HUB ]                                  [ CATALOG ]
+┌─────────────────────────────────────────────────────▼────────────────────┐
+│                             SessionContext                               │
+│ ┌──────────────────────────────────────────────────────────────────────┐ │
+│ │  SessionState: Config · RuntimeEnv · Optimizer · Planner · Catalog   │ │
+│ │                                                                      │ │
+│ │  ┌─────────────────┐                     ┌────────────────────────┐  │ │
+│ │  │ Ephemeral Plan  │                     │ Registered Providers   │  │ │
+│ │  └─────────────────┘                     │ "sales", "metrics"...  │  │ │
+│ └───────────┬───────────────────────────────────────┬──────────────────┘ │
+└─────────────┼───────────────────────────────────────┼────────────────────┘
+              │                                       │
+              │ (Direct Return)                       │ (table("sales"))
+              │                                       │ (sql("SELECT..."))
+              ▼                                       ▼
+       ┌─────────────────────────────────────────────────────┐
+       │                      DataFrame                      │
+       │           (LogicalPlan + SessionState)              │
+       └─────────────────────────────────────────────────────┘
+```
+
+> **Understanding the layers:**
+>
+> - **Layer 1 (Data Sources)**: Where bytes live (S3, disk, RAM, external systems).
+> - **Layer 2 (Table Providers)**: Implementations of [`TableProvider`] that translate bytes to Arrow batches.
+> - **Layer 3 (Access Pattern)**:
+>   - **Ephemeral (Direct Read)**: The plan exists only inside the returned DataFrame.
+>   - **Named (Registered)**: A [`TableProvider`] is stored in the catalog, accessible by name.
+> - **Layer 4 (The Hub)**: [`SessionContext`] holds configuration and catalogs—the factory for all DataFrames.
+
+---
+
+<!-- Link references -->
