@@ -31,6 +31,7 @@ In this guide, all code elements are highlighted with backticks.
 
 :::{admonition} Style Note
 :class: note
+:collapsible: closed
 
 In this document, method notation follows a consistent pattern:
 
@@ -159,19 +160,19 @@ Arrow's `Schema` describes _data_. `DFSchema` describes the _plan_—it adds tab
 
 DataFusion determines the initial schema in one of three ways, depending on your data source:
 
-1.  **Self-Describing Formats ([Parquet], Avro, Arrow):** <br>
+1.  **Self-Describing Formats ([Parquet], Avro, Arrow):**
     The schema is embedded in the file metadata. Types are known instantly at scan time.
-2.  **Text Formats (CSV, JSON):** <br>
+2.  **Text Formats (CSV, JSON):**
     Types must be either **provided explicitly** (recommended) or **inferred** from a data sample (risk of **schema drift**—see below).
-3.  **Custom Sources (TableProvider):**<br>
+3.  **Custom Sources (TableProvider):**
     The source of truth is the [`TableProvider::schema()`]-method implemented by the provider. This contract must remain stable to ensure predictable query behavior.
 
 For a deep dive into the underlying [Apache Arrow] type system, see the [Arrow Schema Specification][`arrow schema`].
 
-> **Schema Drift:** <br>
+> **Schema Drift:**
 > Schema drift occurs when inferred types change silently across runs because the underlying data evolves. For example, a column inferred as `Int32` from the first 1000 rows may later contain values exceeding `Int32` range, or a previously all-numeric column may start containing strings. Because inference is sampling-based, these changes go undetected until they cause runtime errors or silent data corruption. Explicit schemas eliminate drift entirely—this is why they are recommended for production pipelines.
 
-> **DataFrame vs SQL:** <br>
+> **DataFrame vs SQL:**
 > Both APIs produce the same [`DataFrame`] containing the same [`LogicalPlan`] with identical schemas. The DataFrame API provides compile-time visibility into schema changes—each method returns a new [`DataFrame`] whose schema you can inspect programmatically before execution.
 
 ---
@@ -240,7 +241,7 @@ Schema {
 }
 ```
 
-> **Why types matter:** <br>
+> **Why types matter:**
 > Correct types unlock query optimization. A `Timestamp` column enables date-range pruning, while the same bytes as `Int64` only support numeric comparisons.
 
 ---
@@ -251,7 +252,7 @@ Schema {
 
 In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 
-> **Important:**<br>
+> **Important:**
 > `Field` is an **Arrow type** ( [`arrow::datatypes::Field`]), not a DataFusion type. DFSchema _wraps_ an Arrow [`Schema`] and adds query-planning context on top.
 
 ```text
@@ -289,7 +290,7 @@ In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 
 > **Key insight:**<br> When you call [`df.schema()`], you get a `&DFSchema`. To access the underlying Arrow Schema, use [`.inner()`] (returns `&SchemaRef`) or [`.as_arrow()`] (returns `&Schema`). The Arrow Schema is what file writers (Parquet, IPC) and Arrow compute kernels expect.
 
-Each column in a DataFrame is defined by four properties that control how data is stored, accessed, and validated. These properties determine how your data is interpreted—for example:<br>
+Each column in a DataFrame is defined by four properties that control how data is stored, accessed, and validated. These properties determine how your data is interpreted—for example:
 The same bytes (`1735689600_i64`) become a timestamp (`2025-01-01T00:00:00`) when the field declares `Timestamp` as its type.
 
 | Property                     | Role                                     | Operations Affected                              |
@@ -316,14 +317,14 @@ In the remainder of this section, we will focus on four practical aspects of sch
 
 The column [`field.name`][`field`] is the primary identifier for a column in the DataFrame API. Operations like [`.select()`], [`.with_column()`], and [`.union_by_name()`] all rely on the column name to perform their work.
 
-> **The #1 Schema Mismatch Cause:** <br>
-> In the Rust DataFrame API, column names are **case-sensitive strings**. `col("Region")` and `col("region")` reference _different_ columns—this catches many users off guard.<br>
+> **The #1 Schema Mismatch Cause:**
+> In the Rust DataFrame API, column names are **case-sensitive strings**. `col("Region")` and `col("region")` reference _different_ columns—this catches many users off guard.
 
-> **Note:** <br>
-> This differs from DataFusion's SQL parser, where unquoted identifiers are normalized to lowercase by default. When mixing DataFrame API calls with SQL queries, be aware of this distinction.<br>
+> **Note:**
+> This differs from DataFusion's SQL parser, where unquoted identifiers are normalized to lowercase by default. When mixing DataFrame API calls with SQL queries, be aware of this distinction.
 
-> **Best Practice:** <br>
-> Enforce a consistent naming convention (e.g., all **snake_case** or **camelCase**) at your ingestion boundary.<br>
+> **Best Practice:**
+> Enforce a consistent naming convention (e.g., all **snake_case** or **camelCase**) at your ingestion boundary.
 
 (column-order)=
 
@@ -331,10 +332,10 @@ The column [`field.name`][`field`] is the primary identifier for a column in the
 
 DataFusion's DataFrame API is **name-based, not positional**. For operations like [`.union_by_name()`], the physical column order doesn't matter—DataFusion aligns columns by name, making pipelines resilient to upstream ordering changes.
 
-> **DataFrame API Advantage:** <br>
+> **DataFrame API Advantage:**
 > Unlike **traditional** [`UNION ALL`] which requires matching column positions, the DataFrame API's name-based approach is inherently safer. You don't need to worry about upstream schema reordering breaking your pipeline.
 
-> **SQL equivalent:** `UNION BY NAME` <br>
+> **SQL equivalent:** `UNION BY NAME`
 > DataFusion's SQL-API parser also supports `UNION BY NAME` syntax (inspired by [DuckDB]). Both produce the same `LogicalPlan`.
 >
 > ```sql
@@ -351,10 +352,10 @@ DataFusion's DataFrame API is **name-based, not positional**. For operations lik
 
 When combining DataFrames with [`.union_by_name()`], differences in column count are handled gracefully: missing columns are filled with NULL values. This deliberate behavior supports schema evolution—new columns appear with NULL for historical rows, and dropped columns remain explicit rather than causing silent failures.
 
-> **Note:** <br>
+> **Note:**
 > This flexibility applies to [`.union_by_name()`] only. The positional [`.union()`] requires **identical column counts** in both DataFrames—any mismatch will fail during planning.
 
-> **Important:** <br>
+> **Important:**
 > While [`.union_by_name()`] handles _missing_ columns automatically, it does **not** silently handle _type mismatches_ for columns that exist in both DataFrames. When the same column name appears with different types (e.g., `Int32` vs `Int64`), DataFusion's [type coercion analyzer][`TypeCoercion`] attempts to find a common type. If no safe coercion path exists, the query will fail during analysis—forcing you to be explicit about how to resolve the ambiguity.
 
 (column-types)=
@@ -396,7 +397,7 @@ Properties define _what_ a column is (name, type). Features define _how_ it beha
 
 The [`field.nullable`][`field`] flag—the third property in our Schema Field Properties table—is a critical part of a field's type definition. When merging schemas (for example, via [`.union_by_name()`]), DataFusion follows a simple, safe rule:
 
-> **The Golden Rule of Nullability:**<br>
+> **The Golden Rule of Nullability:**
 > If a column is nullable in any of the input schemas, it will be nullable in the output schema.
 
 This is a widening conversion: a non‑nullable column can always be represented in a nullable one, but not the other way around.
@@ -437,16 +438,16 @@ For the full metadata API, see the [`DFSchema` documentation][`DFSchema`].
 
 When you mix types in expressions or combine DataFrames, DataFusion must resolve type mismatches. The rules differ by context:
 
-- **Expressions** (select, filter, with_column):<br>
+- **Expressions** (select, filter, with_column):
   Types widen automatically for convenience
-- **Set operations** (union, except, intersect):<br>
+- **Set operations** (union, except, intersect):
   Types must align explicitly for safety
-- **Joins**:<br>
+- **Joins**:
   Keys auto-coerce, but result columns follow expression rules (see:[`TypeCoercion`])
 
 This section covers the coercion hierarchy and when each mode applies.
 
-**The Golden Rule of Type Casting**:<br>
+**The Golden Rule of Type Casting**:
 Always widen types (e.g., `Int32 → Int64`) rather than narrow them to prevent data loss. Narrowing (e.g., `Int64 → Int32`) risks silent data corruption unless you have explicitly proven that no values will be truncated.
 
 ### Mode 1: Automatic Coercion in Expressions
@@ -499,7 +500,7 @@ For safety and to prevent silent data corruption, **set operations** like [`.uni
 
 If the types do not match exactly, DataFusion's type coercion analyzer will attempt to find a common type. However, when no safe coercion path exists, you'll need to cast explicitly. This is a deliberate design choice—it forces you to be explicit about how to resolve type ambiguity.
 
-> **Note on Joins:**<br>
+> **Note on Joins:**
 > Join keys are an exception—DataFusion automatically coerces join keys to a common type (e.g., `Int32 = Int64` becomes `Int64 = Int64`). This happens transparently via the [`TypeCoercion`] analyzer rule, so you rarely need to cast join keys manually.
 
 ```rust
@@ -591,15 +592,20 @@ The diagram below shows safe upcasting paths—conversions that preserve data wi
 
 **Data Type interactions**
 
-- **Numeric**:<br> Integers widen to the largest container (`Int32 + Int64 → Int64`). Mixed with floats, the result is `Float64`. Decimals preserve precision when combined with integers.
+- **Numeric**:
+  Integers widen to the largest container (`Int32 + Int64 → Int64`). Mixed with floats, the result is `Float64`. Decimals preserve precision when combined with integers.
 
-- **Temporal**:<br> Dates promote to `Timestamp` for comparisons and arithmetic. Timezones must match—cast explicitly to align them. `Date64` is rarely used; dates typically coerce directly to `Timestamp(ns)`.
+- **Temporal**:
+  Dates promote to `Timestamp` for comparisons and arithmetic. Timezones must match—cast explicitly to align them. `Date64` is rarely used; dates typically coerce directly to `Timestamp(ns)`.
 
-- **Strings**:<br> `Utf8`, `LargeUtf8`, and `Utf8View` auto-align via planner-inserted casts. No automatic coercion from string columns to numeric/temporal types (though string _literals_ may be coerced in some contexts).
+- **Strings**:
+  `Utf8`, `LargeUtf8`, and `Utf8View` auto-align via planner-inserted casts. No automatic coercion from string columns to numeric/temporal types (though string _literals_ may be coerced in some contexts).
 
-- **Boolean**:<br> Does not auto-coerce to numeric. Use explicit `CAST(bool_col AS Int32)` if needed.
+- **Boolean**:
+  Does not auto-coerce to numeric. Use explicit `CAST(bool_col AS Int32)` if needed.
 
-- **NULL**:<br> Adopts the other operand's type in expressions—this is safe widening. A standalone `NULL` remains untyped until context determines it.
+- **NULL**:
+  Adopts the other operand's type in expressions—this is safe widening. A standalone `NULL` remains untyped until context determines it.
 
 **The core rules:**
 
@@ -823,9 +829,12 @@ The most commonly used methods for both patterns:
 
 Schema lookups can fail — a column may not exist, or a name may be ambiguous after a join. Pick the pattern that matches your goal:
 
-1. **Guard clause** <br> check with `has_column_*()` before accessing; use when you need to branch.
-2. **Explicit match**<br> `match` on `field_with_*()` result; use when you need informative error messages. This is the most common pattern for error handling.
-3. **Propagate with [`?`]**<br> `field_with_*().map_err(...)?`; use in pipeline functions that should fail fast.
+1. **Guard clause**
+   check with `has_column_*()` before accessing; use when you need to branch.
+2. **Explicit match**
+   `match` on `field_with_*()` result; use when you need informative error messages. This is the most common pattern for error handling.
+3. **Propagate with [`?`]**
+   `field_with_*().map_err(...)?`; use in pipeline functions that should fail fast.
 
 ```rust
 use datafusion::prelude::*;
@@ -916,7 +925,7 @@ Use these when you need to pass the schema to **Arrow ecosystem** functions (com
 | [`df.schema().inner()`][`.inner()`]       | `&SchemaRef` (`&Arc<Schema>`) | Cheap cloning for Arrow functions |
 | [`df.schema().as_arrow()`][`.as_arrow()`] | `&Schema`                     | Direct reference for field access |
 
-> **Note:**<br>
+> **Note:**
 > Table qualifiers (e.g., `users.id` vs `orders.id`) are **lost** when converting to Arrow [`Schema`]. If you need qualified names for join disambiguation, stay with [`DFSchema`].
 
 ```rust
@@ -937,7 +946,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Note:** <br>
+> **Note:**
 > The [`dataframe!`] macro sets all columns to `nullable = true` by default. In production, use [`ctx.read_parquet(...)`][`.read_parquet()`], [`ctx.read_csv(...)`][`.read_csv()`], or [`ctx.read_table(...)`][`.read_table()`] to load data with their native nullability settings.
 
 ### Additional DFSchema Methods
@@ -956,7 +965,7 @@ For a complete reference of all [`DFSchema`] methods, see the [API documentation
 | [`.nullable(&column)`]                          | `Result<bool>`                           | Check if column is nullable (via [`ExprSchema`]) |
 | [`.functional_dependencies()`]                  | `&FunctionalDependencies`                | Access functional dependency constraints         |
 
-> **Note:** <br>
+> **Note:**
 > Methods taking `&column` expect a [`Column`] struct (e.g., `Column::from("name")` or `Column::new_unqualified("name")`), not a plain `&str`. The `data_type` and `nullable` methods come from the [`ExprSchema`] trait, which `DFSchema` implements.
 
 For column existence checks and index lookups (`.has_column()`, `.index_of_column()`, `.maybe_index_of_column()`), see [Validating Schemas](#validating-schemas).
@@ -977,7 +986,7 @@ When working with qualified schemas—typically after joins or when implementing
 | `.index_of_column_by_name(qualifier, name)`     | `Option<usize>`                                  | Find index by optional qualifier + name               |
 | `.is_column_from_schema(col)`                   | `bool`                                           | Check if a [`Column`] reference exists in this schema |
 
-> **Tip:** <br>
+> **Tip:**
 > Most of these methods are wrappers around [`.iter()`] with different filter/return semantics. If you need a custom lookup pattern, iterating directly with `.iter()` is often simpler than finding the right method name.
 
 ---
@@ -988,7 +997,7 @@ When working with qualified schemas—typically after joins or when implementing
 
 Use Arrow's [`Schema`], [`Field`], and [`DataType`] to build schemas that readers, writers, and the optimizer all share. Explicit schemas prevent inference drift in text formats and give the optimizer the type information it needs for efficient execution. See [The Anatomy of a DataFusion DataFrame Schema](#the-anatomy-of-a-datafusion-dataframe-schema) for the architectural background.
 
-> **Note:** <br>
+> **Note:**
 > In most DataFrame workflows, you work with Arrow's `Schema` type directly. [`DFSchema`] wraps it with table qualifiers and is created automatically when you register tables or read files. You typically create [`DFSchema`] directly only when implementing custom [`TableProvider`]s.
 
 ### Basic Schema Construction
@@ -1049,7 +1058,8 @@ Each `Field` in the schema specifies:
 - **DataType**: The type of values the column holds
 - **Nullable**: Whether `NULL` values are permitted
 
-> **Note:** <br> Always use [`SchemaRef`] (`Arc<Schema>`) for efficient sharing. Cloning an `Arc` is O(1) and avoids deep copies of the schema structure.
+> **Note:**
+> Always use [`SchemaRef`] (`Arc<Schema>`) for efficient sharing. Cloning an `Arc` is O(1) and avoids deep copies of the schema structure.
 
 #### DFSchema Construction
 
@@ -1064,7 +1074,7 @@ In most workflows, [`DFSchema`] is created automatically when you register table
 | `DFSchema::try_from_qualified_schema(qualifier, &schema)`             | `impl Into<TableReference>` + `&Schema`            | All same qualifier | Qualify every field with one table name    |
 | `DFSchema::from_field_specific_qualified_schema(qualifiers, &schema)` | `Vec<Option<TableReference>>` + `&SchemaRef`       | Per-field          | Different qualifier per field              |
 
-> **Note:** <br>
+> **Note:**
 > `try_from`, `from_unqualified_fields`, and `try_from_qualified_schema` call [`.check_names()`][`check_names()`] and return `Result`—they will error on duplicate field names. `empty()` always succeeds. For qualifier transformations on an existing `DFSchema`, see [Aligning Qualifiers](#aligning-qualifiers).
 
 ### Default Values
@@ -1107,7 +1117,8 @@ async fn main() -> datafusion::error::Result<()> {
 
 See [Handling Nullability in Transformations](#handling-nullability-in-transformations) for more patterns.
 
-> **Best practice:** <br> In production, always prefer **explicit schemas** over inference to prevent drift and ensure consistency.
+> **Best practice:**
+> In production, always prefer **explicit schemas** over inference to prevent drift and ensure consistency.
 
 ### Configuring Common Field Types
 
@@ -1115,14 +1126,14 @@ Certain data types require specific configuration to ensure correctness and prev
 
 #### Decimal Types: Precision and Scale
 
-**Why decimals matter**: <br>
+**Why decimals matter**:
 Floating-point types (Float32/Float64) can introduce rounding errors for financial calculations. Decimals provide exact arithmetic for monetary values.
 
 **What you need to specify**:
 
-- **Precision**:<br>
+- **Precision**:
   Total number of digits (maximum 38 for Decimal128)
-- **Scale**:<br>
+- **Scale**:
   Digits after the decimal point
 
 **Example**: `Decimal128(10, 2)`
@@ -1143,11 +1154,12 @@ fn main() {
 }
 ```
 
-> **Tip:** <br> When casting between decimals, ensure the target has enough precision **AND** scale. Casting `Decimal128(10, 2)` to `Decimal128(8, 2)` will fail if values exceed 6 integer digits.
+> **Tip:**
+> When casting between decimals, ensure the target has enough precision **AND** scale. Casting `Decimal128(10, 2)` to `Decimal128(8, 2)` will fail if values exceed 6 integer digits.
 
 #### Timestamp Types: Timezone Handling
 
-**Why timezone matters**:<br>
+**Why timezone matters**:
 A timestamp can represent either an absolute moment in time (with timezone) or a local time (without timezone). Mixing them causes errors.
 
 **Your two choices**:
@@ -1194,7 +1206,8 @@ fn main() {
 }
 ```
 
-> **Best practice:** <br> Pick one strategy for your entire pipeline. Most systems use UTC timestamps throughout. When you need to compare or join columns with different timezone settings, cast them to the same type first using `cast(col("ts")`, [`DataType::Timestamp(...)`] (available via the prelude).
+> **Best practice:**
+> Pick one strategy for your entire pipeline. Most systems use UTC timestamps throughout. When you need to compare or join columns with different timezone settings, cast them to the same type first using `cast(col("ts")`, [`DataType::Timestamp(...)`] (available via the prelude).
 
 #### Advanced: Field Metadata
 
@@ -1202,16 +1215,16 @@ Field metadata is used to embed rich, contextual information—such as column de
 
 Common Use Cases:
 
-- **Constraints (documentation only):**<br>
+- **Constraints (documentation only):**
   `primary_key`, `unique`, `foreign_key`
-- **Data Lineage:**<br>
+- **Data Lineage:**
   `source_system`, `ingest_time`, `source_column`
 - **Compliance & Security:**
   `pii` (Personally Identifiable Information), `encryption_required`
 - **Documentation:**
   `description`, `owner`, `version`
 
-> **Warning:** <br>
+> **Warning:**
 > Storing `primary_key=true` in Arrow metadata is for documentation and external systems only—the DataFusion optimizer does not read it. For optimizer-level benefits (e.g., functional dependencies, join elimination), express constraints through DataFusion's dedicated [`Constraints`] API on the table or plan.
 
 ```rust
@@ -1259,17 +1272,18 @@ fn main() {
 
 **Best Practices and Considerations**
 
-- **Standardize your format**:<br>
+- **Standardize your format**:
   use lowercase snake_case keys and parseable values (e.g., `"true"`, ISO 8601 timestamps/durations).
-- **Re‑attach intentionally**:<br>
+- **Re‑attach intentionally**:
   derived/aggregated columns don't inherit metadata—add it on the final output schema if needed.
-- **Verify format support**:<br>
+- **Verify format support**:
   Arrow IPC preserves metadata; Parquet can embed it, but DataFusion skips file-level schema metadata by default (`skip_metadata = true`)—set `skip_metadata(false)` in Parquet options if you rely on it; CSV/NDJSON do not carry metadata at all.
-- **Reconcile on merge**:<br>
+- **Reconcile on merge**:
   when sources disagree, prefer a canonical schema and explicitly resolve conflicts.
-- **Keep it small**:<br>
+- **Keep it small**:
   avoid large blobs; store long docs externally and reference via a short key (e.g., `doc_url`).
-- **Validate early**:<br> add lightweight checks in tests/pipeline (e.g., require `owner`, `schema_version`, `pii` flags where applicable).
+- **Validate early**:
+  add lightweight checks in tests/pipeline (e.g., require `owner`, `schema_version`, `pii` flags where applicable).
 
 ---
 
@@ -1292,7 +1306,7 @@ Inference behavior varies by format. CSV uses **positional** alignment (column i
 | **Default sample size** | 1,000                                                                | 1,000                                             |
 | **Type inference**      | Attempts numeric/boolean detection; falls back to `Utf8`             | Infers from JSON value types (`number`, `string`) |
 
-> **Tip:** <br>
+> **Tip:**
 > For detailed format behavior with explicit schemas, see [Strategy 1: Text Formats](#strategy-text-formats).
 
 If inference is necessary, increase the sample size to reduce the risk of missing columns or mistyped fields:
@@ -1323,10 +1337,10 @@ fn main() {
 | Interactive exploration / prototyping      | **Inference OK** — validate before relying on results |
 | Single-file reads with uniform structure   | **Inference OK** — lower risk of missing fields       |
 
-> **Warning:** <br>
+> **Warning:**
 > Inference can drift as data evolves. A column that appears as `Int64` in the first 1,000 rows may contain floats later, causing runtime parse errors. Validate inferred schemas before deploying to production.
 
-**See also:**<br>
+**See also:**
 
 - [Creating Schemas](#creating-schemas) for constructing explicit schemas.
 - [Applying Schemas and Modeling Data](#applying-schemas-and-modeling-data) for format-specific configuration.
@@ -1336,7 +1350,9 @@ fn main() {
 
 ## Applying Schemas and Modeling Data
 
-A schema defines the structure of your data—column names, types, nullability, and nested structures. Applying schemas when reading files enables planning-time validation, improves query performance, and ensures data quality. This section covers schema strategies for different file formats, handling schema evolution, partition pruning, and modeling nested data. <br> **See also:**
+A schema defines the structure of your data—column names, types, nullability, and nested structures. Applying schemas when reading files enables planning-time validation, improves query performance, and ensures data quality. This section covers schema strategies for different file formats, handling schema evolution, partition pruning, and modeling nested data.
+
+**See also:**
 
 - [Data Model & Schema](./concepts.md#data-model--schema) for fundamentals and
 - [Creating DataFrames](./creating-dataframes.md) for file reading basics.
@@ -1421,7 +1437,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Warning:** <br>
+> **Warning:**
 > Schema inference samples only the first 1,000 rows by default ([`schema_infer_max_records`]). Common pitfalls: IDs inferred as `Int32` then overflow, currency inferred as `Float64` (rounding errors), sparse columns inferred as `Utf8`. Always provide explicit schemas for CSV in production.
 
 #### NDJSON — Name-Based Alignment with Flexible Structure
@@ -1678,7 +1694,7 @@ While DataFusion schemas are conceptually immutable (each operation creates a ne
 | **Combine**  | `.merge(&other)`                                        | Mutates `&mut self` | Append fields, silently skipping duplicates           |
 | **Annotate** | `.with_functional_dependencies(deps)`                   | Consumes self       | Set functional dependencies for optimization          |
 
-> **Note:** <br>
+> **Note:**
 > Methods that **consume self** (`.strip_qualifiers()`, `.replace_qualifier()`) cannot be called directly on `df.schema()`, which returns `&DFSchema`. Clone first: `df.schema().clone().strip_qualifiers()`. For per-field qualifier control, see [`with_field_specific_qualified_schema()`].
 
 ---
@@ -1743,7 +1759,7 @@ fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Warning:** <br>
+> **Warning:**
 > Stripping qualifiers after a join can create duplicate unqualified names (e.g., two `id` columns). Use `.replace_qualifier()` or rename columns first if ambiguity is possible.
 
 #### replace_qualifier
@@ -1846,7 +1862,7 @@ fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Note:** <br>
+> **Note:**
 > Unlike `.strip_qualifiers()` and `.replace_qualifier()` which consume `self`, `.with_field_specific_qualified_schema()` borrows `&self`—so you can call it directly without cloning.
 
 ---
@@ -1857,7 +1873,7 @@ fn main() -> datafusion::error::Result<()> {
 
 Use [`users_schema.join(&contact_schema)`][dfschema::join] when schemas must have entirely distinct fields (e.g., after a SQL JOIN), and [`base_schema.merge(&overlapping_schema)`][dfschema::merge] when you want to accumulate fields while silently skipping duplicates (e.g., building a union schema from overlapping sources).
 
-**SQL equivalent:**<br>
+**SQL equivalent:**
 `.join()` mirrors the schema produced by `SELECT * FROM a JOIN b`; `.merge()` is closer to `UNION BY NAME` schema resolution.
 
 #### Combine Strictly with .join()
@@ -2001,7 +2017,7 @@ async fn main() -> datafusion::error::Result<()> {
 | **Drop row**          | Required field missing or would skew analysis | Missing primary key                     |
 | **Keep NULL**         | NULL is meaningful (unknown ≠ default)        | Missing survey response                 |
 
-**See also:**<br>
+**See also:**
 
 - [Concepts: Handling Null Values](./concepts.md#handling-null-values) for SQL NULL semantics and three-valued logic.
 - [Nullability](#schema-field-nullability) for the widening rule when schemas are merged.
@@ -2144,7 +2160,7 @@ fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Tip:** <br>
+> **Tip:**
 > Use `.has_equivalent_names_and_types()` in tests and pipeline entry points—its error messages pinpoint exactly which field mismatches, saving debugging time.
 
 ---

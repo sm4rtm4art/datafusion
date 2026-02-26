@@ -19,6 +19,20 @@
 
 # Selection and Projection Mastery
 
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Selection and Projection Mastery
+```
+
+## Introduction (placeholder)
+
 **Projection controls the shape of your output—choosing which columns to keep, computing derived values, and reducing memory footprint by discarding what you don't need.**
 
 DataFusions DataFrame-API provides methods for every projection need: simple name-based selection via [`.select_columns()`], expression-based computation with [`.select()`], adding columns with [`.with_column()`], renaming via [`.with_column_renamed()`], and removal with [`.drop_columns()`]. Projection pushdown ensures only requested columns are read from the data source.

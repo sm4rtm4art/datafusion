@@ -19,6 +19,20 @@
 
 # Window Functions
 
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Window Functions
+```
+
+## Introduction (placeholder)
+
 Window functions compute analytics (running totals, rankings, moving averages) **per row** without collapsing rows like `GROUP BY` does. Each row "sees" a window of related rows, defined by `PARTITION BY`, `ORDER BY`, and an optional frame.
 
 In the DataFrame API you build window expressions with the [`ExprFunctionExt`] builder:

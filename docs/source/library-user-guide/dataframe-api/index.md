@@ -32,29 +32,15 @@ DataFusion [`DataFrame`]s are modeled after the [Pandas DataFrame] interface and
 - **Strict type uniformity**: Each column enforces a single Arrow [`DataType`]—heterogeneous types within a column are not permitted, maintaining Arrow's type safety and vectorization guarantees
 - **Immutable transformations**: DataFrame methods return new DataFrames, leaving the original unchanged (functional programming style)
 
-```{contents}
-:local:
-:depth: 2
-```
-
-````{toctree}
-:maxdepth: 2
-
-concepts
+```{toctree}
+:maxdepth: 1
+:caption: Table of Contents for DataFrame API Documentation
+Concepts/index
 Creating-Dataframes/index
-Creating-Dataframes/Creating-DataFrames-From-Files/index
-schema-management
 Schema-Management/index
-transformations
 Transformations/index
-writing-dataframes
 Writing-Dataframes/index
-best-practices
-dataframes-advance
-Test-sphinx
-´´´
-
-<!--Transformations/index.rst-->
+```
 
 ## The DataFrame Lifecycle
 
@@ -110,7 +96,7 @@ LIMIT 10                     df.limit(0, Some(10))?
 JOIN ... USING (id)          left.join(right, JoinType::Inner, &["id"], &["id"], None)?
 DISTINCT                     df.distinct()?
 UNION ALL                    df1.union(df2)?
-````
+```
 
 **Execution actions:**
 

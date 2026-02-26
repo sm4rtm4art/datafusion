@@ -43,6 +43,7 @@ This guide compares the DataFrame API to DataFusion's [SQL API](../using-the-sql
 
 :::{admonition} Style Note
 :class: note
+:collapsible: closed
 
 In this document, all code elements are highlighted with backticks.
 

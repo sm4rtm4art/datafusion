@@ -15,7 +15,7 @@
   KIND, either express or implied.  See the License for the
   specific language governing permissions and limitations
   under the License.
--->s
+-->
 
 <!-- TODO: Migration Checklist
 
@@ -47,26 +47,24 @@ In this document, all code elements are highlighted with backticks.
 
 :::
 
-```{contents}
-:local:
-:depth: 2
-```
-
 ```{toctree}
-:maxdepth: 2
-:caption: Creation Methods
+:maxdepth: 1
+:caption: Table of Contents for Creation of DataFusion DataFrames
+:numbered:
 
+Creating-DataFrames-From-Files/index
+advanced
 catalog-and-context
-from-files
+extension-links
 from-sql
+in-line-creation
 in-memory
+registered-tables
 session-configuration
 streaming
-extension-links
-advanced
 ```
 
-## Introduction
+## Introduction (Placeholder)
 
 **DataFusion provides multiple pathways to create a DataFrame—each optimized for different data sources, yet all converging on a single, powerful abstraction.**
 

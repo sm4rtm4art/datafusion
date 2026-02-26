@@ -33,7 +33,13 @@ This documentation explores the conceptual foundation: what a DataFrame _is_ (a 
 - [Write](writing-dataframes.md)
 
 :::{admonition} Style Note
-:class: note
+
+---
+
+:class: note  
+:collapsible: closed
+
+---
 
 In this document, all code elements are highlighted with backticks.
 
@@ -41,10 +47,9 @@ In this document, all code elements are highlighted with backticks.
 - standalone functions `method()` (e.g `col()`)
 - static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
 - Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+  :::
 
-:::
-
-```{contents}
+```{contents} Table of Contents for Concepts of DataFrames
 :local:
 :depth: 2
 ```
@@ -651,7 +656,7 @@ fn main() -> Result<()> {
     // score: NULL, 92, 85
 
     // DESC: nulls last
-    let desc_nulls_last = df.sort(vec![col("score").sort(false, false)])?;
+    let desc_nulls_last = df.clone().sort(vec![col("score").sort(false, false)])?;
     // score: 92, 85, NULL
 
     Ok(())

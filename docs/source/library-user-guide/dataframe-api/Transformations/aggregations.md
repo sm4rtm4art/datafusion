@@ -19,6 +19,20 @@
 
 # Aggregation Patterns
 
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Aggregation Patterns
+```
+
+## Introduction (placeholder)
+
 **Aggregation collapses rows into summary statistics—transforming thousands of individual records into meaningful totals, averages, and counts that reveal patterns in your data.**
 
 Aggregate functions like [`sum()`], [`avg()`], [`count()`], [`min()`], and [`max()`] reduce multiple values to a single result. The [`.aggregate()`] method takes two arguments:

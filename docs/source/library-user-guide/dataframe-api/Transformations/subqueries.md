@@ -17,9 +17,21 @@
   under the License.
 -->
 
-<!-- TODO: PLACE IN EXTRA SUBFILE-->
+# Subqueries
 
-## Subqueries
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Subqueries
+```
+
+## Introduction (placeholder)
 
 **Subqueries embed one query inside another—enabling comparisons against computed values or filtered datasets.** <br>
 

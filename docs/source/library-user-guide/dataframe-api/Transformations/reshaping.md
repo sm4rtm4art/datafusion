@@ -17,7 +17,21 @@
   under the License.
 -->
 
-## Reshaping Data
+# Reshaping Data
+
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Reshaping Data
+```
+
+## Introduction (placeholder)
 
 **Reshaping transforms the structure of your data—changing rows to columns or columns to rows without altering the underlying values.** <br>
 

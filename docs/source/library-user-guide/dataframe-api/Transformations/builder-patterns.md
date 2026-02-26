@@ -17,7 +17,21 @@
   under the License.
 -->
 
-## Builder Methodology: Architecting with DataFrames
+# Builder Methodology: Architecting with DataFrames
+
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Builder Methodology: Architecting with DataFrames
+```
+
+## Introduction (placeholder)
 
 **The DataFrame API isn't just SQL with different syntax—it's a programmatic _builder_ for query plans that integrates with Rust's type system, control flow, and tooling.**
 

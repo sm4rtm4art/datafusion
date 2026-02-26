@@ -25,7 +25,7 @@
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Creation DataFrames from SQL Queries
 :local:
 :depth: 2
 :caption: Creation DataFrames from SQL Queries

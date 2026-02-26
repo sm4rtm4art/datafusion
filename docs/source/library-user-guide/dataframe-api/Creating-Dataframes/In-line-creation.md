@@ -28,7 +28,7 @@
 ```{contents}
 :local:
 :depth: 2
-:caption: Creating DataFrames From Inline Data (using the [`dataframe!`] macro)
+:caption: Creating DataFrames From Inline Data
 ```
 
 ## Introduction (placeholder)
@@ -273,7 +273,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### 2. The Empty Placeholder (Safe Unions)\*\*
+#### 2. The Empty Placeholder (Safe Unions)
 
 If you need a DataFrame with **zero rows** but a specific schema (e.g., to handle "no data found" cases while keeping a `UNION` valid), do **not** use `read_empty()`. Instead, use `read_batch` with an empty `RecordBatch`.
 

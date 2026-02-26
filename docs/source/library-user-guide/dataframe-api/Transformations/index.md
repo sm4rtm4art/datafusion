@@ -15,25 +15,6 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-```{toctree}
-:maxdepth: 2
-
-aggregations
-advanced
-builder-patterns
-catalog-and-context
-from-files
-from-sql
-in-memory
-session-configuration
-streaming
-extension-links
-reshaping
-set-operations
-subqueries
-window-functions
-```
-
 # Transformations with DataFrame API
 
 <!-- TODO: Diskuss Mayor refractoring!
@@ -52,6 +33,29 @@ Way to much content!
 - nested functions https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html ,
 -  maybe even datetime (https://docs.rs/datafusion/latest/datafusion/functions/datetime/index.html)  -->
 
+```{toctree}
+:maxdepth: 1
+:caption: Transformation methods
+:numbered:
+:titlesonly:
+aggregations
+builder-patterns
+concepts
+data-quality
+dataframe-specifics
+filtering
+hybrid-sql
+joins
+reshaping
+selection
+set-operations
+sorting-limiting
+subqueries
+window-functions
+```
+
+## Introduction (Placeholder)
+
 **The “life” phase of the DataFrame lifecycle: build and refine a lazy query plan.**
 
 Transformations are where you re-shape and analyze data: once you [create](./creating-dataframes.md) a DataFrame, you can filter, select, join, aggregate, sort, and enrich data by composing methods that build a [`LogicalPlan`]. In the [DataFrame lifecycle metaphor](./index.md#the-dataframe-lifecycle), this is the "life" phase—execution and persistence happen later (see [Writing & Executing](./writing-dataframes.md)).
@@ -65,6 +69,7 @@ In this document, all code elements are highlighted with backticks.
 
 - DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
 - standalone functions `method()` (e.g `col()`)
+
 - static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
 - Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
 
@@ -74,6 +79,17 @@ In this document, all code elements are highlighted with backticks.
 :local:
 :depth: 2
 ```
+
+## Introduction
+
+Transformations allow you to shape, filter, enrich, and analyze your data through a series of composable, type-safe operations. Unlike SQL, where queries are often monolithic strings, DataFrames allow you to **build queries programmatically**. This approach shines when you need to:
+
+- **Chain operations** into readable, logical pipelines.
+- **Build queries dynamically** based on runtime conditions or configuration.
+- **Leverage the Rust type system** to catch errors at compile time.
+- **Reuse logic** by encapsulating complex transformations into functions.
+
+The following diagram illustrates the conceptual position in the DataFrame architecture. Both the SQL API and the DataFrame API share the same [`SessionContext`] and converge to the same [`LogicalPlan`] with column-based operations.<br>
 
 ## Introduction
 
@@ -108,6 +124,14 @@ The following diagram illustrates the conceptual position in the DataFrame archi
                   | Further processing...
                   v
 ```
+
+For a deeper dive, see:
+
+- [DataFrame Concepts](./concepts.md#introduction)
+- [SIGMOD 2024 Paper][datafusion paper],
+- [architecture overview on docs.rs][docs.rs]
+
+For most data transformations, the choice between SQL-API and DataFrame-APIs is primarily about ergonomics—both produce identical execution plans. However, the DataFrame API is more than just "SQL with different syntax." The DataFrame API is a programmatic **builder** for query plans, whereas the SQL API is a declarative **parser** for query strings. Research on [DataFrame Algebra][dataframe algebra] shows that the DataFrame paradigm offers a distinct way of _expressing_ data transformations. These patterns were established by the [pandas library][pandas] and continuously refined by projects like [Apache Spark] for efficient parallel, multi-node computation.
 
 For a deeper dive, see:
 

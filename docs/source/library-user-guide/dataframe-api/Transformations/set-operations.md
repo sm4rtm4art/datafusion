@@ -17,7 +17,21 @@
   under the License.
 -->
 
-## Set Operations by Name
+# Set Operations by Name
+
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Set Operations by Name
+```
+
+## Introduction (placeholder)
 
 **This is where DataFusion's [Arrow columnar design](../../user-guide/arrow-introduction.md) shines.**
 

@@ -25,8 +25,12 @@ Every query starts with data. Whether you're reading Parquet from S3, executing 
 
 In the [DataFrame lifecycle](./index.md#the-dataframe-lifecycle), creation is where you bind a data source to a query plan. The DataFrame doesn't execute yet—it's a recipe waiting to run. For the conceptual model, see [Concepts](./concepts.md). For what happens next: [Transform](./transformations.md) → [Write](./writing-dataframes.md).
 
-:::{admonition} Style Note
+```{admonition} Style Note
+---
 :class: note
+:collapsible: closed
+
+---
 
 In this document, all code elements are highlighted with backticks.
 
@@ -34,8 +38,7 @@ In this document, all code elements are highlighted with backticks.
 - standalone functions `method()` (e.g `col()`)
 - static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
 - Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
-
-:::
+```
 
 ```{contents}
 :local:

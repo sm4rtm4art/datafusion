@@ -25,12 +25,7 @@
 2. INTRODUCTION
 -->
 
-```{contents}
-:local:
-:depth: 2
-```
-
-```{toctree}
+```{contents} Table of Contents for Extension Links
 :maxdepth: 2
 :caption: Creation Methods
 ```

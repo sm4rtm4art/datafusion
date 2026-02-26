@@ -27,21 +27,18 @@
 4. GENERAL REFERENCES
 -->
 
-```{contents}
-:local:
-:depth: 2
-```
-
 ```{toctree}
-:maxdepth: 2
-:caption: Creation Methods
+:maxdepth: 1
+:caption: Supported Formats
 
-parquet
-csv
-json
-avro
-arrow
+Arrow
+Avro
+CSV
+JSON
+Parquet
 ```
+
+## Introduction (Placeholder)
 
 **Read files directly into a lazy `DataFrame`. Format choice determines optimization potential—Parquet enables metadata pruning; text formats generally require reading full files (except for partition pruning).**
 

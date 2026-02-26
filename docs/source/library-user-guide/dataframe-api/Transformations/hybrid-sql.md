@@ -48,6 +48,21 @@ Ensure the final document flows in this order:
 
 # Mixing SQL and DataFrames
 
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+3. merge the 2 bridging sections into one
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Mixing SQL and DataFrames
+```
+
+## Introduction (placeholder)
+
 DataFusion's SQL and DataFrame APIs are two interfaces to the same query engine. Because both compile to identical [`LogicalPlan`] structures, you can mix them freely within a single application—no performance penalty, no translation overhead.
 
 This section covers how to switch between APIs, when mixing makes sense, and how to choose the right data architecture for your workload. For the underlying theory, see the [Concepts][concepts] chapter.

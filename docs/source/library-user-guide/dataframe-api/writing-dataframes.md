@@ -26,7 +26,9 @@ This guide covers how to **execute** DataFrames to obtain results and **persist*
 DataFusion uses **lazy evaluation**: all transformations ([`.filter()`], [`.select()`], [`.aggregate()`]) build a [`LogicalPlan`] without processing data. Execution only happens when you call an **action method**—and because action methods take ownership, the DataFrame is consumed (use [`df.clone()`][`.clone()`] when you need multiple actions).
 
 :::{admonition} Style Note
+
 :class: note
+:collapsible: closed
 
 In this document, all code elements are highlighted with backticks.
 

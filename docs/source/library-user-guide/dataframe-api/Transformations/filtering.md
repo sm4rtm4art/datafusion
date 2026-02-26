@@ -19,6 +19,20 @@
 
 # Filtering Excellence
 
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: Filtering Excellence
+```
+
+## Introduction (placeholder)
+
 **Filtering controls which rows survive—applying predicates to discard irrelevant data early, before expensive joins or aggregations consume resources.**
 
 <!--Check Reference

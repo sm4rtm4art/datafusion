@@ -17,9 +17,21 @@
   under the License.
 -->
 
-(advanced-dataframe-patterns)=
+# DataFrame-Unique Methods
 
-## DataFrame-Unique Methods
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+-->
+
+```{contents}
+:local:
+:depth: 2
+:caption: DataFrame-Unique Methods
+```
+
+## Introduction (placeholder)
 
 **Some DataFrame methods have no SQL equivalent—these are the programmatic superpowers that justify using the DataFrame API.**
 

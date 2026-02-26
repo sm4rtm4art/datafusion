@@ -17,6 +17,22 @@
   under the License.
 -->
 
+<!--
+TODO(Docs): Fill out streaming.md (Creation Phase)
+
+1. DEFINE UNBOUNDED DATAFRAMES:
+   - Explain the difference between bounded data (Files, RecordBatches) and unbounded data (Kafka, Websockets, FIFO pipes).
+   - Explain that a DataFrame created from an unbounded source is a "Streaming DataFrame".
+
+2. HOW TO CREATE ONE:
+   - Note that DataFusion doesn't have a built-in `.read_kafka()` method out of the box.
+   - Explain that users must implement a custom `TableProvider` where `TableProvider::is_infinite()` returns `true`.
+   - Briefly mention that operations on unbounded DataFrames (like `.join()` or `.aggregate()`) require special streaming operators (like Symmetric Hash Joins or Windowed Aggregations).
+
+3. LINK TO EXECUTION:
+   - Add a note: "Once you have created an unbounded DataFrame, you MUST use `.execute_stream()` to consume it. Calling `.collect()` on an infinite stream will cause an Out Of Memory (OOM) crash." (Link to the execution streaming doc).
+-->
+
 # Creating DataFrames with Streaming
 
 <!--TODO

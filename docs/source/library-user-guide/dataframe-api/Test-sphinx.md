@@ -54,6 +54,7 @@ In the Rust DataFrame API, column names are **case-sensitive strings**. `col("Re
 
 :::{admonition} Style Note
 :class: note
+:collapsible: closed
 
 In this document, all code elements are highlighted with backticks.
 
@@ -68,7 +69,9 @@ Consider building a search API where filters depend on user input:
 
 ```{code-block} rust
 :caption: **SQL approach** — string concatenation:
-:emphasize-lines: 5
+:linenos:
+:lineon-start: 3
+:emphasize-lines: 7
 use datafusion::prelude::*;
 
 

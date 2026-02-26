@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Creating DataFrames Form Arrow [`RecordBatch`]es
+# Creating DataFrames Form Arrow RecordBatch`es
 
 <!--TODO
 
