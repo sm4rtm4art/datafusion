@@ -17,7 +17,7 @@
   under the License.
 -->
 
-## The Bigger Picture: The LLVM of Data—Origins and Outlook
+# The Bigger Picture: The LLVM of Data—Origins and Outlook
 
 **DataFusion stands on the shoulders of giants—and is actively shaping the future of data systems.**
 
@@ -30,11 +30,9 @@ Understanding where DataFusion comes from—and where it's going—helps you mak
 
 ---
 
-### Execution Model: Vectorized Volcano
+## Execution Model: Vectorized Volcano
 
-DataFusion implements a **vectorized Volcano model**, combining the classic iterator-based execution with modern batch processing. As described in the [DataFusion blog on repartitioning][volcano-blog]:
-
-DataFusion implements a **vectorized Volcano model**, combining the classic iterator-based execution with modern batch processing. Like other high-performance engines (ClickHouse, DuckDB), each operation is an operator in a DAG, and execution proceeds by calling `poll_next()` to pull batches through the pipeline.
+DataFusion implements a **vectorized Volcano model**, combining the classic iterator-based execution with modern batch processing. Like other high-performance engines (ClickHouse, DuckDB), each operation is an operator in a DAG, and execution proceeds by calling `poll_next()` to pull batches through the pipeline (see [DataFusion blog on repartitioning][volcano-blog]).
 
 **The evolution (historical background):**
 
@@ -63,7 +61,7 @@ This is why all DataFrame actions are `async fn`—they participate in cooperati
 
 ---
 
-### The LLVM Parallel: Ecosystem Role
+## The LLVM Parallel: Ecosystem Role
 
 The [SIGMOD 2024 paper][sigmod-paper] draws a parallel between DataFusion and LLVM—not in internal architecture, but in **ecosystem role**. From Section 4.1:
 
@@ -85,7 +83,7 @@ DataFusion does not use LLVM IR or JIT compilation internally. The parallel is a
 
 ---
 
-### Future Roadmap
+## Future Roadmap
 
 <!--Risky implementations, needs potentially updates!-->
 

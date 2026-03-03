@@ -17,7 +17,7 @@
   under the License.
 -->
 
-## Two Paths to the Same Plan: Parser vs Builder
+# Two Paths to the Same Plan: Parser vs Builder
 
 ```{contents} Table of Contents for Parser vs Builder
 :local:
@@ -80,7 +80,7 @@ Both compile to identical [`LogicalPlan`] representations, receive the same opti
 
 ---
 
-### In Practice: Two Paths, One Result
+## In Practice: Two Paths, One Result
 
 The following example demonstrates the interchangeability of both APIs. We query the same table using SQL (parser path) and the DataFrame API (builder path), then verify that both produce identical results. This is the core promise of DataFusion's unified architecture—choose the API that fits your workflow, knowing the outcome is the same.
 
@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
 
 ---
 
-### When to Choose Which?
+## When to Choose Which?
 
 Both APIs produce identical plans, so choose based on ergonomics:
 

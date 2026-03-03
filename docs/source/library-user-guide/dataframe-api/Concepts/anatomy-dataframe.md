@@ -17,29 +17,7 @@
   under the License.
 -->
 
-<!--
-TODO(Docs): Add a section on "Expressions (`Expr`) and Data Flow"
-
-1. EXPRESSIONS (`Expr`)
-   - WHAT TO ADD: Introduce the `Expr` concept. If `DataFrame` is the container and `LogicalPlan` contains the relational operators (Filter, Join), then `Expr` represents the row-level logic inside those operators.
-   - HOW TO EXPLAIN IT:
-     - Show a quick example: `col("a").gt(lit(10))` creates an `Expr` tree.
-     - Explain that methods like `.filter()` and `.select()` take `Expr` as arguments.
-     - Mention that `Expr`s are dialect-agnostic and evaluated at runtime against the schema.
-     - (Optional but helpful: Link to the `Expr` API docs or a dedicated expressions guide).
-
-2. RECORD BATCHES & PARTITIONS
-   - WHAT TO ADD: A brief conceptual bridge between the execution plan and the actual data.
-   - HOW TO EXPLAIN IT:
-     - Clarify that a DataFrame doesn't hold data as one giant table in memory.
-     - Explain that under the hood, data is divided into **partitions** (enabling parallel processing via Tokio).
-     - Execution streams these partitions as **RecordBatches** (Arrow's chunked, columnar format) rather than row-by-row.
-     - Tie this back to why `.execute_stream()` is memory-efficient compared to `.collect()`.
-
-Placement suggestion: Put the `Expr` explanation right after "DataFrame Structure: LogicalPlan + SessionState" (since it naturally flows from explaining the LogicalPlan), and put the Partitions/RecordBatches explanation right after the "Execution Model / Tokio" section.
--->
-
-## Anatomy of a Dataframe: LogicalPlan + SessionState
+# Anatomy of a Dataframe: LogicalPlan + SessionState
 
 ```{contents} Table of Contents for Anatomy of a Dataframe
 :local:
@@ -52,14 +30,14 @@ Understanding what a `DataFrame` actually _contains_ explains why queries are re
 
 Every [`DataFrame`] pairs two components:
 
-- **[`LogicalPlan`]** — the query recipe (_what_ to compute)
+- **[`LogicalPlan`]** — the query recipe (_what_ to compute). Each node in the plan carries a [`DFSchema`] that validates column names, types, and provenance at plan-build time (see [DFSchema: The Schema Layer](#dfschema-the-schema-layer) below).
 - **[`SessionState`]** — a frozen snapshot of the execution environment (_how_ to compute it)
 
 The [`SessionContext`] is mutable and evolves over your session, but each `DataFrame` captures an **immutable snapshot** the [`SessionState`] at creation time. Transformations return new DataFrames with updated plans but the same snapshot; actions execute using that frozen state.
 
 ---
 
-### Inside a DataFrame: Step by Step
+## Inside a DataFrame: Step by Step
 
 **Think of query execution like cooking—the recipe alone isn't enough; you need the kitchen too.**
 
@@ -163,7 +141,41 @@ DataFrame → create_physical_plan() → ExecutionPlan
 
 ---
 
-### DataFrame vs. LogicalPlanBuilder
+## DFSchema: The Schema Layer
+
+**Every `LogicalPlan` node knows exactly what columns it produces — before any data is touched.**
+
+[`DFSchema`] is DataFusion's schema wrapper around Arrow's `Schema`. While Arrow's `Schema` describes columnar data at rest (column name + data type + nullable), `DFSchema` adds the metadata the query planner needs:
+
+| What `DFSchema` tracks                      | Why it matters                                                     |
+| :------------------------------------------ | :----------------------------------------------------------------- |
+| **Column names + data types + nullability** | Same as Arrow `Schema` — the basics                                |
+| **Table qualifier** (e.g., `orders.amount`) | Disambiguates columns after joins involving same-named columns     |
+| **Functional dependencies**                 | Tracks which columns uniquely determine others (used by optimizer) |
+
+**Where `DFSchema` lives in the plan:**
+
+Every node in a `LogicalPlan` tree carries its own `DFSchema`. When you chain transformations, DataFusion validates the schema at each step:
+
+```text
+Aggregate(group=[region], agg=[sum(amount)])   ← DFSchema: {region: Utf8, sum(amount): Float64}
+  └─ Filter(amount > 100)                      ← DFSchema: {region: Utf8, amount: Int64, ...}
+       └─ TableScan("sales")                   ← DFSchema: {id: Int64, region: Utf8, amount: Int64}
+```
+
+This means schema errors are caught **at plan-build time**, not at execution time. If you reference a column that doesn't exist, the `.filter()` or `.select()` call fails immediately with a clear error — long before any data is scanned.
+
+**Key takeaways:**
+
+- `DFSchema` validates every transformation as you build it — **fail-fast by design**.
+- Table qualifiers prevent ambiguity in joins (`a.id` vs `b.id`).
+- The optimizer uses schema metadata (functional dependencies, nullability) to apply more aggressive rewrites.
+
+> **Deep dive:** For the full schema API — creating schemas, coercion rules, inspection methods, and schema-aware DataFrame operations — see the [Schema Management](../Schema-Management/index.md) section.
+
+---
+
+## DataFrame vs. LogicalPlanBuilder
 
 [`DataFrame`] methods are thin wrappers around [`LogicalPlanBuilder`]—they produce identical plans:
 
@@ -216,7 +228,7 @@ async fn main() -> Result<()> {
 
 ---
 
-### Advanced: Converting Between `DataFrame` and `LogicalPlan`
+## Advanced: Converting Between `DataFrame` and `LogicalPlan`
 
 **For most users, the DataFrame API is sufficient. This section is for advanced use cases.**
 
