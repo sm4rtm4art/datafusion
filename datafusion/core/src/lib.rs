@@ -1186,6 +1186,13 @@ doc_comment::doctest!(
     library_user_guide_dataframe_api
 );
 
+// Testing code and sphinx
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Test-sphinx.md",
+    dataframe_api_test_sphinx
+);
+
 #[cfg(doctest)]
 doc_comment::doctest!(
     "../../../docs/source/library-user-guide/dataframe-api/index.md",
@@ -1196,6 +1203,42 @@ doc_comment::doctest!(
 doc_comment::doctest!(
     "../../../docs/source/library-user-guide/dataframe-api/concepts.md",
     dataframe_api_concepts
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/anatomy-dataframe.md",
+    dataframe_api_concepts_anatomy_dataframe
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/builder-parser.md",
+    dataframe_api_concepts_builder_parser
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/execution-lifecycle.md",
+    dataframe_api_concepts_execution_lifecycle
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/sessioncontext.md",
+    dataframe_api_concepts_sessioncontext
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/expressions.md",
+    dataframe_api_concepts_expressions
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/architectural.md",
+    dataframe_api_concepts_architectural
 );
 
 #[cfg(doctest)]
