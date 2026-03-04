@@ -19,24 +19,20 @@
 
 # Execution Lifecycle
 
-**Nothing runs until you ask for results.**
+**Nothing runs until you ask for results — lazy execution lets the optimizer rewrite your query before a single byte is read.**
 
-In DataFusion, a Data**Frame** is not your data — it's the _frame_ around your data. Think of it literally: a framework defining where data lives, how it flows through the query engine, and the environment in which transformations execute.
-
-DataFusion's DataFrames are lazy — not in a bad way, but in an efficient way. When you call [`.filter()`] or [`.join()`], nothing happens yet. You're constructing a [`LogicalPlan`] — the recipe describing _what_ to compute. The DataFrame **wraps** this plan together with a [`SessionState`] snapshot that freezes _how_ to compute it. This pairing ensures reproducibility: re-executing a DataFrame uses the same configuration, catalogs, and query start timestamp, even if the [`SessionContext`] has since changed. (For the technical details, see [Anatomy of a DataFrame](anatomy-dataframe.md).)
+You've seen that a [`DataFrame`] pairs a [`LogicalPlan`] with a [`SessionState`] snapshot (see [Anatomy of a DataFrame](anatomy-dataframe.md)). DataFrames are lazy: calling [`.filter()`] or [`.join()`] merely extends the plan — the recipe describing _what_ to compute. The `SessionState` freezes _how_ to compute it, ensuring reproducibility even if the [`SessionContext`] changes later. This section follows the plan from construction through optimization to streaming results, explaining what happens at each stage and why deferring execution produces faster queries.
 
 ```{contents} Table of Contents for Execution Lifecycle
 :local:
 :depth: 2
 ```
 
----
+## The Lifecycle at a Glance
 
-## How Queries Flow Through DataFusion
+**The journey from lazy plan to streaming results has one clear boundary: the action call.**
 
-**From entry point to streaming results — the complete picture.**
-
-The diagram below traces the journey from lazy plan to concrete results, showing why deferring execution lets the optimizer reorder operations, push predicates to data sources, and select efficient algorithms:
+Everything above the **ACTION line** is **lazy** (building a plan -> no execution / work); everything below happens **only when you call [`.collect()`], [`.show()`], or [`.write_*()`][`.write_parquet()`]**. The diagram traces the full journey, showing why deferring execution lets the optimizer reorder operations, push predicates to data sources, and select efficient algorithms:
 
 ```text
 ┌───────────────────────────────────────────────────────────────┐
@@ -63,10 +59,10 @@ The diagram below traces the journey from lazy plan to concrete results, showing
         │  1. LogicalPlan (Abstract Query)         │
         │  2. SessionState (Snapshot of Context)   │
         └─────────────────────┬────────────────────┘
-                              │
-══════════════════════════════╪═══════════════════ ACTION
+                              │                          LAZY
+══════════════════════════════╪═══════════════════ ACTION BOUNDARY
                               │ (.collect / .show / .write)
-                              ▼
+                              ▼                          EAGER
         ┌──────────────────────────────────────────┐
         │            Logical Optimizer             │
         │ (Predicate Pushdown, Projection Pruning) │
@@ -91,76 +87,56 @@ The diagram below traces the journey from lazy plan to concrete results, showing
         └──────────────────────────────────────────┘
 ```
 
-**Reading the diagram:**
+::::::{admonition} Reading the diagram
+:class: seealso
 
-- **SessionContext (top):**
-  The primary entry point holding your catalog, function registry, and configuration.
-- **SQL API / DataFrame API → DataFrame:**
-  Both paths converge to the same `DataFrame` structure — an immutable handle wrapping a `LogicalPlan` (what to compute) and a `SessionState` snapshot (frozen context for reproducibility).
-- **ACTION boundary:**
-  Nothing executes until you call `.collect()`, `.show()`, or `.write_*()`. Above the line is lazy; below is eager.
-- **Logical Optimizer → Physical Planner → Physical Optimizer:**
-  The logical optimizer rewrites the plan (predicate pushdown, projection pruning), the physical planner chooses algorithms (hash join vs. sort-merge), and the physical optimizer adds parallelism and batching.
-- **Execution (Tokio):**
-  Pull-based streaming via `poll_next()` — data flows as `RecordBatch` chunks through operators in parallel.
+:::{admonition} SessionContext (top container)
+:class: note
+The primary entry point holding your catalog, function registry, and configuration.
+:::
 
-> **Glossary snapshot**
->
-> - **[`SessionContext`]**: Entry point for creating DataFrames, configuring execution, and registering tables/functions.
-> - **[`SessionState`]**: Captured snapshot of context configuration and catalog state used when executing a DataFrame.
-> - **[`DataFrame`]**: Lazy wrapper pairing a `LogicalPlan` with a `SessionState` snapshot; transformations build plans, actions execute them.
-> - **[`LogicalPlan`]**: Tree describing _what_ to compute (projection, filter, join, etc.).
-> - **[`ExecutionPlan`]**: Physical operator tree describing _how_ to compute (hash aggregate, parquet scan, shuffle, etc.).
-> - **[`RecordBatch`]**: Arrow data structure representing a chunk of rows in columnar form; execution produces streams of batches.
->
-> For deeper architectural details — thread scheduling, memory management, crate organization — see the [Architecture section] in the API documentation.
+:::{admonition} SQL API / DataFrame API → DataFrame
+:class: note
+Both paths converge to the same `DataFrame` structure — an immutable handle wrapping a `LogicalPlan` (what to compute) and a `SessionState` snapshot (frozen context for reproducibility).
+:::
 
----
+:::{admonition} ACTION boundary
+:class: note
+Nothing executes until you call `.collect()`, `.show()`, or `.write_*()`. Above the line is lazy; below is eager.
+:::
 
-## The Lifecycle at a Glance
+:::{admonition} Logical Optimizer → Physical Planner → Physical Optimizer
+:class: note
+The logical optimizer rewrites the plan (predicate pushdown, projection pruning), the physical planner chooses algorithms (hash join vs. sort-merge), and the physical optimizer adds parallelism and batching.
+:::
 
-The journey from "build a query" to "get results" has a clear boundary: the **action call**. Everything above is **lazy** (just building a plan); everything below happens **only when you call [`.collect()`], [`.show()`], or [`.write_*()`][`.write_parquet()`]**:
+:::{admonition} Execution (Tokio)
+:class: note
+Pull-based streaming via `poll_next()` — data flows as `RecordBatch` chunks through operators in parallel.
+:::
 
-```text
-PHASE             COMPONENT                  WHAT HAPPENS
-──────────────────────────────────────────────────────────────────────────────
-                 ┌────────────────────┐
-  CONSTRUCTION   │   SessionContext   │      Entry point, holds config
-    (User)       └─────────┬──────────┘
-                           ▼
-                 ┌────────────────────┐
-                 │     DataFrame      │      Wraps LogicalPlan + SessionState
-                 └─────────┬──────────┘
-                           ▼
-                 ┌────────────────────┐
-      LAZY       │    LogicalPlan     │      The "what" — built by transforms
-   (no work)     └─────────┬──────────┘      (.filter, .select, .join, etc.)
-                           │
-  ═══════════════════════════════════════════ ACTION (.collect/.show/.write) ═
-                           │
-                           ▼
-                 ┌────────────────────┐
-                 │     Optimizer      │      Rewrites plan (pushdown, pruning)
-                 └─────────┬──────────┘
-                           ▼
-                 ┌────────────────────┐
-    EAGER        │   ExecutionPlan    │      The "how" — concrete algorithms
-   (work!)       └─────────┬──────────┘
-                           ▼
-                 ┌────────────────────┐
-                 │    Task Runner     │      Parallel execution (Tokio)
-                 └─────────┬──────────┘
-                           ▼
-                 ┌────────────────────┐
-                 │   RecordBatches    │      Streaming Arrow data chunks
-                 └────────────────────┘
-```
+::::::
+
+:::{admonition} Glossary snapshot
+:class: seealso
+
+- **[`SessionContext`]**: Entry point for creating DataFrames, configuring execution, and registering tables/functions.
+- **[`SessionState`]**: Captured snapshot of context configuration and catalog state used when executing a DataFrame.
+- **[`DataFrame`]**: Lazy wrapper pairing a `LogicalPlan` with a `SessionState` snapshot; transformations build plans, actions execute them.
+- **[`LogicalPlan`]**: Tree describing _what_ to compute (projection, filter, join, etc.).
+- **[`ExecutionPlan`]**: Physical operator tree describing _how_ to compute (hash aggregate, parquet scan, shuffle, etc.).
+- **[`RecordBatch`]**: Arrow data structure representing a chunk of rows in columnar form; execution produces streams of batches.
+
+For deeper architectural details — thread scheduling, memory management, crate organization — see the [Architecture section] in the API documentation.
+:::
 
 ---
 
 ## DataFrame Method Categories
 
-Understanding which methods are **lazy** and which trigger **eager** execution is essential—it determines when work actually happens.
+**Every DataFrame method is either a lazy transformation that builds the plan, or an eager action that triggers execution.**
+
+Understanding which methods are **lazy** and which trigger **eager** execution is essential — it determines when work actually happens.
 
 | Category              | Lazy/Eager | Purpose                              | Examples                                                                        |
 | --------------------- | ---------- | ------------------------------------ | ------------------------------------------------------------------------------- |
@@ -169,159 +145,46 @@ Understanding which methods are **lazy** and which trigger **eager** execution i
 | **Write Actions**     | Eager      | Execute and persist results to files | [`.write_parquet()`], [`.write_csv()`], [`.write_table()`]                      |
 | **Introspection**     | Lazy\*     | Inspect plan metadata                | [`.schema()`], [`.explain()`], [`.logical_plan()`], [`.into_optimized_plan()`]  |
 
-**How to read this:**
+\* **Introspection methods** access or transform the plan itself without scanning data. The exception is [`.explain()`] with `analyze = true`, which triggers full execution to gather runtime statistics.
 
-- **Transformations** <br>
-  Return a new `DataFrame` wrapping an extended `LogicalPlan`. Chain as many as you like—no data moves until you call an action.
-- **Execution Actions** <br>
-  Cross the **ACTION boundary** from the lifecycle diagram: they trigger the Optimizer, create an `ExecutionPlan`, and run it. Results flow back as `RecordBatch`es.
-- **Write Actions** <br>
-  Do the same as execution actions, but stream results to files instead of returning them to your code. _Higher computation is to expected due to I/O and disc-writing costs._
-- **Introspection** (*) <br>
-  Methods access plan metadata without executing. Exception: [`.explain()`] with `analyze = true` *does\* execute to gather runtime statistics.
+::::::{admonition} Additional context
+:class: seealso
+
+:::{admonition} Transformations
+:class: note
+Return a new `DataFrame` wrapping an extended `LogicalPlan`. Chain as many as you like—no data moves until you call an action.
+:::
+
+:::{admonition} Execution Actions
+:class: note
+Cross the **ACTION boundary** from the lifecycle diagram: they trigger the Optimizer, create an `ExecutionPlan`, and run it. Results flow back as `RecordBatch`es.
+:::
+
+:::{admonition} Write Actions
+:class: note
+Needs execution for processing, but stream results to files instead of returning them to your code. **Higher computation is to be expected due to I/O and disk-writing costs.**
+:::
+
+:::{admonition} Introspection
+:class: information
+Methods access plan metadata without executing. Exception: [`.explain()`] with `analyze = true` \*does\* execute to gather runtime statistics.
+:::
+
+::::::
+
+:::{admonition} Further reading
+:class: seealso
 
 For the complete method reference, see [Transformations](transformations.md).
-
----
-
-## Ownership vs. Execution: Why You See `.clone()` Everywhere
-
-> **Rust-Specific:** <br>
-> This section explains Rust ownership semantics. If you're calling DataFusion from Python or another language, these details are handled automatically.
-
-The DataFusion DataFrame-API is written in Rust, enabling Rust's ownership model with all its safety guarantees. Most action methods take `self` (not `&self`), meaning calling an action **transfers ownership** of the DataFrame handle into the method. After the call, Rust's compiler won't let you use that variable again—not because the DataFrame was mutated, but because ownership moved elsewhere. This is why you'll see `.clone()` calls throughout DataFusion code: cloning creates a second handle so you can use one and keep the other.
-
-**What's actually happening:**
-
-- A `DataFrame` is a **lightweight handle:** <br>
-  Just an `Arc`-wrapped `LogicalPlan` + `SessionState` snapshot.
-- **Transformations are immutable:** <br>
-  Methods like `.filter()` and `.select()` return _new_ DataFrames; they don't mutate the original.
-- **Actions consume the handle;** <br>
-  Actions or executions like `.collect()` takes ownership of the handle, but your source data (Parquet files, tables) remains untouched (read only).
-- **Cloning is cheap:** <br>
-  Cloning is cheap because you're cloning reference-counted pointers, not copying data.
-
-**Clone costs in Rust — what's cheap vs. expensive:**
-
-| Type               | Clone operation             | Cost                         | Example                  |
-| ------------------ | --------------------------- | ---------------------------- | ------------------------ |
-| `Arc<T>`, `Rc<T>`  | Increment reference counter | **Cheap** (single atomic op) | `DataFrame`, `SchemaRef` |
-| `String`, `Vec<T>` | Allocate + copy all bytes   | **Expensive** (O(n))         | Avoid in hot paths       |
-| `RecordBatch`      | Clone `Arc`-wrapped arrays  | **Cheap**                    | Arrow data sharing       |
-
-DataFusion's `DataFrame` wraps its internals in `Arc`, so `df.clone()` is a standard Rust pattern that costs virtually nothing—clone freely when you need multiple handles to the same plan.
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let df = dataframe!(
-        "id" => [1, 2, 3],
-        "value" => ["a", "b", "c"]
-    )?;
-
-    // Clone the handle to use the same plan twice
-    // (cheap: just incrementing Arc reference counts)
-    df.clone().show().await?;   // First execution
-    let count = df.count().await?;  // Second execution (re-runs the plan)
-
-    println!("Count: {count}");
-
-    Ok(())
-}
-```
-
-> **Re-execution note:** Each action re-runs the full plan from source data. If you need to reuse computed results across multiple actions, materialize them first with [`.cache()`] or write to storage, then run subsequent actions on the materialized output.
-
----
-
-## The Tokio Async Runtime: Understanding Tokio
-
-**Datafusion uses Tokio as an async runtime for CPU-bound work.**
-
-Every DataFrame action (`.collect()`, `.show()`, `.execute_stream()`) is an `async` function. But why? DataFusion is built on [Tokio], Rust's most widely used async runtime, which serves as a work-stealing thread pool for both I/O and CPU-bound work.
-
-**Why Tokio?**
-
-DataFusion uses Tokio not just for network I/O (reading from S3, serving gRPC) but also for **CPU-bound work** like decoding Parquet, filtering rows, and computing aggregates. This might seem surprising—async is typically associated with I/O—but Tokio's work-stealing scheduler combined with Rust's zero-cost `async`/`await` makes it an excellent choice for parallelizing compute-heavy workloads.
-
-> **Design decision:** <br>
-> Older Tokio docs advised against using it for CPU-bound tasks, causing confusion. The actual guidance is: don't use the _same_ Runtime instance for both I/O and CPU-heavy work. DataFusion uses separate thread pools. Alternatives like [Rayon] were considered but rejected—Rayon has no async support, making I/O integration painful.<br>
-> See:
-
-- [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks] for the full rationale.
-
-**How It Works**
-
-When you call `.collect()` or `.execute_stream()`:
-
-1. **Partitioned Streams**:<br>
-   DataFusion creates multiple async [`Stream`]s (one per partition, controlled by [`target_partitions`])
-2. **Work Stealing**:<br>
-   Tokio's scheduler distributes work across threads—if one thread finishes early, it "steals" work from others
-3. **Cooperative Scheduling**: <br>
-   Each operator yields control after processing a batch, preventing any single task from monopolizing a thread. This enables **query cancellation**—when you press Ctrl+C, DataFusion can stop gracefully because operators regularly yield control back to Tokio (see [Cooperative scheduling module])
-
-```text
-┌─────────────┐           ┏━━━━━━━━━━━━━━━━━━━┓┏━━━━━━━━━━━━━━━━━━━┓
-│             │thread 1   ┃     Decoding      ┃┃     Filtering     ┃
-│Tokio Runtime│           ┗━━━━━━━━━━━━━━━━━━━┛┗━━━━━━━━━━━━━━━━━━━┛
-│(thread pool)│thread 2   ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
-│             │           ┃   Decoding   ┃     Filtering     ┃       ...
-│             │     ...   ┗━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━┛
-│             │thread N   ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
-└─────────────┘           ┃     Decoding      ┃     Filtering     ┃
-                          ┗━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━┛
-                         ────────────────────────────────────────────▶ time
-```
-
-**In practice: No additional configuration needed, just add `.await`**
-
-For most users, the async details are invisible—you `await` your DataFrame operations and DataFusion handles parallelism automatically:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]  // Creates the Tokio runtime
-async fn main() -> Result<()> {
-    // Operations that need .await: anything that might do I/O or parallel work
-    let df = dataframe!(
-        "id" => [1, 2, 3],
-        "value" => [100, 200, 300]
-    )?
-    .filter(col("value").gt(lit(150)))?;  // Transformation: no .await (lazy)
-
-    let results = df.collect().await?;    // Action: .await (triggers execution)
-
-    Ok(())
-}
-```
-
-**Key configuration:**
-
-| Setting               | Purpose                        | Default             |
-| --------------------- | ------------------------------ | ------------------- |
-| [`target_partitions`] | Number of parallel streams     | Number of CPU cores |
-| `batch_size`          | Rows processed before yielding | 8192                |
-
-> **Further reading:** <br>
->
-> - [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks] — why async works for compute
-> - [Using Rust async for Query Execution][async-blog] — deep dive into cooperative scheduling and query cancellation
-> - [Thread Scheduling documentation] — complete technical details
-> - [Crate Configuration](../../user-guide/crate-configuration.md) — SIMD flags, LTO, PGO, and allocator tuning for maximum performance
+:::
 
 ---
 
 ## What Happens During Execution?
 
-**Datafusion the out of the box query engine, optimizes your query for a performant execution**
+**DataFusion's out-of-the-box optimizer rewrites your query — often dramatically — before a single row is processed.**
 
-When you call an action like [`.collect()`], the lazy plan crosses the ACTION boundary and enters a multi-phase pipeline. What seems to be a simple filter operation to you, is followed by a series of optimizations and transformations by DataFusion's optimizer. Most of the time you don't have to care for this, since the out of the box query engine deals in most of the cases automatically in the background with the optimizers. DataFusion maintains a large set of optimizer rules—only the **applicable ones fire** based on your specific plan structure:
+When you call an action like [`.collect()`], the lazy plan crosses the ACTION boundary and enters a multi-phase pipeline. What looks like a simple filter to you triggers a series of optimizations that DataFusion handles automatically in the background. Only the **applicable rules fire** based on your specific plan structure:
 
 1. **Logical Optimization** ([21+ optimizer rules][optimizer-rules], multiple passes):
    - Predicate pushdown (move filters closer to scans)
@@ -340,36 +203,35 @@ When you call an action like [`.collect()`], the lazy plan crosses the ACTION bo
    - Execute partitions in parallel via Tokio
    - Spill to disk if memory limits exceeded
 
-> **Memory vs. Streaming:** [`.collect()`] buffers all results in memory—convenient but risky for large datasets. Use [`.execute_stream()`] for incremental processing, or write directly to files with [`.write_parquet()`].
+:::{admonition} Memory vs. Streaming
+:class: note
+[`.collect()`] buffers all results in memory—convenient but risky for large datasets. Use [`.execute_stream()`] for incremental processing, or write directly to files with [`.write_parquet()`].
+:::
 
----
+### Optimizer Architecture
 
-## Optimizer Architecture (For the Curious)
+DataFusion uses a **pragmatic hybrid approach** — not a Cascades-style optimizer with memoized search over equivalence classes, but a deterministic, debuggable pipeline:
 
-The `LogicalPlan` you construct via the DataFrame builder pattern is just the starting point. When you call an action, DataFusion's optimizer transforms it—often dramatically—before execution.
+- **Logical optimization:**<br> Rule-based iterative rewrites (predicate pushdown, projection pruning, etc.).
+- **Physical planning:** <br>Statistics-informed decisions where beneficial (join algorithm selection, partition count).
+- **Design philosophy:** <br>"Solid heuristic optimizer as default + extension points for experimentation" ([#1972](https://github.com/apache/datafusion/issues/1972)).
 
-DataFusion uses a **pragmatic hybrid approach**:
+The same DataFrame builder chain produces the same optimized plan every time — predictable and debuggable. While statistics are used, there's no exhaustive cost-based enumeration.
 
-- **Logical optimization:** <br>
-  Rule-based iterative rewrites (predicate pushdown, projection pruning, etc.).
-- **Physical planning:** <br>
-  Statistics-informed decisions where beneficial (join algorithm selection, partition count)
-- **Design philosophy:** <br>
-  "Solid heuristic optimizer as default + extension points for experimentation" ([#1972](https://github.com/apache/datafusion/issues/1972))
+:::{admonition} Further reading
+:class: note
 
-This is **not** a Cascades-style optimizer (no memoized search over equivalence classes). Plans are deterministic for a given query structure, and while statistics are used, there's no exhaustive cost-based enumeration. This means: the same DataFrame builder chain produces the same optimized plan every time—predictable and debuggable.
-
-> **Further reading:** <br>
-> For details on DataFusion's optimizer architecture and design philosophy, see:
-
-- [Query Optimizer guide](../query-optimizer.md)
-- [DataFusion paper (SIGMOD 2024)](https://dl.acm.org/doi/10.1145/3626246.3653368).
+- [Query Optimizer guide](../query-optimizer.md) — optimization phases and rules
+- [DataFusion paper (SIGMOD 2024)](https://dl.acm.org/doi/10.1145/3626246.3653368) — academic foundation
+  :::
 
 ---
 
 ## Why the Physical Plan Matters
 
-During query development, the `ExecutionPlan` is your window into what DataFusion will actually do. The `LogicalPlan` you build describes _what_ you want—the `ExecutionPlan` reveals _how_ it happens. Inspecting the plan before running on large data catches inefficiencies early.
+**The `ExecutionPlan` is your window into what DataFusion will actually do — inspecting it before running on large data catches inefficiencies early.**
+
+During query development, the `LogicalPlan` you build describes **what** you want — the `ExecutionPlan` reveals **how** it happens. Most of the time DataFusion's optimizer handles this automatically, but understanding the physical plan helps when you need to diagnose performance issues or verify that optimizations fired as expected.
 
 **Common scenarios where understanding the plan helps:**
 
@@ -383,24 +245,24 @@ During query development, the `ExecutionPlan` is your window into what DataFusio
 **Example: Filter placement matters**
 
 ```text
-Filter EARLY (optimized):       Filter LATE (naive):
+Filter EARLY (optimized):  Filter LATE (naive):
 
-┌─────────┐                     ┌─────────┐
-│  Scan   │ 1M rows             │  Scan   │ 1M rows
-└────┬────┘                     └────┬────┘
-     ▼                               ▼
-┌─────────┐                     ┌─────────┐
-│ Filter  │ → 1K rows           │  Join   │ 1M × 100K rows
-└────┬────┘                     └────┬────┘
-     ▼                               ▼
-┌─────────┐                     ┌─────────┐
-│  Join   │ 1K × 100K rows      │ Filter  │ filter AFTER join
-└─────────┘                     └─────────┘
+┌─────────┐                 ┌─────────┐
+│  Scan   │ 1M rows         │  Scan   │ 1M rows
+└────┬────┘                 └────┬────┘
+     ▼                           ▼
+┌─────────┐                 ┌─────────┐
+│ Filter  │ → 1K rows       │  Join   │ 1M × 100K rows
+└────┬────┘                 └────┬────┘
+     ▼                           ▼
+┌─────────┐                 ┌─────────┐
+│  Join   │ 1K × 100K rows  │ Filter  │ filter AFTER join
+└─────────┘                 └─────────┘
 ```
 
 DataFusion's optimizer usually pushes filters down automatically (predicate pushdown), but it can't always—e.g., when the filter references columns from both sides of a join. Understanding the plan helps you restructure queries when automatic optimization isn't enough.
 
-**Use `.explain()` to inspect your plan:**
+Use `.explain()` to inspect your plan:
 
 ```rust
 use datafusion::prelude::*;
@@ -435,21 +297,25 @@ async fn main() -> Result<()> {
 }
 ```
 
-> **Performance tip:** <br> > [`.explain(true, false)`][`.explain()`] shows the optimized logical plan; [`.explain(true, true)`][`.explain()`] adds runtime statistics (actually runs the query). Start with the plan, profile if needed. For more details, see [`.explain()` examples].
+:::{admonition} Performance tip
+:class: tip
+[`.explain(true, false)`][`.explain()`] shows the optimized logical plan; [`.explain(true, true)`][`.explain()`] adds runtime statistics (actually runs the query). Start with the plan, profile if needed. For more details, see [`.explain()` examples].
+:::
 
-**Data source matters:** <br>
-For in-memory data (like [`dataframe!]` a datafusion macro), optimizations focus on operation order and algorithm selection. For file-based sources (Parquet, CSV), additional optimizations kick in—predicate pushdown to skip row groups, projection pushdown to read only needed columns. See [Creating DataFrames: From Files](creating-dataframes.md#1-from-files) for file-specific tuning.
+### Data source matters
 
-**Execution-Level Optimizations** <br>
+For in-memory data (like the [`dataframe!`] macro), optimizations focus on operation order and algorithm selection. For file-based sources (Parquet, CSV), additional optimizations kick in—predicate pushdown to skip row groups, projection pushdown to read only needed columns. See [Creating DataFrames: From Files](creating-dataframes.md#1-from-files) for file-specific tuning.
 
-> The physical plan enables execution-level optimizations that go beyond planning. For Parquet sources, DataFusion applies:
->
-> - **Pruning** — skip entire files/row groups based on statistics ([blog: Parquet Pruning])
-> - **Filter pushdown with late materialization** — read filter columns first, selectively decode matching rows ([blog: Filter Pushdown])
->
-> These are advanced topics for readers tuning file-based workloads.
+### Execution-Level Optimizations
 
-### References
+The physical plan enables execution-level optimizations that go beyond planning. For Parquet sources, DataFusion applies:
+
+- **Pruning** — skip entire files/row groups based on statistics ([blog: Parquet Pruning])
+- **Filter pushdown with late materialization** — read filter columns first, selectively decode matching rows ([blog: Filter Pushdown])
+
+These are advanced topics for readers tuning file-based workloads.
+
+### Execution-Level Optimizations References
 
 - [Optimizer rules (source)][optimizer-rules]
 - [Physical optimizer rules (source)][physical-rules]
@@ -467,27 +333,32 @@ When an action triggers execution, DataFusion doesn't materialize a single monol
 - **RecordBatches** — the unit of data. Each partition yields a stream of `RecordBatch` values — Arrow's columnar data format holding up to `batch_size` rows (default: 8192). Operators process one batch at a time: decode, filter, aggregate, then yield to the next operator. This keeps memory usage bounded regardless of total dataset size.
 
 ```text
-                            ExecutionPlan
-                                 │
-              ┌──────────────────┼──────────────────┐
-              ▼                  ▼                  ▼
-        Partition 0        Partition 1        Partition 2
-              │                  │                  │
-         ┌────┴────┐       ┌────┴────┐       ┌────┴────┐
-         │  Batch  │       │  Batch  │       │  Batch  │
-         │ (8192)  │       │ (8192)  │       │ (8192)  │
-         ├─────────┤       ├─────────┤       ├─────────┤
-         │  Batch  │       │  Batch  │       │  Batch  │
-         │ (8192)  │       │ (8192)  │       │ (4501)  │
-         ├─────────┤       └─────────┘       └─────────┘
-         │  Batch  │
-         │ (2047)  │  ← last batch may be smaller
-         └─────────┘
+                     ExecutionPlan
+                          │
+       ┌──────────────────┼──────────────────┐
+       ▼                  ▼                  ▼
+ Partition 0        Partition 1        Partition 2
+       │                  │                  │
+  ┌────┴────┐       ┌────┴────┐       ┌────┴────┐
+  │  Batch  │       │  Batch  │       │  Batch  │
+  │ (8192)  │       │ (8192)  │       │ (8192)  │
+  ├─────────┤       ├─────────┤       ├─────────┤
+  │  Batch  │       │  Batch  │       │  Batch  │
+  │ (8192)  │       │ (8192)  │       │ (4501)  │
+  ├─────────┤       └─────────┘       └─────────┘
+  │  Batch  │
+  │ (2047)  │  ← last batch may be smaller
+  └─────────┘
 
-         Each partition streams independently on Tokio's thread pool
+Each partition streams independently on Tokio's thread pool
 ```
 
-**This is why the action you choose matters:**
+**Last batch may be smaller:**
+The final batch in each partition may contain fewer rows than batch_size — it simply holds whatever rows remain.
+
+### Action methods and batch handling
+
+Since execution produces multiple streams of batches across partitions, the action method you choose determines how those batches are collected — all at once into memory, or incrementally as a stream. This choice directly impacts memory usage as shown below:
 
 | Action                | How it handles batches                                                | Memory profile          |
 | :-------------------- | :-------------------------------------------------------------------- | :---------------------- |
@@ -496,16 +367,164 @@ When an action triggers execution, DataFusion doesn't materialize a single monol
 | [`.write_parquet()`]  | Streams batches directly to file writers                              | Bounded, streaming      |
 | [`.show()`]           | Collects all batches, then formats as a table                         | Entire result in memory |
 
-> **Best practice:** <br>
-> Use [`.collect()`] for small results or when you need all data at once (e.g., assertions in tests). Use [`.execute_stream()`] for production workloads processing large datasets — the streaming approach keeps memory usage proportional to `batch_size`, not to the total result size.
+:::{admonition} Best practice
+:class: tip
+Use [`.collect()`] for small results or when you need all data at once (e.g., assertions in tests). Use [`.execute_stream()`] for production workloads processing large datasets — the streaming approach keeps memory usage proportional to `batch_size`, not to the total result size.
+:::
+
+---
+
+## The Tokio Async Runtime
+
+**DataFusion uses Tokio as an async runtime for both I/O and CPU-bound query execution.**
+
+Every DataFrame action (`.collect()`, `.show()`, `.execute_stream()`) is an `async` function. DataFusion is built on [Tokio], Rust's most widely used async runtime, which serves as a work-stealing thread pool for both I/O and CPU-bound work.
+
+### Why Tokio?
+
+DataFusion uses Tokio not just for network I/O (reading from S3, serving gRPC) but also for **CPU-bound work** like decoding Parquet, filtering rows, and computing aggregates. This might seem surprising—async is typically associated with I/O—but Tokio's work-stealing scheduler combined with Rust's zero-cost `async`/`await` makes it an excellent choice for parallelizing compute-heavy workloads.
+
+:::{admonition} Design decision Tokio
+:class: seealso
+
+Older Tokio docs advised against using it for CPU-bound tasks, causing confusion. The actual guidance is: don't use the _same_ Runtime instance for both I/O and CPU-heavy work. DataFusion uses separate thread pools. Alternatives like [Rayon] were considered but rejected — Rayon has no async support, making I/O integration painful. See [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks] for the full rationale.
+:::
+
+### How Tokio Works Under the Hood
+
+When you call `.collect()` or `.execute_stream()`:
+
+1. **Partitioned Streams**:<br>
+   DataFusion creates multiple async [`Stream`]s (one per partition, controlled by [`target_partitions`])
+2. **Work Stealing**:<br>
+   Tokio's scheduler distributes work across threads—if one thread finishes early, it "steals" work from others
+3. **Cooperative Scheduling**: <br>
+   Each operator yields control after processing a batch, preventing any single task from monopolizing a thread. This enables **query cancellation**—when you press Ctrl+C, DataFusion can stop gracefully because operators regularly yield control back to Tokio (see [Cooperative scheduling module])
+
+This order is illustrated in the following diagram:
+
+```text
+┌─────────────┐           ┏━━━━━━━━━━━━━━━━━━━┓┏━━━━━━━━━━━━━━━━━━━┓
+│             │thread 1   ┃     Decoding      ┃┃     Filtering     ┃
+│Tokio Runtime│           ┗━━━━━━━━━━━━━━━━━━━┛┗━━━━━━━━━━━━━━━━━━━┛
+│(thread pool)│thread 2   ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
+│             │           ┃   Decoding   ┃     Filtering     ┃       ...
+│             │     ...   ┗━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━┛
+│             │thread N   ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
+└─────────────┘           ┃     Decoding      ┃     Filtering     ┃
+                          ┗━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━┛
+                         ────────────────────────────────────────────▶ time
+```
+
+### Tokio in practice with await
+
+**In practice: No additional configuration needed, just add `.await`**
+
+For most users, the async details are invisible—you `await` your DataFrame operations and DataFusion handles parallelism automatically:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]  // Creates the Tokio runtime
+async fn main() -> Result<()> {
+    // Operations that need .await: anything that might do I/O or parallel work
+    let df = dataframe!(
+        "id" => [1, 2, 3],
+        "value" => [100, 200, 300]
+    )?
+    .filter(col("value").gt(lit(150)))?;  // Transformation: no .await (lazy)
+
+    let results = df.collect().await?;    // Action: .await (triggers execution)
+
+    Ok(())
+}
+```
+
+**Key configuration:**
+
+| Setting               | Purpose                        | Default             |
+| --------------------- | ------------------------------ | ------------------- |
+| [`target_partitions`] | Number of parallel streams     | Number of CPU cores |
+| `batch_size`          | Rows processed before yielding | 8192                |
+
+:::{admonition} Further reading
+:class: seealso
+
+- [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks] — why async works for compute
+- [Using Rust async for Query Execution][async-blog] — deep dive into cooperative scheduling and query cancellation
+- [Thread Scheduling documentation] — complete technical details
+- [Crate Configuration](../../user-guide/crate-configuration.md) — SIMD flags, LTO, PGO, and allocator tuning for maximum performance
+  :::
+
+---
+
+## Ownership vs. Execution: Why You See `.clone()` Everywhere
+
+**Rust's ownership model means action methods consume the DataFrame handle — cloning gives you multiple handles to the same plan.**
+
+:::{admonition} Rust-Specific
+:class: Important
+This section explains Rust ownership semantics. If you're calling DataFusion from Python or another language, these details are handled automatically.
+:::
+
+The DataFusion DataFrame-API is written in Rust, enabling Rust's ownership model with all its safety guarantees. Most action methods take `self` (not `&self`), meaning calling an action **transfers ownership** of the DataFrame handle into the method. After the call, Rust's compiler won't let you use that variable again—not because the DataFrame was mutated, but because ownership moved elsewhere. This is why you'll see `.clone()` calls throughout DataFusion code: cloning creates a second handle so you can use one and keep the other.
+
+### What's actually happening under the hood
+
+- A `DataFrame` is a **lightweight handle:** <br>
+  Just an `Arc`-wrapped `LogicalPlan` + `SessionState` snapshot.
+- **Transformations are immutable:** <br>
+  Methods like `.filter()` and `.select()` return _new_ DataFrames; they don't mutate the original.
+- **Actions consume the handle;** <br>
+  Actions like `.collect()` take ownership of the handle, but your source data (Parquet files, tables) remains untouched (read only).
+- **Cloning is cheap:** <br>
+  Cloning is cheap because you're cloning reference-counted pointers, not copying data.
+
+### Clone costs in Rust — what's cheap vs. expensive:
+
+| Type               | Clone operation             | Cost                         | Example                  |
+| ------------------ | --------------------------- | ---------------------------- | ------------------------ |
+| `Arc<T>`, `Rc<T>`  | Increment reference counter | **Cheap** (single atomic op) | `DataFrame`, `SchemaRef` |
+| `String`, `Vec<T>` | Allocate + copy all bytes   | **Expensive** (O(n))         | Avoid in hot paths       |
+| `RecordBatch`      | Clone `Arc`-wrapped arrays  | **Cheap**                    | Arrow data sharing       |
+
+DataFusion's `DataFrame` wraps its internals in `Arc`, so `df.clone()` is a standard Rust pattern that costs virtually nothing—clone freely when you need multiple handles to the same plan.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let df = dataframe!(
+        "id" => [1, 2, 3],
+        "value" => ["a", "b", "c"]
+    )?;
+
+    // Clone the handle to use the same plan twice
+    // (cheap: just incrementing Arc reference counts)
+    df.clone().show().await?;   // First execution
+    let count = df.count().await?;  // Second execution (re-runs the plan)
+
+    println!("Count: {count}");
+
+    Ok(())
+}
+```
+
+:::{admonition} Re-execution note
+:class: note
+Each action re-runs the full plan from source data. If you need to reuse computed results across multiple actions, materialize them first with [`.cache()`] or write to storage, then run subsequent actions on the materialized output.
+:::
 
 ---
 
 ## Putting It All Together
 
-**From lazy plan to streaming results—the complete DataFrame lifecycle in action.**
+**From lazy plan to streaming results — the complete DataFrame lifecycle in action.**
 
-We've showed _what_ DataFrames are (lazy handles wrapping `LogicalPlan` + `SessionState`), _why_ laziness matters (optimization before execution), and _how_ actions trigger the pipeline. Now let's see the full lifecycle in one example—from building the plan, through introspection, to execution:
+We've showed **what** DataFrames are (lazy handles wrapping `LogicalPlan` + `SessionState`), **why** laziness matters (optimization before execution), and **how** actions trigger the pipeline. Now let's see the full lifecycle in one example—from building the plan, through introspection, to execution:
 
 ```rust
 use datafusion::prelude::*;
@@ -564,8 +583,9 @@ async fn main() -> Result<()> {
 | `.explain()`                       | **Introspection** — see the plan before committing to execution    |
 | `.collect()` / `.execute_stream()` | **Actions** — cross the boundary, trigger optimization + execution |
 
-**You now understand:** <br>
-How DataFrames defer work until an action, why [`.clone()`] appears everywhere, and how to inspect plans before running them. For the complete method reference, see [Transformations](transformations.md). For hands-on query building, continue to [Creating DataFrames](creating-dataframes.md).
+You now understand how DataFrames defer work until an action, why [`.clone()`] appears everywhere, and how to inspect plans before running them. For the complete method reference, see [Transformations](transformations.md). For hands-on query building, continue to [Creating DataFrames](creating-dataframes.md).
+
+With the execution lifecycle understood — from lazy plan through optimization to streaming results — the next section places DataFusion in its broader historical and architectural context: [The Bigger Picture](bigger-picture.md).
 
 ---
 

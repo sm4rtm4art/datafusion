@@ -17,19 +17,30 @@
   under the License.
 -->
 
-# Summary: A Small Conclusion
+# Summary
 
-The DataFusion DataFrame is more than just a table—it's a powerful recipe for computation. By understanding its core principles, you can build complex, efficient, and predictable data pipelines:
+**You now have the conceptual foundation — from architecture through execution — to build with DataFusion confidently.**
+
+The [previous sections](bigger-picture.md) walked through DataFusion's architecture, the two APIs, DataFrame internals, expressions, the execution lifecycle, and the project's broader ecosystem role. This page ties those concepts together and points you toward the next steps in the DataFrame lifecycle.
 
 ```{contents} Table of Contents for Summary
 :local:
 :depth: 2
 ```
 
-- **Stay lazy & immutable** – build a [`LogicalPlan`] first; nothing executes until an action
-- **Execute reproducibly** – every DataFrame carries its own [`SessionState`] snapshot
-- **Mix APIs freely** – SQL and DataFrame compile to the _same_ [`LogicalPlan`], so interop is zero-cost
-- **Extend with TableProviders** – query OLTP databases, APIs, or custom sources alongside your lakehouse data
+## Concepts at a Glance
+
+**The core principles that run through every section of this documentation.**
+
+| Concept | Key Insight | Covered In |
+| :------ | :---------- | :--------- |
+| Architecture | Embeddable OLAP engine with pluggable `TableProvider`s | [Architectural Overview](architectural-dataframe.md) |
+| SessionContext | Mutable hub; each DataFrame captures an immutable `SessionState` snapshot | [SessionContext](sessioncontext.md) |
+| Two APIs | SQL (parser) and DataFrame (builder) produce identical `LogicalPlan`s | [Builder vs. Parser](builder-parser.md) |
+| DataFrame Anatomy | `LogicalPlan` + `SessionState` + `DFSchema` — everything needed for reproducible execution | [Anatomy](anatomy-dataframe.md) |
+| Expressions | `Expr` trees are the row-level logic inside plan nodes | [Expressions](expressions.md) |
+| Execution Lifecycle | Lazy transformations → action → optimizer → physical plan → streaming results | [Execution Lifecycle](execution-lifecycle.md) |
+| Bigger Picture | Vectorized Volcano model; DataFusion as reusable infrastructure ("LLVM for data") | [The Bigger Picture](bigger-picture.md) |
 
 Together these properties let you write declarative SQL for clarity, drop to Rust for control, and still get one optimized execution pipeline.
 
@@ -37,11 +48,13 @@ Together these properties let you write declarative SQL for clarity, drop to Rus
 
 ## Where to Go Next
 
-With these concepts understood, you're ready to build data pipelines:
+**With concepts understood, the next phase in the DataFrame lifecycle is Birth — creating DataFrames from files, SQL, or in-memory data.**
 
-1. **[Create DataFrames](creating-dataframes.md)** – load Parquet, CSV, in-memory data
-2. **[Transform DataFrames](transformations.md)** – select, filter, aggregate, join
-3. **[Write / Execute](writing-dataframes.md)** – collect, stream, or persist results
+| Lifecycle Phase | Document | What Happens |
+| :-------------- | :------- | :----------- |
+| **Birth** | [Creating DataFrames](../Creating-Dataframes/index.md) | Load Parquet, CSV, JSON, or in-memory data into a DataFrame |
+| **Life** | [Transformations](../Transformations/index.md) | Select, filter, aggregate, join — build the lazy plan |
+| **Death** | [Writing & Executing](../Writing-Dataframes/index.md) | Collect, stream, or persist results to storage |
 
 ---
 
@@ -65,15 +78,17 @@ Know what you want? Find the method here:
 
 ## Further Reading
 
+These references supplement the Concepts section. Each sub-page also links to its most relevant resources inline.
+
 ### Internal Guides
 
 | Resource                                                     | Description                                                           |
 | ------------------------------------------------------------ | --------------------------------------------------------------------- |
 | [Using the DataFrame API](../using-the-dataframe-api.md)     | Overview + how this guide is structured                               |
-| [Creating DataFrames](creating-dataframes.md)                | Read data and build an initial `DataFrame`                            |
-| [Transformations](transformations.md)                        | Add filters, projections, joins, and aggregates (build the lazy plan) |
-| [Writing DataFrames](writing-dataframes.md)                  | Execute (`.collect()`, `.execute_stream()`) and write results         |
-| [Best Practices](best-practices.md)                          | Performance tuning and correctness tips                               |
+| [Creating DataFrames](../Creating-Dataframes/index.md)       | Read data and build an initial `DataFrame`                            |
+| [Transformations](../Transformations/index.md)               | Add filters, projections, joins, and aggregates (build the lazy plan) |
+| [Writing DataFrames](../Writing-Dataframes/index.md)         | Execute (`.collect()`, `.execute_stream()`) and write results         |
+| [Best Practices](../best-practices.md)                       | Performance tuning and correctness tips                               |
 | [Building Logical Plans](../building-logical-plans.md)       | Work directly with `LogicalPlan` / `LogicalPlanBuilder`               |
 | [Arrow Introduction](../../user-guide/arrow-introduction.md) | Arrow basics: `RecordBatch`, schemas, and columnar memory             |
 | [SQL Data Types](../../user-guide/sql/data_types.md)         | DataFusion’s SQL type system                                          |

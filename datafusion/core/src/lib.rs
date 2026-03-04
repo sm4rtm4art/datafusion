@@ -1237,7 +1237,7 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/Concepts/architectural.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/architectural-dataframe.md",
     dataframe_api_concepts_architectural
 );
 

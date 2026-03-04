@@ -19,21 +19,43 @@
 
 # Anatomy of a Dataframe: LogicalPlan + SessionState
 
+**A DataFrame is a lightweight handle pairing an immutable query plan (LogicalPlan) with a frozen execution environment (SessionState) — everything needed for reproducible execution.**
+
+Every DataFrame you create captures two things: a LogicalPlan describing what to compute, and a SessionState snapshot describing how to compute it. Each LogicalPlan node carries a DFSchema that validates column names, types, and provenance at build time — long before any data flows. This separation is what makes DataFrames lightweight, cheaply cloneable, and safe to use across async boundaries.
+
 ```{contents} Table of Contents for Anatomy of a Dataframe
 :local:
 :depth: 2
 ```
 
-**DataFusion—the out-of-the-box query engine—provides the DataFrame with both a recipe (the query plan) and a fully-equipped kitchen (the execution environment) for reproducible results.**
+## Introduction to Anatomy of a Dataframe
 
-Understanding what a `DataFrame` actually _contains_ explains why queries are reproducible and why certain patterns (like registering UDFs before creating DataFrames) matter.
+**Two components, one contract: the `LogicalPlan` says _what_ to compute, the `SessionState` says _how_ — together they guarantee reproducible execution.**
 
-Every [`DataFrame`] pairs two components:
+Understanding what a `DataFrame` actually _contains_ explains why queries are reproducible and why certain patterns (like registering UDFs before creating DataFrames) matter. The following structure shows exactly what lives inside every DataFrame:
 
-- **[`LogicalPlan`]** — the query recipe (_what_ to compute). Each node in the plan carries a [`DFSchema`] that validates column names, types, and provenance at plan-build time (see [DFSchema: The Schema Layer](#dfschema-the-schema-layer) below).
-- **[`SessionState`]** — a frozen snapshot of the execution environment (_how_ to compute it)
+```text
+DataFrame
+├── LogicalPlan     (what to compute)
+│   ├── DFSchema    (column names, types, ...)
+│   └── Plan nodes  (Filter, Join, Aggregate, ...)
+└── SessionState    (how to compute it)
+    ├── Config      (batch_size, partitions, timezone)
+    ├── Catalog     (registered tables)
+    └── Functions   (UDFs, UDAFs, UDWFs)
+```
 
-The [`SessionContext`] is mutable and evolves over your session, but each `DataFrame` captures an **immutable snapshot** the [`SessionState`] at creation time. Transformations return new DataFrames with updated plans but the same snapshot; actions execute using that frozen state.
+The **left branch** — the [`LogicalPlan`] — is the query recipe. Each node in the plan tree represents a relational operation (filter, join, aggregate) and carries a [`DFSchema`] that validates column names, types, and provenance at plan-build time (see [DFSchema: The Schema Layer](#dfschema-the-schema-layer) below). The **right branch** — the [`SessionState`] — is a frozen snapshot of the execution environment: configuration, registered tables, UDFs, and runtime resources.
+
+The [`SessionContext`] is mutable and evolves over your session, but each `DataFrame` captures an **immutable** `SessionState` snapshot at creation time. Transformations like `.filter()` or `.select()` return new DataFrames with updated plans but the same snapshot; actions like `.collect()` execute using that frozen state. This snapshot guarantees reproducibility:
+
+| What's captured                           | Why it matters                                            |
+| ----------------------------------------- | --------------------------------------------------------- |
+| Config (batch size, partitions, timezone) | Same performance even if global settings change           |
+| UDFs and registered tables                | Queries don't fail if dependencies are deregistered later |
+| Query start timestamp                     | Functions like [`.now()`] return consistent values        |
+
+The rest of this page explores each component in detail: first the inner workings with a step-by-step walkthrough, then the schema layer that validates every transformation, and finally the escape hatch to `LogicalPlanBuilder` for advanced use.
 
 ---
 
@@ -50,7 +72,7 @@ The concepts might come clearer with an everyday analogy of a kitchen.
 | [`SessionState`]   | Kitchen State      | Given setup of the kitchen at recipe start—_frozen in time_ |
 | [`DataFrame`]      | Recipe + snapshot  | Everything needed to cook the dish reproducibly             |
 
-The [`SessionState`] defines the enviroment the data are processed in: if you add new tools to the kitchen after starting a dish, the dish-in-progress still uses the original setup. This prevents surprises ("where did my UDF go?") and ensures reproducibility.
+The [`SessionState`] defines the environment the data are processed in: if you add new tools to the kitchen after starting a dish, the dish-in-progress still uses the original setup. This prevents surprises ("where did my UDF go?") and ensures reproducibility.
 
 Here's how this flows through the system in a nutshell:
 
@@ -117,27 +139,15 @@ https://media.istockphoto.com/id/1210366546/de/foto/tomatensuppe-mit-buchstabenn
 Of cause without copyright etc. !
 -->
 
-**The snapshot guarantees reproducibility:**
+:::{admonition} Best practice
+:class: tip
+Register UDFs and tables **before** creating DataFrames that depend on them. If you need a new UDF or table mid-processing, register it on the `SessionContext`, then create a **new DataFrame** — existing DataFrames keep their original snapshots.
+:::
 
-| What's given                              | Why it matters                                            |
-| ----------------------------------------- | --------------------------------------------------------- |
-| Config (batch size, partitions, timezone) | Same performance even if global settings change           |
-| UDFs and registered tables                | Queries don't fail if dependencies are deregistered later |
-| Query start timestamp                     | Functions like [`.now()`] return consistent values        |
-
-> **Best practice:** <br>
-> Register UDFs and tables **before** creating DataFrames that depend on them. <br> > **Mid-processing?** <br>
-> If you need a new UDF or table, register it on the `SessionContext`, then create a **new DataFrame**—existing DataFrames keep their original snapshots.
-
-**Key API paths for advanced use:**
-
-```text
-DataFrame ↔ into_parts() ↔ (SessionState, LogicalPlan)
-DataFrame → into_optimized_plan() → Optimized LogicalPlan
-DataFrame → create_physical_plan() → ExecutionPlan
-```
-
-> **Learn more:** See [SessionContext and SessionState relationship][sessioncontext and sessionstate] for implementation details.
+:::{admonition} Learn more
+:class: seealso
+See [SessionContext and SessionState relationship][sessioncontext and sessionstate] for implementation details.
+:::
 
 ---
 
@@ -145,7 +155,7 @@ DataFrame → create_physical_plan() → ExecutionPlan
 
 **Every `LogicalPlan` node knows exactly what columns it produces — before any data is touched.**
 
-[`DFSchema`] is DataFusion's schema wrapper around Arrow's `Schema`. While Arrow's `Schema` describes columnar data at rest (column name + data type + nullable), `DFSchema` adds the metadata the query planner needs:
+[`DFSchema`] is DataFusion's schema wrapper around Arrow's `Schema`. While Arrow's `Schema` describes columnar data at rest (column name + data type + nullable), `DFSchema` adds the metadata the query planner needs to validate and optimize queries:
 
 | What `DFSchema` tracks                      | Why it matters                                                     |
 | :------------------------------------------ | :----------------------------------------------------------------- |
@@ -153,9 +163,7 @@ DataFrame → create_physical_plan() → ExecutionPlan
 | **Table qualifier** (e.g., `orders.amount`) | Disambiguates columns after joins involving same-named columns     |
 | **Functional dependencies**                 | Tracks which columns uniquely determine others (used by optimizer) |
 
-**Where `DFSchema` lives in the plan:**
-
-Every node in a `LogicalPlan` tree carries its own `DFSchema`. When you chain transformations, DataFusion validates the schema at each step:
+Every node in a `LogicalPlan` tree carries its own `DFSchema`. When you chain transformations, DataFusion validates the schema at each step — this is what enables the fail-fast behavior:
 
 ```text
 Aggregate(group=[region], agg=[sum(amount)])   ← DFSchema: {region: Utf8, sum(amount): Float64}
@@ -163,21 +171,20 @@ Aggregate(group=[region], agg=[sum(amount)])   ← DFSchema: {region: Utf8, sum(
        └─ TableScan("sales")                   ← DFSchema: {id: Int64, region: Utf8, amount: Int64}
 ```
 
-This means schema errors are caught **at plan-build time**, not at execution time. If you reference a column that doesn't exist, the `.filter()` or `.select()` call fails immediately with a clear error — long before any data is scanned.
+If you reference a column that doesn't exist, the `.filter()` or `.select()` call fails immediately with a clear error — long before any data is scanned. Table qualifiers (`a.id` vs `b.id`) prevent ambiguity in joins, and the optimizer leverages schema metadata (functional dependencies, nullability) to apply more aggressive rewrites.
 
-**Key takeaways:**
-
-- `DFSchema` validates every transformation as you build it — **fail-fast by design**.
-- Table qualifiers prevent ambiguity in joins (`a.id` vs `b.id`).
-- The optimizer uses schema metadata (functional dependencies, nullability) to apply more aggressive rewrites.
-
-> **Deep dive:** For the full schema API — creating schemas, coercion rules, inspection methods, and schema-aware DataFrame operations — see the [Schema Management](../Schema-Management/index.md) section.
+:::{admonition} Deep dive
+:class: seealso
+For the full schema API — creating schemas, coercion rules, inspection methods, and schema-aware DataFrame operations — see the [Schema Management](../Schema-Management/index.md) section.
+:::
 
 ---
 
-## DataFrame vs. LogicalPlanBuilder
+## Under the Hood: DataFrame and LogicalPlanBuilder
 
-[`DataFrame`] methods are thin wrappers around [`LogicalPlanBuilder`]—they produce identical plans:
+**`DataFrame` methods are convenience wrappers around `LogicalPlanBuilder` — for most users the DataFrame API is sufficient, but you can drop to the builder level when you need fine-grained control.**
+
+For standard queries and transformations, the `DataFrame` API handles everything: it manages the `SessionState`, chains transformations, and triggers execution. Under the hood, each `DataFrame` method maps directly to a `LogicalPlanBuilder` method — they produce identical plans:
 
 | DataFrame method           | LogicalPlanBuilder equivalent       |
 | -------------------------- | ----------------------------------- |
@@ -186,7 +193,15 @@ This means schema errors are caught **at plan-build time**, not at execution tim
 | [`DataFrame::aggregate()`] | [`LogicalPlanBuilder::aggregate()`] |
 | [`DataFrame::join()`]      | [`LogicalPlanBuilder::join()`]      |
 
-This means you can mix approaches—use DataFrame for convenience, drop to LogicalPlanBuilder when you need fine-grained control, then wrap back in a DataFrame for execution:
+Sometimes you need direct `LogicalPlan` access — custom optimizer rules, query rewriting systems, or programmatic plan inspection. DataFusion lets you move freely between the two levels using [`.into_parts()`], which consumes the DataFrame and returns `(SessionState, LogicalPlan)` as separate values:
+
+| Use DataFrame API for...             | Use LogicalPlanBuilder for...  |
+| ------------------------------------ | ------------------------------ |
+| Standard queries and transformations | Custom optimizer rules         |
+| Automatic SessionState management    | Fine-grained plan manipulation |
+| Rapid prototyping                    | Query rewriting systems        |
+
+The following example demonstrates the full round-trip: decompose a DataFrame, modify the plan with `LogicalPlanBuilder`, and wrap it back for execution:
 
 ```rust
 use datafusion::prelude::*;
@@ -195,10 +210,9 @@ use datafusion::logical_expr::LogicalPlanBuilder;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Start with: a=[1,2,3], b=[4,5,6]
     let df = dataframe!("a" => [1, 2, 3], "b" => [4, 5, 6])?;
 
-    // Decompose into parts
+    // Decompose: DataFrame → (SessionState, LogicalPlan)
     let (state, plan) = df.into_parts();
 
     // Use LogicalPlanBuilder for fine-grained control:
@@ -209,7 +223,7 @@ async fn main() -> Result<()> {
         .project(vec![col("b")])?
         .build()?;
 
-    // Wrap back into DataFrame for execution
+    // Recompose: (SessionState, LogicalPlan) → DataFrame
     let new_df = DataFrame::new(state, modified);
 
     new_df.show().await?;
@@ -223,61 +237,21 @@ async fn main() -> Result<()> {
 }
 ```
 
-> **Further reading:** <br>
-> See [Building Logical Plans](../building-logical-plans.md) for advanced [`LogicalPlanBuilder`] usage.
+**Key API paths:**
 
----
-
-## Advanced: Converting Between `DataFrame` and `LogicalPlan`
-
-**For most users, the DataFrame API is sufficient. This section is for advanced use cases.**
-
-Sometimes you need direct [`LogicalPlan`] access—custom optimizer rules, query rewriting systems, or programmatic plan inspection. DataFusion lets you move freely between the two:
-
-| Use DataFrame API for...             | Use LogicalPlan directly for... |
-| ------------------------------------ | ------------------------------- |
-| Standard queries and transformations | Custom optimizer rules          |
-| Automatic SessionState management    | Fine-grained plan manipulation  |
-| Rapid prototyping                    | Query rewriting systems         |
-
-**Extract and modify plans using [`.into_parts()`]:**
-
-[`.into_parts()`] consumes the DataFrame and returns `(SessionState, LogicalPlan)`—the frozen environment and the query recipe as separate values. You can then modify the plan and wrap it back into a DataFrame:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::logical_expr::LogicalPlanBuilder;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let df = dataframe!(
-        "a" => [1, 5, 10, 15],
-        "b" => [2, 6, 11, 16]
-    )?;
-
-    // Decompose: DataFrame → (SessionState, LogicalPlan)
-    let (state, plan) = df.into_parts();
-    // state: frozen config, catalog, UDFs
-    // plan:  TableScan("datafusion.public.?table?")
-
-    // Modify the plan using LogicalPlanBuilder
-    let modified_plan = LogicalPlanBuilder::from(plan)
-        .filter(col("a").gt(lit(5)))?
-        .build()?;
-    // plan now: Filter(a > 5) → TableScan(...)
-
-    // Recompose: (SessionState, LogicalPlan) → DataFrame
-    let new_df = DataFrame::new(state, modified_plan);
-
-    new_df.show().await?;
-    Ok(())
-}
+```text
+DataFrame ↔ into_parts() ↔ (SessionState, LogicalPlan)
+DataFrame → into_optimized_plan() → Optimized LogicalPlan
+DataFrame → create_physical_plan() → ExecutionPlan
 ```
 
-> **Further reading:**
->
-> - [Building Logical Plans](../building-logical-plans.md) — advanced [`LogicalPlanBuilder`] usage
-> - [`LogicalPlanBuilder` API docs][logicalplanbuilder] — full method reference
+:::{admonition} Further reading
+:class: seealso
+
+- [Building Logical Plans](../building-logical-plans.md) — advanced [`LogicalPlanBuilder`] usage
+- [`LogicalPlanBuilder` API docs][logicalplanbuilder] — full method reference
+  :::
 
 ---
+
+With the anatomy clear — `LogicalPlan` for the recipe, `SessionState` for the frozen environment, `DFSchema` for validation at every step — the next question is: what happens when you call `.collect()`? See [Execution Lifecycle](execution-lifecycle.md) for the full journey from lazy plan to parallel execution.

@@ -19,23 +19,22 @@
 
 # SessionContext: The Entry Point for DataFrames
 
-```{contents} Table of Contents for SessionContext
-:local:
-:depth: 2
-```
+**SessionContext — the single entry point for both APIs, making data handling reproducible by managing configuration, catalogs, and execution state.**
 
-**The [`SessionContext`] is your reproducible gateway to DataFusion**<br>
-
-The `SessionContext` itself is **mutable**—designed to hold session information: [`ConfigOptions`] (batch size, parallelism, timezone), registered tables and catalogs, user-defined functions, and runtime resources (memory limits, object stores). But every DataFrame you create captures an **immutable** [`SessionState`] snapshot of the context at that moment. This ensures queries execute with consistent settings even if you modify the context later.
+The `SessionContext` is where everything begins in DataFusion. Before you can read a file, run a SQL query, or build a DataFrame, you need a context that knows about your data sources, configuration, and registered functions. The `SessionContext` itself is **mutable** — it evolves over the lifetime of your session as you register tables, add UDFs, and change settings. But every DataFrame you create captures an **immutable** `SessionState` snapshot of the context at that moment, ensuring queries execute with consistent settings even if you modify the context later.
 
 ```{contents} Table of Contents for SessionContext
 :local:
 :depth: 2
 ```
 
-You'll use the `SessionContext` to load data, run SQL, register tables, and configure execution behavior.
+---
 
-As an illustration the following schema should give an overview.
+## Introduction to SessionContext
+
+**The `SessionContext` holds everything your queries need — configuration, catalogs, functions, and runtime resources.**
+
+You'll use the `SessionContext` to load data, run SQL, register tables, and configure execution behavior. Internally, it is organized into four key components:
 
 ```text
 SessionContext (mutable, evolves over session lifetime)
@@ -48,13 +47,15 @@ SessionContext (mutable, evolves over session lifetime)
 SessionState (immutable) ← frozen environment captured by DataFrame
 ```
 
-This separation ensures reproducibility: changes to the `SessionContext` after DataFrame creation don't affect existing DataFrames—each continues to execute with the `SessionState` snapshot it captured. Only newly created DataFrames will see the updated configuration, tables, or functions.
+This separation ensures reproducibility: changes to the `SessionContext` after DataFrame creation don't affect existing DataFrames — each continues to execute with the `SessionState` snapshot it captured. Only newly created DataFrames will see the updated configuration, tables, or functions.
 
 ---
 
-### Common ways to create a DataFrame using the SessionContext
+## The SessionContext API Surface
 
-Like DataFrame, SessionContext exposes a large API surface that becomes easier to navigate once you understand the main categories:
+**`SessionContext` collects different data inputs into a catalog, adding metadata for efficient and predictable execution.**
+
+Like `DataFrame`, the `SessionContext` exposes a large API surface that becomes easier to navigate once you understand the main categories:
 
 | Category               | Purpose                                | Examples                                                                  |
 | ---------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
@@ -64,14 +65,20 @@ Like DataFrame, SessionContext exposes a large API surface that becomes easier t
 | **Catalog Operations** | Manage schemas and databases           | [`.catalog()`], [`.catalog_names()`]                                      |
 | **Extensions**         | Add custom functionality               | [`.register_udf()`], [`.register_udaf()`], [`.register_table_provider()`] |
 
-> **Learn more:** <br>
-> For complete examples of each pattern, see [Creating DataFrames](creating-dataframes.md). For all available configuration options, see [Configuration Settings](../../user-guide/configs.md).
+Each category builds on the same principle: you configure the context _before_ creating DataFrames, and those DataFrames inherit a frozen snapshot of everything you've set up. This is why the order matters — register your tables and UDFs first, then create DataFrames that depend on them.
+
+:::{admonition} Learn more
+:class: seealso
+For complete examples of each pattern, see [Creating DataFrames](creating-dataframes.md). For all available configuration options, see [Configuration Settings](../../user-guide/configs.md).
+:::
 
 ---
 
-### Creating and Configuring SessionContext
+## Creating and Configuring SessionContext
 
-Before using any of the methods above, you need a `SessionContext`. In most cases, `SessionContext::new()` with defaults is all you need. For performance-critical workloads, you can tune execution parameters via [`SessionConfig`]:
+**Most users start with `SessionContext::new()` — customize only when your workload demands it.**
+
+Before using any of the methods above, you need a `SessionContext`. In most cases, the defaults are all you need. For performance-critical workloads, you can tune execution parameters via [`SessionConfig`]:
 
 ```rust
 use datafusion::prelude::*;
@@ -89,13 +96,19 @@ fn main() {
 }
 ```
 
-Once you have a `SessionContext`, you can create DataFrames, register tables, and execute queries—the context maintains all state that DataFrames need during execution.
+Once you have a `SessionContext`, you register data sources, configure execution, and create DataFrames. When a DataFrame is created, it captures the current state as an immutable `SessionState` — the frozen snapshot that travels with the DataFrame through optimization and execution. This guarantees reproducible results: the same DataFrame re-executed later produces identical output, regardless of any subsequent changes to the `SessionContext`.
 
-For more detailed explanation and examples of the [`SessionContext`] see:
+---
+
+## References
 
 - [`SessionContext`] documentation (API reference)
 - [`SessionState`] documentation (snapshot semantics)
 - [Configuration Settings](../../user-guide/configs.md) (all configuration options)
 - [Creating DataFrames](creating-dataframes.md) (practical examples)
+
+---
+
+With the execution environment in place, the next question is _how_ you build queries. DataFusion offers two paths — declarative SQL and the programmatic DataFrame builder — both producing the same optimized plan. See [Builder vs. Parser](builder-parser.md) for the detailed comparison.
 
 ---

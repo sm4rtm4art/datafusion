@@ -21,16 +21,16 @@
 
 **DataFusion stands on the shoulders of giants—and is actively shaping the future of data systems.**
 
-Understanding where DataFusion comes from—and where it's going—helps you make informed architectural decisions. This section covers the execution model heritage, DataFusion's role in the broader ecosystem, and the active roadmap.
+Understanding where DataFusion comes from—and where it's going—helps you make informed architectural decisions. The [previous section](execution-lifecycle.md) covered _how_ DataFusion executes queries — from lazy plans through optimization to streaming results. This section zooms out: where does this execution model come from, and where is the project heading?
 
 ```{contents} Table of Contents for The Bigger Picture
 :local:
 :depth: 2
 ```
 
----
-
 ## Execution Model: Vectorized Volcano
+
+**DataFusion combines the classic pull-based Volcano iterator model with modern vectorized batch processing and Rust's async concurrency.**
 
 DataFusion implements a **vectorized Volcano model**, combining the classic iterator-based execution with modern batch processing. Like other high-performance engines (ClickHouse, DuckDB), each operation is an operator in a DAG, and execution proceeds by calling `poll_next()` to pull batches through the pipeline (see [DataFusion blog on repartitioning][volcano-blog]).
 
@@ -50,22 +50,26 @@ DataFusion's hybrid approach provides (see [SIGMOD paper Section 5.5][sigmod-pap
 
 This is why all DataFrame actions are `async fn`—they participate in cooperative scheduling rather than blocking threads. For a deep dive into how this enables query cancellation, see [Using Rust async for Query Execution][async-blog].
 
-> **Performance note: SIMD requires explicit opt-in** <br>
-> By default, the Rust compiler produces code for a wide range of CPUs, which may _not_ use advanced SIMD instructions (AVX2, AVX512) available on your hardware. To enable CPU-specific optimizations:
->
-> ```bash
-> RUSTFLAGS='-C target-cpu=native' cargo build --release
-> ```
->
-> This can significantly improve performance for filtering, aggregation, and joins. See [Crate Configuration: Generate Code with CPU Specific Instructions](../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for more options including LTO and PGO.
+:::{admonition} Performance note: SIMD requires explicit opt-in
+:class: note
+By default, the Rust compiler produces code for a wide range of CPUs, which may _not_ use advanced SIMD instructions (AVX2, AVX512) available on your hardware. To enable CPU-specific optimizations:
+
+```bash
+RUSTFLAGS='-C target-cpu=native' cargo build --release
+```
+
+This can significantly improve performance for filtering, aggregation, and joins. See [Crate Configuration: Generate Code with CPU Specific Instructions](../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for more options including LTO and PGO.
+:::
 
 ---
 
 ## The LLVM Parallel: Ecosystem Role
 
+**DataFusion is to data systems what LLVM is to compilers — reusable, modular infrastructure that lets builders focus on domain-specific features.**
+
 The [SIGMOD 2024 paper][sigmod-paper] draws a parallel between DataFusion and LLVM—not in internal architecture, but in **ecosystem role**. From Section 4.1:
 
-> "Just as LLVM's modular design catalyzed the development of system programming languages, DataFusion catalyzes the development of data systems."
+"Just as LLVM's modular design catalyzed the development of system programming languages, DataFusion catalyzes the development of data systems."
 
 **The transformation (Compiler vs Data Systems Worlds):**
 
@@ -95,7 +99,7 @@ DataFusion is actively evolving. Key initiatives include:
 - **[Epic #12644: Extension Types][epic-12644]** <br>
   User-defined types that flow through the entire query lifecycle, enabling domain-specific type systems.
 
-- **Logical/Physical Type Decoupling** _(under discussion)_ <br>
+- **[Logical/Physical Type Decoupling][epic-12622]** _(under discussion)_ <br>
   Separating logical types (what the query describes) from physical types (how data is stored), enabling runtime-adaptive execution.
 
 For the complete roadmap and quarterly planning discussions, see the [Contributor Guide: Roadmap][roadmap].
@@ -141,4 +145,14 @@ The following diagram shows how these concepts connect—multiple frontends feed
                   └───────────────────────────────────────────┘
 ```
 
+For a recap of all core concepts and pointers to the next documentation sections, continue to [Summary](summary.md).
+
 ---
+
+[async-blog]: https://datafusion.apache.org/blog/2025/06/30/cancellation/
+[epic-12644]: https://github.com/apache/datafusion/issues/12644
+[epic-12723]: https://github.com/apache/datafusion/issues/12723
+[roadmap]: https://datafusion.apache.org/contributor-guide/roadmap.html
+[sigmod-paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
+[volcano-blog]: https://datafusion.apache.org/blog/2025/12/15/avoid-consecutive-repartitions/#parallel-execution-in-datafusion
+[epic-12622]: https://github.com/apache/datafusion/issues/12622
