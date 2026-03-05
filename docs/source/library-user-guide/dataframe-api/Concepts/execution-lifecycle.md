@@ -166,7 +166,7 @@ Needs execution for processing, but stream results to files instead of returning
 :::
 
 :::{admonition} Introspection
-:class: information
+:class: note
 Methods access plan metadata without executing. Exception: [`.explain()`] with `analyze = true` \*does\* execute to gather runtime statistics.
 :::
 

@@ -17,33 +17,27 @@
   under the License.
 -->
 
-### CSV — Tabular Exchange
+# CSV — The Universal Interchange Format
 
-<!--TODO
+**CSV — Row-based, simple, human-readable, and universal. It is the lowest common denominator for data exchange, but comes with schema inference and parsing overhead.**
 
-1. ABSTRACT
-2. INTRODUCTION
--->
+CSV is the most widely used format for data exchange, accepted across virtually all domains and tools. However, it is row-oriented text with no embedded schema. DataFusion must parse text row-by-row and infer data types by scanning the file, making it more expensive to read than columnar formats like Parquet.
 
 ```{contents}
 :local:
 :depth: 2
+:caption: In this section
 ```
 
-**Simple, human-readable, universal—the lowest common denominator for data exchange.**
+## Reading CSV Files
 
-CSV is row-oriented text with no embedded schema. When you call `read_csv()`, DataFusion must:
+**A single call to `ctx.read_csv()` infers the schema from the first 1,000 rows and returns a lazy DataFrame ready for querying.**
 
-1. **Infer schema** <br>
-   By scanning the first N rows (default: 1000)—this happens _at DataFrame creation_, not lazily
-2. **Parse text → typed Arrow columns** <br>
-   Row by row—a row-to-columnar conversion cost
-
-This makes CSV ideal for _ingestion and interchange_—receiving data from upstream systems ( like mainframes, HL7 feeds, legacy batch jobs, vendor exports) or quick spreadsheet imports. For repeated analytical queries, convert CSV to Parquet once and query Parquet thereafter.
+When you call `ctx.read_csv()`, DataFusion immediately reads the beginning of the file to infer column types from the data it samples. The actual data processing—filtering, joining, and full parsing—waits until you trigger an action like `.collect()`.
 
 ```rust
 use datafusion::prelude::*;
-# use datafusion::assert_batches_sorted_eq;
+use datafusion::assert_batches_sorted_eq;
 # use datafusion::error::Result;
 # use std::fs::File;
 # use std::io::Write;
@@ -65,83 +59,102 @@ async fn main() -> datafusion::error::Result<()> {
     # let path = csv_path.to_str().unwrap();
     let df = ctx.read_csv(path, CsvReadOptions::new()).await?;
 
-    // Print the inferred schema
+    // The inferred schema is available immediately
     println!("{}", df.schema());
+    // Output:
+    // Schema { fields: [
+    //     Field { name: "id", data_type: Int64, nullable: true, ... },
+    //     Field { name: "name", data_type: Utf8, nullable: true, ... }
+    // ], ... }
 
-    df.show().await?;
-    // +----+-------+
-    // | id | name  |
-    // +----+-------+
-    // | 1  | Alice |
-    // | 2  | Bob   |
-    // +----+-------+
-    # // Re-read for assertion (show() consumes the DataFrame)
-    # let df = ctx.read_csv(path, CsvReadOptions::new()).await?;
-    # let results = df.select_columns(&["id", "name"])?.collect().await?;
-    # assert_batches_sorted_eq!(
-    #     &[
-    #         "+----+-------+",
-    #         "| id | name  |",
-    #         "+----+-------+",
-    #         "| 1  | Alice |",
-    #         "| 2  | Bob   |",
-    #         "+----+-------+",
-    #     ],
-    #     &results
-    # );
+    // Execute eagerly and verify results
+    let results = df.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+",
+            "| id | name  |",
+            "+----+-------+",
+            "| 1  | Alice |",
+            "| 2  | Bob   |",
+            "+----+-------+",
+        ],
+        &results
+    );
+
     Ok(())
 }
 ```
 
-> **⚠️ Production Warning: Schema Inference**
-> CSV files have no embedded schema—DataFusion infers types from the first 1000 rows. This can fail silently if row 1001 has a different type. **Always provide an explicit schema in production.** See [Schema Management](schema-management.md) for guidance.
+## CsvReadOptions: Handling the Messy Reality
 
-**Practical considerations:**
+**[`CsvReadOptions`] provides builder methods to handle the structural
+variance of CSV files — from delimiters and quoting rules to compression
+and null representation.**
 
-- **No embedded schema** <br>
-  DataFusion infers types from the first 1000 rows. Use `.schema_infer_max_records(n)` if early rows aren't representative, or provide an explicit schema in production.
-- **No predicate pushdown** <br>
-  Every byte must be read and parsed, even if filtered later.
-- **Projection reduces CPU, not I/O** <br>
-  DataFusion skips _materializing_ unused columns, but still scans the full file.
-- **Compression** <br>
-  Use `.csv.gz` or `.csv.zst` for transfer; DataFusion reads them directly via `.file_compression_type()`.
+Unlike Parquet, CSV has no formal specification. Delimiter choice (`,`, `;`,
+`\t`), quoting rules, escape characters, null markers, line endings, and
+header conventions all vary between producers. A file exported from Excel
+looks different from a PostgreSQL `COPY` dump or an R `write.csv()` output.
+[`CsvReadOptions`] lets you configure each of these axes so DataFusion can
+parse your specific files correctly.
 
-#### CSV Trade-offs
+### Formatting and Structure
 
-| CSV Shines ✓                                         | Avoid CSV ✗                                     |
-| ---------------------------------------------------- | ----------------------------------------------- |
-| Data exchange with spreadsheets, legacy systems      | Analytics on large datasets → Parquet           |
-| Human inspection and quick debugging                 | Schema enforcement critical → Parquet/Avro      |
-| One-off exports, universal compatibility             | Storage efficiency matters (5–10x larger)       |
-| Small datasets where Parquet overhead isn't worth it | You need predicate pushdown (filter before I/O) |
+The following options configure how DataFusion parses the structural
+elements of a CSV file — delimiters, quoting, escaping, and line handling:
 
-#### CsvReadOptions
+| Builder Method                                                                         | Default  | Usage                                                                                                  |
+| :------------------------------------------------------------------------------------- | :------- | :----------------------------------------------------------------------------------------------------- |
+| **[`.has_header(bool)`][`csvreadoptions::has_header()`]**                              | `true`   | Treats first row as column names. Set `false` if file starts immediately with data.                    |
+| **[`.delimiter(u8)`][`csvreadoptions::delimiter()`]**                                  | `b','`   | Field separator character. Use `b'\t'` for TSV or `b';'` for European CSV.                             |
+| **[`.quote(u8)`][`csvreadoptions::quote()`]**                                          | `b'"'`   | Character to quote fields containing delimiters. Use `b'\''` for single-quote dialects.                |
+| **[`.terminator(Option<u8>)`][`csvreadoptions::terminator()`]**                        | `None`   | Line terminator character. Defaults to `None` (CRLF). Override for non-standard line endings.          |
+| **[`.escape(u8)`][`csvreadoptions::escape()`]**                                        | `None`   | Character used to escape quotes inside quoted fields.                                                  |
+| **[`.comment(u8)`][`csvreadoptions::comment()`]**                                      | `None`   | Character marking the start of a comment line (e.g., `b'#'`). Lines starting with this are ignored.    |
+| **[`.newlines_in_values(bool)`][`csvreadoptions::newlines_in_values()`]**              | `false`  | Allows `\n` inside quoted fields. **Warning**: Disables parallel file scanning (slower).               |
+| **[`.null_regex(Option<String>)`][`csvreadoptions::null_regex()`]**                    | `None`   | Treats specific strings (e.g., `"NA"`, `"\\N"`) as null. Use when data uses non-standard null markers. |
+| **[`.truncated_rows(bool)`][`csvreadoptions::truncated_rows()`]**                      | `false`  | If `true`, pads rows with missing columns using nulls instead of returning an error.                   |
+| **[`.schema_infer_max_records(usize)`][`csvreadoptions::schema_infer_max_records()`]** | `1000`   | Number of rows sampled for schema inference. Increase for heterogeneous data; set `0` to disable.      |
+| **[`.file_extension(&str)`][`csvreadoptions::file_extension()`]**                      | `".csv"` | Filters input files by suffix. Use to ignore metadata files in mixed directories.                      |
+| **[`.table_partition_cols(Vec)`][`csvreadoptions::table_partition_cols()`]**           | `[]`     | Maps Hive-style directory paths to columns (e.g., `year=2025/`).                                       |
+| **[`.file_sort_order(Vec)`][`csvreadoptions::file_sort_order()`]**                     | `[]`     | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries.         |
 
-[`CsvReadOptions`] provides builder methods for customization. The most important ones for production use are [`CsvReadOptions::schema()`] (for explicit type control) and [`.delimiter()`][`csvreadoptions::delimiter()`] (for non-comma separators like TSV).
+### Compression
 
-| Builder Method                                                                     | Default        | Usage                                                                                                                  |
-| :--------------------------------------------------------------------------------- | :------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **[`.has_header(bool)`][`csvreadoptions::has_header()`]**                          | `true`         | Treats first row as column names. Set `false` if file starts immediately with data.                                    |
-| **[`.delimiter(u8)`][`csvreadoptions::delimiter()`]**                              | `b','`         | Field separator character. Use `b'\t'` for TSV or `b';'` for European CSV.                                             |
-| **[`.schema(&Schema)`][`csvreadoptions::schema()`]**                               | `None`         | Explicit column names and types. **Recommended for production** to enforce strict types and avoid inference surprises. |
-| **[`.schema_infer_max_records(n)`][`csvreadoptions::schema_infer_max_records()`]** | `1000`         | Rows to scan for type inference. Increase if first 1000 rows contain nulls in columns that later have data.            |
-| **[`.quote(u8)`][`csvreadoptions::quote()`]**                                      | `b'"'`         | Character to quote fields containing delimiters. Use `b'\''` for single-quote dialects.                                |
-| **[`.file_compression_type(...)`][`csvreadoptions::file_compression_type()`]**     | `UNCOMPRESSED` | Compression algorithm (GZIP, BZIP2, ZSTD). For reading `.csv.gz` or `.csv.zst` directly.                               |
-| **[`.newlines_in_values(bool)`][`csvreadoptions::newlines_in_values()`]**          | `false`        | Allows `\n` inside quoted fields. **Warning**: Disables parallel file scanning (slower).                               |
-| **[`.null_regex(str)`][`csvreadoptions::null_regex()`]**                           | `None`         | Treats specific strings (e.g., `"NA"`) as null. Use when data uses non-standard null markers.                          |
-| **[`.file_extension(&str)`][`csvreadoptions::file_extension()`]**                  | `".csv"`       | Filters input files by suffix. Use to ignore metadata files in mixed directories.                                      |
+**DataFusion supports reading compressed CSV files directly, which drastically reduces I/O bottlenecks and storage costs.**
 
-> **Note:** [`CsvReadOptions::schema()`] here is a _builder method_ that sets the schema for reading. This differs from [`DataFrame::schema()`], which _returns_ the schema of an existing DataFrame.
+CSV files are uncompressed plain text — they consume significant disk space
+and I/O bandwidth. Compressing them before storage is standard practice.
 
-<details>
-<summary><strong>Example: Reading compressed CSV with explicit schema</strong></summary>
+DataFusion can decompress these files on the fly during the read process. It
+supports `GZIP`, `BZIP2`, `XZ`, and `ZSTD`. To enable this, configure the
+`.file_compression_type()`:
 
-This example shows how to read a GZIP-compressed CSV file with an explicit schema—a common pattern for log ingestion pipelines.
+:::{admonition} Compressed CSVs disable parallel reading
+:class: warning
+
+DataFusion reads uncompressed CSV files in parallel by splitting the file
+into byte ranges across multiple CPU cores. Compressed formats (GZIP,
+BZIP2, XZ, ZSTD) are **non-splittable** — the decompression stream has no
+random-access entry points, so the entire file must be read sequentially on
+a single thread. For large files, this creates a significant bottleneck.
+
+The same constraint applies when `.newlines_in_values(true)` is set,
+because row boundaries can no longer be determined by byte offset alone.
+:::
+
+| Builder Method                                                                 | Default        | Usage                                                                                        |
+| :----------------------------------------------------------------------------- | :------------- | :------------------------------------------------------------------------------------------- |
+| **[`.file_compression_type(...)`][`csvreadoptions::file_compression_type()`]** | `UNCOMPRESSED` | Compression algorithm (GZIP, BZIP2, XZ, ZSTD). For reading `.csv.gz` or `.csv.zst` directly. |
+
+:::{admonition} Example: Reading compressed CSV
+:class: seealso
+:collapsible: open
+
+This example shows how to read a GZIP-compressed CSV file—a common pattern for log ingestion pipelines.
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
 # use std::path::PathBuf;
 
@@ -155,42 +168,93 @@ async fn main() -> datafusion::error::Result<()> {
     #     .join("testing/data/csv/aggregate_test_100.csv.gz")
     #     .to_string_lossy().to_string();
 
-    // Define schema upfront (skips inference, enforces types)
-    let schema = Schema::new(vec![
-        Field::new("c1", DataType::Utf8, true),
-        Field::new("c2", DataType::Int64, true),
-        Field::new("c3", DataType::Int64, true),
-    ]);
-
     // Configure reader for GZIP compressed files
     let options = CsvReadOptions::new()
-        .schema(&schema)
         .file_extension(".csv.gz")
         .file_compression_type(FileCompressionType::GZIP);
 
     // Read — DataFusion decompresses on the fly
     let df = ctx.read_csv(&path, options).await?;
 
-    df.show().await?;
+    // df.show().await?;
     Ok(())
 }
 ```
 
-</details>
+:::
 
-#### CSV Production Tips
+## When to use CSVs
 
-- **Always provide explicit schema** <br>
-  Schema inference is risky: if row 1001 has a different type than rows 1–1000, your query fails at runtime.
-- **Use `.csv.gz`** for compressed transfer — DataFusion decompresses on the fly
-- **Set `.null_regex("NA|NULL|\\N")`** to handle common null markers
-- **Watch for empty strings vs nulls** — They're treated differently
+**CSV shines for human-readability, ingestion and interchange, but its lack of metadata makes it a poor choice for repeated analytical queries.**
 
-<details>
-<summary><strong>Example: Explicit schema for production</strong></summary>
+CSV files carry no embedded schema, no column statistics, and no internal
+structure beyond rows and delimiters. DataFusion cannot perform predicate
+pushdown (skipping irrelevant row groups based on statistics). Every byte
+of the file must be read from disk because row boundaries require parsing
+all delimiters.
+
+However, DataFusion **does** perform projection pushdown in memory: it
+tells the CSV parser which columns to materialize, so only the selected
+columns are allocated as Arrow arrays. On wide tables with many columns,
+this saves significant RAM even though all bytes are still read from disk.
+
+| CSV Shines ✓                                         | Avoid CSV ✗                                     |
+| ---------------------------------------------------- | ----------------------------------------------- |
+| Data exchange with spreadsheets, legacy systems      | Analytics on large datasets → Parquet           |
+| Human inspection and quick debugging                 | Schema enforcement critical → Parquet/Avro      |
+| One-off exports, universal compatibility             | Storage efficiency matters (5–10x larger)       |
+| Small datasets where Parquet overhead isn't worth it | You need predicate pushdown (filter before I/O) |
+
+:::{admonition} Register for repeated queries and SQL access
+:class: tip
+
+Use `ctx.register_csv("table_name", "path.csv", options)` to register the
+CSV file as a named table in the `SessionContext` catalog. This enables:
+
+- **SQL access** — query the table via `ctx.sql("SELECT * FROM table_name")`
+- **Cross-query reuse** — multiple DataFrame operations and SQL queries
+  can reference the same table name without re-reading options or paths
+- **Schema caching** — the inferred (or explicit) schema is resolved once
+  at registration time, avoiding repeated inference scans
+
+For datasets that will be queried analytically over time, consider
+converting to Parquet — its columnar layout and embedded statistics provide
+significantly better query performance.
+:::
+
+## Production Best Practices
+
+**Always provide an explicit schema in production to avoid schema inconsistency and data drift failures.**
+
+CSV files carry no embedded schema. DataFusion infers types by sampling a
+limited number of rows at the beginning of the file (configurable via
+`.schema_infer_max_records()`, default 1,000) and locks the column types
+based solely on what it observes in that window.
+
+:::{admonition} Schema Inference Problem
+:class: caution
+
+Schema inference from a finite sample is inherently
+unreliable for heterogeneous data. Any type variation that first appears
+_beyond_ the sample boundary produces a `DataFusionError` at execution time
+(when you call `.collect()`). The parser cannot coerce values that
+contradict the inferred types.
+
+**For example:** if the sampled rows for a column contain only integers,
+DataFusion infers `Int64`. A later row containing `150.5` (a float),
+`"N/A"` (an unrecognized null marker), or an empty field will fail to
+parse. Within the sample, DataFusion _does_ handle some type coercion
+(Int64 + Float64 widens to Float64), but once the schema is locked, it is
+fixed.
+:::
+
+To guarantee safety, use [`CsvReadOptions::schema()`] to explicitly define the schema. This skips the inference scan (improving startup time) and enforces strict types. You can also use `.null_regex()` to define how missing values are represented in your specific dataset.
+
+For more details on managing schemas across different sources, see [Schema Management](../Schema-Management/index.md).
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 use datafusion::arrow::datatypes::{Schema, Field, DataType};
 # use std::fs::File;
 # use std::io::Write;
@@ -208,25 +272,50 @@ async fn main() -> datafusion::error::Result<()> {
     # writeln!(file, "2,Bob,200.00")?;
     # writeln!(file, "3,Carol,75.25")?;
 
+    // 1. Define the explicit schema
     let schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("name", DataType::Utf8, true),
         Field::new("amount", DataType::Float64, true),
     ]);
 
-    // Read CSV with explicit schema
+    // 2. Configure options with the schema
+    let options = CsvReadOptions::new().schema(&schema);
+
+    // 3. Read CSV (skips inference scan)
     let path = "data.csv";
     # let path = csv_path.to_str().unwrap();
-    let df = ctx.read_csv(path, CsvReadOptions::new().schema(&schema)).await?;
+    let df = ctx.read_csv(path, options).await?;
 
-    df.show().await?;
+    // Execute eagerly and verify results
+    let results = df.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+--------+",
+            "| id | name  | amount |",
+            "+----+-------+--------+",
+            "| 1  | Alice | 150.5  |",
+            "| 2  | Bob   | 200.0  |",
+            "| 3  | Carol | 75.25  |",
+            "+----+-------+--------+",
+        ],
+        &results
+    );
+
     Ok(())
 }
 ```
 
-</details>
+:::{admonition} schema() is a builder method
+:class: note
 
-#### CSV References
+[`CsvReadOptions::schema()`] _sets_ the expected schema for the data reader before the file is processed. This defines the contract for how DataFusion should parse the incoming bytes.
+
+This differs from [`DataFrame::schema()`], which _returns_ the resolved `DFSchema` of an already-created DataFrame. The `DFSchema` contains the final types and column names after all inference, explicit definitions, and DataFrame transformations have been applied.
+:::
+
+## CSV References
 
 - [`CsvReadOptions` API](https://docs.rs/datafusion/latest/datafusion/prelude/struct.CsvReadOptions.html) — All configuration options
+- [CSV Format Options (SQL)](../../../../../user-guide/sql/format_options.md#csv-format-options) — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
 - [Example Usage (CSV with SQL and DataFrame)](../../user-guide/example-usage.md)

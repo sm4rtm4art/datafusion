@@ -19,7 +19,7 @@
 
 # Parquet — The Analytical Standard
 
-** Parquet-the default choice for analytical workloads: columnar, compressed,
+**Parquet - the default choice for analytical workloads: columnar, compressed,
 self-describing, and optimized for selective reads.**
 
 [Apache Parquet](https://parquet.apache.org/) stores data
@@ -98,12 +98,14 @@ from pruning behavior to schema enforcement — using a builder pattern.**
 
 | Builder Method                                                                   | Default      | Usage                                                                                                                           |
 | :------------------------------------------------------------------------------- | :----------- | :------------------------------------------------------------------------------------------------------------------------------ |
-| **[`.parquet_pruning(bool)`][`parquetreadoptions::parquet_pruning()`]**          | `true`       | Skips row groups using min/max statistics. Keep enabled for filtered queries (`WHERE id > 100`).                                |
-| **[`.table_partition_cols(Vec)`][`parquetreadoptions::table_partition_cols()`]** | `[]`         | Maps Hive-style directory paths to columns (e.g., `year=2025/`). Use when data is organized in folders by date/category.        |
 | **[`.file_extension(&str)`][`parquetreadoptions::file_extension()`]**            | `".parquet"` | Filters input files by suffix. Use when folders contain mixed files (`.crc`, `.json`, temp files).                              |
-| **[`.schema(&Schema)`][`parquetreadoptions::schema()`]**                         | `None`       | Supplies the Parquet _file_ schema. Use for production to enforce types and avoid schema-merging surprises across many files.   |
+| **[`.table_partition_cols(Vec)`][`parquetreadoptions::table_partition_cols()`]** | `[]`         | Maps Hive-style directory paths to columns (e.g., `year=2025/`). Use when data is organized in folders by date/category.        |
+| **[`.parquet_pruning(bool)`][`parquetreadoptions::parquet_pruning()`]**          | `true`       | Skips row groups using min/max statistics. Keep enabled for filtered queries (`WHERE id > 100`).                                |
 | **[`.skip_metadata(bool)`][`parquetreadoptions::skip_metadata()`]**              | `true`       | Ignores embedded schema metadata to avoid conflicts. Keep `true` for mixed producers; set `false` only if you rely on metadata. |
+| **[`.schema(&Schema)`][`parquetreadoptions::schema()`]**                         | `None`       | Supplies the Parquet _file_ schema. Use for production to enforce types and avoid schema-merging surprises across many files.   |
 | **[`.file_sort_order(Vec)`][`parquetreadoptions::file_sort_order()`]**           | `[]`         | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries without re-sorting.               |
+| **`.file_decryption_properties(Option)`**                                        | `None`       | Decryption configuration for Parquet [modular encryption](https://parquet.apache.org/docs/file-format/encryption/). Advanced.   |
+| **`.metadata_size_hint(Option<usize>)`**                                         | `None`       | Hint (in bytes) for the footer fetch size. Useful for cloud object stores where a larger initial read avoids extra round trips. |
 
 :::{admonition} schema() is a builder method
 :class: note
@@ -159,6 +161,8 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 :::
+
+---
 
 ## How Parquet Reading Works
 
@@ -228,6 +232,89 @@ DataFusion supports advanced indexing:
 See the [References](#parquet-references) below for deep dives on these
 techniques.
 
+## Filter Pushdown (Late Materialization)
+
+**Beyond metadata pruning, DataFusion can apply filters _during_ Parquet
+decoding — reading only filter columns first and selectively decoding
+remaining columns for matching rows. This is OFF by default.**
+
+The [metadata-based skipping](#at-execution-time) described above (row group
+pruning, page index, bloom filters) operates at the _metadata level_ — it
+decides which chunks of data to skip before reading any column values. Filter
+pushdown goes one step further: it operates at the _row level_ during
+decoding itself.
+
+### How it works
+
+With filter pushdown enabled, DataFusion uses **late materialization**:
+
+1. **Decode filter columns only** — For a query like
+   `SELECT val FROM sensor_data WHERE location = 'office'`, DataFusion first
+   decodes only the `location` column.
+2. **Build a row mask** — Evaluates the filter predicate to produce a
+   boolean mask identifying which rows match.
+3. **Selectively decode remaining columns** — Only rows that passed the
+   filter are decoded from the remaining projected columns (`val`), skipping
+   all non-matching rows entirely.
+
+This is especially effective for **highly selective filters** — if only 1% of
+rows match, 99% of the projected column data is never decoded.
+
+### Configuration
+
+Filter pushdown is controlled by session-level settings, not by
+`ParquetReadOptions`:
+
+| Setting                                         | Default | Effect                                                                    |
+| :---------------------------------------------- | :------ | :------------------------------------------------------------------------ |
+| `datafusion.execution.parquet.pushdown_filters` | `false` | Enables filter evaluation during Parquet decoding (late materialization). |
+| `datafusion.execution.parquet.reorder_filters`  | `false` | Heuristically reorders filter expressions to minimize evaluation cost.    |
+
+Enable both for filtered analytical queries on large Parquet datasets:
+
+```rust
+use datafusion::prelude::*;
+
+# #[tokio::main]
+# async fn main() -> datafusion::error::Result<()> {
+let ctx = SessionContext::new_with_config(
+    SessionConfig::new()
+        .set_bool("datafusion.execution.parquet.pushdown_filters", true)
+        .set_bool("datafusion.execution.parquet.reorder_filters", true),
+);
+# Ok(())
+# }
+```
+
+### Performance trade-offs
+
+Filter pushdown is not unconditionally faster. Columns that appear in
+**both** the filter and the output projection must be decoded twice — once
+for filter evaluation and once for the output. For non-selective filters
+(where most rows match), this double-decode overhead can outweigh the
+savings.
+
+DataFusion's Parquet reader mitigates this with an **interleaved decoding
+pipeline** that caches recently decompressed pages, limiting the overhead
+to at most two pages (~2 MB) per shared column. On the
+[ClickBench](https://benchmark.clickhouse.com/) benchmark suite, this
+approach reduced total query time by ~15%, with up to 2.2x speedup on
+highly selective queries and no significant regression elsewhere.
+
+:::{admonition} When to enable filter pushdown
+:class: tip
+
+Enable `pushdown_filters` when your queries filter on columns that
+are selective (few matching rows relative to total). Keep it disabled for
+full-table scans or queries with non-selective predicates where the
+double-decode overhead provides no benefit.
+:::
+
+For a detailed analysis of the interleaved pipeline, caching strategy, and
+benchmark results, see the
+[Efficient Filter Pushdown in Parquet](https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/)
+blog post.
+
 ## Parquet References
 
 **DataFusion Blog (Deep Dives):**
@@ -240,5 +327,6 @@ techniques.
 
 - [Apache Parquet Documentation](https://parquet.apache.org/docs/) — Official specification
 - [`ParquetReadOptions` API](https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html) — All configuration options
+- [Parquet Format Options (SQL)](../../../../../user-guide/sql/format_options.md#parquet-format-options) — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
 
 ---

@@ -65,6 +65,11 @@ Delta Lake, ...) are available via [ecosystem extensions](../ecosystem-sources.m
 | **[Avro](avro.md)** <br>[`.read_avro()`]            | Row      | Embedded (header)            | **Low** (header schema)     | ❌ Partition only     | Kafka, schema evolution          |
 | **[Arrow IPC](arrow-ipc.md)** <br>[`.read_arrow()`] | Columnar | Embedded (header)            | **Very Low** (zero-copy\*)  | ❌ Partition only     | Arrow ecosystem, zero-copy       |
 
+\* Arrow IPC files already use Arrow's in-memory columnar layout, so
+DataFusion can map the data directly without deserialization — hence
+"zero-copy" for local, uncompressed files. Compressed or remote IPC still
+requires a decompression or network copy.
+
 :::{admonition} Prefer columnar formats for analytics
 :class: tip
 

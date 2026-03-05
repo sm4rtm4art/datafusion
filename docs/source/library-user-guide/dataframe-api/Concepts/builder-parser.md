@@ -206,7 +206,7 @@ When queries are built from SQL strings, every dynamic parameter is a potential 
 - **Composable and auditable:** Query logic lives in typed Rust functions that can be unit-tested, reviewed in pull requests, and refactored with IDE support. SQL strings embedded in code resist all three.
 
 :::{admonition} Key takeaway
-:class: Information
+:class: note
 DataFusion's SQL API is safe when queries are static strings or come from trusted sources. The security advantage of the DataFrame API specifically applies when query logic is **dynamic** — constructed from user input, runtime conditions, or external parameters.
 :::
 
