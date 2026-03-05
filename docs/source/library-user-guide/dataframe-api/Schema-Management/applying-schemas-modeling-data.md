@@ -25,9 +25,10 @@
 2. INTRODUCTION
 -->
 
-````{contents} Applying Schemas and Modeling Data
+```{contents} Applying Schemas and Modeling Data
 :local:
 :depth: 2
+```
 
 ## Introduction (placeholder)
 
@@ -116,7 +117,7 @@ async fn main() -> datafusion::error::Result<()> {
 
     Ok(())
 }
-````
+```
 
 `````
 

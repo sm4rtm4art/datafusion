@@ -40,7 +40,7 @@
 :numbered:
 :titlesonly:
 :caption: Schema Management with DFSchema
-anatomy
+anatomy-schema
 creating-schemas
 dataframe-methods
 inspection-and-validation

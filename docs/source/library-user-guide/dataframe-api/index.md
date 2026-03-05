@@ -40,6 +40,7 @@ Creating-Dataframes/index
 Schema-Management/index
 Transformations/index
 Writing-Dataframes/index
+Test-sphinx
 ```
 
 ## The DataFrame Lifecycle

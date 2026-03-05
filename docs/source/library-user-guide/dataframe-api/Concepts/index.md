@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Concepts of DataFusion DataFrame API
+# Concepts of Datafusions DataFrames
 
 **Understanding the DataFusion ecosystem — architecture, APIs, and the execution model behind every DataFrame.**
 
