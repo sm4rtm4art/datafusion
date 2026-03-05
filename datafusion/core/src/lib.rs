@@ -1249,6 +1249,90 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/index.md",
+    dataframe_api_creating_dataframes_index
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/ecosystem-sources.md",
+    dataframe_api_creating_dataframes_ecosystem_sources
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-logical-plan.md",
+    dataframe_api_creating_dataframes_from_logical_plan
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-memory.md",
+    dataframe_api_creating_dataframes_from_memory
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-sql.md",
+    dataframe_api_creating_dataframes_from_sql
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/inline-data.md",
+    dataframe_api_creating_dataframes_inline_data
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/registered-tables.md",
+    dataframe_api_creating_dataframes_registered_tables
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/streaming.md",
+    dataframe_api_creating_dataframes_streaming
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/index.md",
+    dataframe_api_creating_dataframes_from_files_index
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/arrow-ipc.md",
+    dataframe_api_creating_dataframes_from_files_arrow_ipc
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/avro.md",
+    dataframe_api_creating_dataframes_from_files_avro
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/csv.md",
+    dataframe_api_creating_dataframes_from_files_csv
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/json.md",
+    dataframe_api_creating_dataframes_from_files_json
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/parquet.md",
+    dataframe_api_creating_dataframes_from_files_parquet
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
     "../../../docs/source/library-user-guide/dataframe-api/transformations.md",
     dataframe_api_transformations
 );
