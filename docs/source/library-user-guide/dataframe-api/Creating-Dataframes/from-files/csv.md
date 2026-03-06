@@ -154,6 +154,7 @@ This example shows how to read a GZIP-compressed CSV file—a common pattern for
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_eq;
 use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
 # use std::path::PathBuf;
 
@@ -164,7 +165,7 @@ async fn main() -> datafusion::error::Result<()> {
     // Path to GZIP-compressed CSV
     let path = "logs.csv.gz";
     # let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    #     .join("testing/data/csv/aggregate_test_100.csv.gz")
+    #     .join("../../testing/data/csv/aggregate_test_100.csv.gz")
     #     .to_string_lossy().to_string();
 
     // Configure reader for GZIP compressed files
@@ -172,10 +173,26 @@ async fn main() -> datafusion::error::Result<()> {
         .file_extension(".csv.gz")
         .file_compression_type(FileCompressionType::GZIP);
 
-    // Read — DataFusion decompresses on the fly
+    // Read and decompress on the fly
     let df = ctx.read_csv(&path, options).await?;
 
-    // df.show().await?;
+    // Select a few columns and verify decompressed data
+    let df = df.select_columns(&["c1", "c2", "c3"])?;
+    # let df = df.limit(0, Some(3))?;
+    let results = df.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----+----+-----+",
+            "| c1 | c2 | c3  |",
+            "+----+----+-----+",
+            "| c  | 2  | 1   |",
+            "| d  | 5  | -40 |",
+            "| b  | 1  | 29  |",
+            "+----+----+-----+",
+        ],
+        &results
+    );
+
     Ok(())
 }
 ```
@@ -235,9 +252,11 @@ based solely on what it observes in that window.
 
 Schema inference from a finite sample is inherently
 unreliable for heterogeneous data. Any type variation that first appears
-_beyond_ the sample boundary produces a `DataFusionError` at execution time
-(when you call `.collect()`). The parser cannot coerce values that
-contradict the inferred types.
+_beyond_ the sample boundary (default: first 1,000 rows) produces a
+`DataFusionError` at execution time (when you call `.collect()`).
+Increasing the sample size only shifts the boundary — it never eliminates
+the risk. The parser cannot coerce values that contradict the inferred
+types.
 
 **For example:** <br>
 if the sampled rows for a column contain only integers,
@@ -247,6 +266,25 @@ parse. Within the sample, DataFusion _does_ handle some type coercion
 (Int64 + Float64 widens to Float64), but once the schema is locked, it is
 fixed.
 :::
+
+::::{admonition} Identifier casing pitfall
+:class: warning
+
+DataFusion follows the PostgreSQL convention: **unquoted identifiers are
+folded to lowercase**. CSV headers preserve the original casing from the
+source file (e.g., `Amount`, `firstName`). If you reference these columns
+with `col("amount")` or in SQL as `SELECT amount`, DataFusion looks for a
+lowercase `amount` — which won't match the header `Amount`.
+
+**Workarounds:**
+
+- **Double-quote** the identifier: `col("\"Amount\"")` or in SQL
+  `SELECT "Amount"`
+- **Provide an explicit schema** with lowercase field names — this
+  normalizes casing at read time and eliminates the mismatch entirely
+
+For more details, see [Schema Management](../Schema-Management/index.md).
+::::
 
 To guarantee safety, use [`CsvReadOptions::schema()`] to explicitly define the schema. This skips the inference scan (improving startup time) and enforces strict types. You can also use `.null_regex()` to define how missing values are represented in your specific dataset.
 

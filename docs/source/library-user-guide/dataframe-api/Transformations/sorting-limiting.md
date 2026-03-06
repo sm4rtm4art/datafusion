@@ -25,8 +25,7 @@
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Table of Content
 :local:
 :depth: 2
-:caption: Sorting and Limiting
 ```

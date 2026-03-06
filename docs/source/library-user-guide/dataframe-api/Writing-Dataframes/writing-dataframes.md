@@ -36,6 +36,10 @@ TODO(Docs): writing-dataframes.md - Persisting Data to Storage
 
 4. COMPRESSION:
   _ Add a small overview on the compression used in datafusion. Show differences and when which shines, if possible.
+
+5. PARQUET WRITE FEATURES (from Creating-DataFrames/parquet.md refactoring):
+   - [ ] Document write-side partitioning via `DataFrameWriteOptions::with_partition_by()` in the "Writing to Parquet" section.
+   - [ ] Document that Zstd(3) is the default Parquet write compression (`datafusion.execution.parquet.compression = "zstd(3)"`).
 -->
 
 # Writing Concepts

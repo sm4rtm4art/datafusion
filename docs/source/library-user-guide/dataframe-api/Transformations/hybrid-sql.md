@@ -55,10 +55,9 @@ Ensure the final document flows in this order:
 3. merge the 2 bridging sections into one
 -->
 
-```{contents}
+```{contents} Table of Content
 :local:
 :depth: 2
-:caption: Mixing SQL and DataFrames
 ```
 
 ## Introduction (placeholder)

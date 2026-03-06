@@ -25,10 +25,9 @@
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Table of Content
 :local:
 :depth: 2
-:caption: Set Operations by Name
 ```
 
 ## Introduction (placeholder)

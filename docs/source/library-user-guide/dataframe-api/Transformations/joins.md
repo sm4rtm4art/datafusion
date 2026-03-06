@@ -25,10 +25,9 @@
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Table of Content
 :local:
 :depth: 2
-:caption: When DataFrames Collide: Join Patterns
 ```
 
 ## Introduction (placeholder)

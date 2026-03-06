@@ -25,10 +25,9 @@
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Table of Content
 :local:
 :depth: 2
-:caption: DataFrame-Unique Methods
 ```
 
 ## Introduction (placeholder)

@@ -141,17 +141,32 @@ DATAFRAME CREATION PATHWAYS
 
 **Reading the diagram top-to-bottom:**
 
-- **Layer 1 — Data Sources**: Where bytes live — files on disk, on S3,
-  batches in memory, rows in databases, records in lakehouse tables.
-- **Layer 2 — Table Providers**: Each source type has a dedicated
-  [`TableProvider`] implementation that translates source-specific formats
-  into Arrow batches. `ListingTable` and `MemTable` ship with DataFusion;
-  custom implementations extend it to any source.
-- **Layer 3 — Access Pattern**: Providers enter the session either
-  ephemerally (direct read → immediate DataFrame) or by registration
-  (named entry in the catalog for repeated SQL and DataFrame access).
-- **Layer 4 — The Hub**: The [`SessionContext`] collects all providers,
-  configuration, and runtime into one place.
+::::::{admonition} Reading the diagram top-to-bottom
+:class: seealso
+
+:::{admonition} **Layer 1 — Data Sources**
+:class: note
+
+**Layer 1 — Data Sources**: Where bytes live — files on disk, on S3,
+batches in memory, rows in databases, records in lakehouse tables.
+:::
+
+:::{admonition} **Layer 2 — Table Providers**
+:class: note
+Each source type has a dedicated [`TableProvider`] implementation that translates source-specific formats into Arrow batches. `ListingTable` and `MemTable` ship with DataFusion; custom implementations extend it to any source.
+:::
+
+:::{admonition} **Layer 3 — Access Pattern**
+:class: note
+Providers enter the session either ephemerally (direct read → immediate DataFrame) or by registration (named entry in the catalog for repeated SQL and DataFrame access).
+:::
+
+:::{admonition} **Layer 4 — The Hub**
+:class: note
+The [`SessionContext`] collects all providers, configuration, and runtime into one place.
+:::
+
+::::::
 
 ## From Plan to Execution
 

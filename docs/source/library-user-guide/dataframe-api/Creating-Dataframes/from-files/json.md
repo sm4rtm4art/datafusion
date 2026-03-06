@@ -22,7 +22,13 @@
 **JSON — Row-oriented and self-describing per record, ubiquitous in web
 APIs, logging pipelines, and NoSQL systems.**
 
-JSON is the default interchange format for web APIs, logging pipelines, message queues, and NoSQL databases (i.e.MongoDB, Elasticsearch, CouchDB...). DataFusion reads JSON in NDJSON format — also known as JSON Lines (.jsonl) or Newline-Delimited JSON (.ndjson) — where each line contains one complete JSON object.
+JSON is the default interchange format for web APIs, logging pipelines,
+message queues, and NoSQL databases (i.e. MongoDB, Elasticsearch, CouchDB...).
+DataFusion reads JSON in **NDJSON format** by default — also known as JSON
+Lines (`.jsonl`) or Newline-Delimited JSON (`.ndjson`) — where each line
+contains one complete JSON object. Standard **JSON arrays**
+(`[{...}, {...}]`) are also supported via the `.newline_delimited(false)`
+option.
 
 ```{contents} Table of Contents
 :local:
@@ -84,14 +90,35 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-:::{admonition} NDJSON only — no JSON arrays or pretty-printed files
-:class: warning
+:::{admonition} NDJSON is the default — JSON arrays require explicit opt-in
+:class: note
 
-DataFusion expects **Newline-Delimited JSON** (one complete JSON object per
-line). Standard JSON arrays (`[{"a": 1}, {"b": 2}]`) and pretty-printed
-multi-line JSON objects will produce parsing errors. If your data is in
-array format, convert it to NDJSON first (one object per line, no wrapping
-array brackets).
+DataFusion defaults to **Newline-Delimited JSON** (one complete JSON object
+per line). Standard JSON arrays (`[{"a": 1}, {"b": 2}]`) and
+pretty-printed multi-line objects will produce parsing errors unless you
+explicitly set `.newline_delimited(false)`.
+
+```rust,ignore
+// Read a JSON array file ([{...}, {...}])
+let options = NdJsonReadOptions::default().newline_delimited(false);
+let df = ctx.read_json("data.json", options).await?;
+```
+
+```sql
+-- SQL equivalent
+CREATE EXTERNAL TABLE my_table
+STORED AS JSON
+OPTIONS ('format.newline_delimited' 'false')
+LOCATION 'path/to/array.json';
+```
+
+**Limitations:** JSON array format reads the entire file sequentially — it
+cannot split the file into byte ranges for parallel scanning
+(`repartition_file_scans`). For large datasets, NDJSON remains the
+performant choice.
+
+**This is a recent feature!** [Support JSON arrays reader/parse for datafusion #19920
+](https://github.com/apache/datafusion/issues/19920)
 :::
 
 :::{admonition} Schema inference is limited
@@ -106,15 +133,30 @@ Deeply nested, sparse, or late-appearing fields may not be detected.
 
 ## NdJsonReadOptions
 
-**[`NdJsonReadOptions`] configures how DataFusion parses NDJSON files —
-schema, file extensions, compression, and streaming behavior.**
+**[`NdJsonReadOptions`] configures how DataFusion parses JSON files —
+schema, file extensions, compression, format, and streaming behavior.**
 
-JSON's simplicity means fewer variables than Parquet or CSV. There are no delimiter or quoting rules to configure. The main decisions are whether to provide an explicit schema, which file extensions to match, and whether the data is compressed. The following tables lists the available options.
+:::{admonition} JSON array support
+:class: tip
+
+`NdJsonReadOptions` supports reading standard JSON arrays
+(`[{...}, {...}]`) via the `.newline_delimited(false)` builder method.
+When set, DataFusion streams the array into NDJSON internally — no manual
+conversion needed. See [the admonition above](#reading-json-files) for a
+code example.
+:::
+
+JSON's simplicity means fewer variables than Parquet or CSV. There are no
+delimiter or quoting rules to configure. The main decisions are whether to
+provide an explicit schema, which file extensions to match, and whether the
+data is compressed or in array format. The following table lists the
+available options.
 
 | Builder Method                                                                            | Default   | Usage                                                                                                  |
 | :---------------------------------------------------------------------------------------- | :-------- | :----------------------------------------------------------------------------------------------------- |
 | **[`.schema(&Schema)`][`ndjsonreadoptions::schema()`]**                                   | `None`    | Explicit schema. **Recommended for production** to enforce strict types and avoid inference surprises. |
 | **[`.schema_infer_max_records(usize)`][`ndjsonreadoptions::schema_infer_max_records()`]** | `1000`    | Number of objects sampled for schema inference. Increase for heterogeneous data; set `0` to disable.   |
+| **`.newline_delimited(bool)`**                                                            | `true`    | Set `false` to read standard JSON arrays (`[{...}, {...}]`). Disables parallel file scanning.          |
 | **[`.file_extension(&str)`][`ndjsonreadoptions::file_extension()`]**                      | `".json"` | Filters input files by suffix. Use `".jsonl"` or `".ndjson"` for non-standard extensions.              |
 | **[`.table_partition_cols(Vec)`][`ndjsonreadoptions::table_partition_cols()`]**           | `[]`      | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                              |
 | **[`.file_sort_order(Vec)`][`ndjsonreadoptions::file_sort_order()`]**                     | `[]`      | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries.         |
@@ -325,3 +367,4 @@ This differs from [`DataFrame::schema()`], which _returns_ the resolved
 
 - [`NdJsonReadOptions` API](https://docs.rs/datafusion/latest/datafusion/prelude/struct.NdJsonReadOptions.html) — All configuration options
 - [JSON Format Options (SQL)](../../../../../user-guide/sql/format_options.md#json-format-options) — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
+- [datafusion-functions-json](https://github.com/datafusion-contrib/datafusion-functions-json) — Community-maintained scalar functions for querying JSON strings (`json_get`, `json_contains`, `json_length`)
