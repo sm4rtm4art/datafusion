@@ -25,10 +25,9 @@
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Table of Contents
 :local:
 :depth: 2
-:caption: Creating DataFrames From a Registered Table
 ```
 
 ## Introduction (placeholder)

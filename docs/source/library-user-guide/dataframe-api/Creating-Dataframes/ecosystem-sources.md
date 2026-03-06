@@ -25,9 +25,9 @@
 2. INTRODUCTION
 -->
 
-```{contents} Table of Contents for Extension Links
-:maxdepth: 2
-:caption: Creation Methods
+```{contents} Table of Contents
+:local:
+:depth: 2
 ```
 
 # Ecosystem Data Sources

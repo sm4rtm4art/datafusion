@@ -25,10 +25,9 @@
 2. INTRODUCTION
 -->
 
-```{contents} Creation DataFrames from SQL Queries
+```{contents} Table of Contents
 :local:
 :depth: 2
-:caption: Creation DataFrames from SQL Queries
 ```
 
 ## Introduction (placeholder)

@@ -26,7 +26,6 @@ CSV is the most widely used format for data exchange, accepted across virtually 
 ```{contents}
 :local:
 :depth: 2
-:caption: In this section
 ```
 
 ## Reading CSV Files
@@ -240,7 +239,8 @@ _beyond_ the sample boundary produces a `DataFusionError` at execution time
 (when you call `.collect()`). The parser cannot coerce values that
 contradict the inferred types.
 
-**For example:** if the sampled rows for a column contain only integers,
+**For example:** <br>
+if the sampled rows for a column contain only integers,
 DataFusion infers `Int64`. A later row containing `150.5` (a float),
 `"N/A"` (an unrecognized null marker), or an empty field will fail to
 parse. Within the sample, DataFusion _does_ handle some type coercion

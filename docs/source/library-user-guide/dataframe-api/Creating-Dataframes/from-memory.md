@@ -25,10 +25,10 @@
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Table of Contents
 :local:
 :depth: 2
-:caption: Creation DataFrames Form Arrow [`RecordBatch`]es
+
 ```
 
 <!--### 4. From Arrow [`RecordBatch`]es: The Native Pathway-->

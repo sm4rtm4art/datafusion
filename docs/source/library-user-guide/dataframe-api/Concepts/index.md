@@ -23,7 +23,7 @@
 
 Data-driven applications require processing massive, diverse datasets efficiently across a variety of storage systems and formats. Apache Arrow DataFusion provides a blazing-fast, extensible query engine to meet this need, exposing its core engine through both standard SQL and a programmatic DataFrame API. This guide explores the conceptual foundation of the DataFrame API — from architectural fit and API design to execution internals and ecosystem positioning.
 
-```{toctree} Table of Contents for Concepts of DataFrames
+```{toctree}
 :maxdepth: 1
 :numbered:
 :titlesonly:
@@ -125,5 +125,3 @@ To actually process data, you must trigger an action that materializes the resul
 - The **Logical Optimizer** rewrites the plan to make the math more efficient.
 - The **Physical Planner** maps the operations to your hardware, partitioning the work across CPU cores.
 - The **Execution Engine** asynchronously pulls the data, yielding a stream of columnar `RecordBatch` chunks rather than evaluating row-by-row.
-
----

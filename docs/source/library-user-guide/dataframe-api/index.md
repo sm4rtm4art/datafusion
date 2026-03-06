@@ -36,7 +36,7 @@ DataFusion [`DataFrame`]s are modeled after the [Pandas DataFrame] interface and
 :maxdepth: 1
 :caption: Table of Contents for DataFrame API Documentation
 Concepts/index
-Creating-Dataframes/index
+Creating-DataFrames/index
 Schema-Management/index
 Transformations/index
 Writing-Dataframes/index

@@ -33,6 +33,9 @@ TODO(Docs): writing-dataframes.md - Persisting Data to Storage
 
 3. STRUCTURE:
    - Keep all formats in this ONE file to serve as a unified reference. Do not split Parquet/CSV/JSON into separate files.
+
+4. COMPRESSION:
+  _ Add a small overview on the compression used in datafusion. Show differences and when which shines, if possible.
 -->
 
 # Writing Concepts

@@ -48,7 +48,7 @@ Examples use [`assert_batches_eq!`] to verify outputs—you see both the code an
 :numbered:
 
 creating-concepts
-from-files/index
+from-files/index.md
 registered-tables
 from-sql
 from-memory

@@ -35,7 +35,7 @@
 2. INTRODUCTION
 -->
 
-```{toctree} Table of Contents for Schema Management with DataFrameSchema
+```{toctree}
 :maxdepth: 1
 :numbered:
 :titlesonly:
@@ -45,7 +45,6 @@ creating-schemas
 dataframe-methods
 inspection-and-validation
 schema-transformation
-schema-intrference
 ```
 
 ## Introduction(Placeholde)

@@ -29,10 +29,9 @@ embedded statistics, and benefit from excellent compression ratios. If you
 control the storage format and are unsure which to choose, **start with
 Parquet** — its metadata-driven optimizations compound as data volume grows.
 
-```{contents}
+```{contents} Table of Contents
 :local:
 :depth: 2
-:caption: In this section
 ```
 
 ## Reading Parquet Files

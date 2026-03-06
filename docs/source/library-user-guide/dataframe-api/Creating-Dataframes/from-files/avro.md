@@ -37,7 +37,6 @@ the better choice.
 ```{contents}
 :local:
 :depth: 2
-:caption: In this section
 ```
 
 ## Reading Avro Files
@@ -54,6 +53,7 @@ Enable it in your `Cargo.toml`:
 ```toml
 datafusion = { version = "...", features = ["avro"] }
 ```
+
 :::
 
 **A single call to `ctx.read_avro()` reads the schema from the file
@@ -127,11 +127,11 @@ partitioned directories.
 
 | Option                                                                        | Default   | Usage                                                                                         |
 | :---------------------------------------------------------------------------- | :-------- | :-------------------------------------------------------------------------------------------- |
-| **[`.schema(&Schema)`][`avroreadoptions::schema()`]**                         | `None`    | Override the embedded schema. Use to enforce strict types or resolve cross-file schema drift.  |
-| **`.file_extension`**                                                         | `".avro"` | Filters input files by suffix. No builder method — use struct update syntax (see below).       |
+| **[`.schema(&Schema)`][`avroreadoptions::schema()`]**                         | `None`    | Override the embedded schema. Use to enforce strict types or resolve cross-file schema drift. |
+| **`.file_extension`**                                                         | `".avro"` | Filters input files by suffix. No builder method — use struct update syntax (see below).      |
 | **[`.table_partition_cols(Vec)`][`avroreadoptions::table_partition_cols()`]** | `[]`      | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                     |
 
-`file_extension` has no builder method. If your files use a different
+[`file_extension`] has no builder method. If your files use a different
 suffix, set the field directly via struct update syntax:
 
 ```rust,ignore
@@ -208,11 +208,11 @@ interchange, not analytics.
 
 | Avro Shines ✓                                     | Avoid Avro ✗                                        |
 | ------------------------------------------------- | --------------------------------------------------- |
-| Event streaming (Kafka, Pulsar, Kinesis)           | Production analytics on large datasets → Parquet    |
-| Schema registry integration (Confluent, Apicurio)  | Highly selective queries needing predicate pushdown  |
-| Cross-system interchange with schema contracts     | Storage efficiency for wide tables → Parquet         |
-| Schema evolution (add/remove fields safely)        | Columnar analytics (aggregations, joins) → Parquet   |
-| Compact binary format (smaller than JSON)          | Need min/max statistics for optimizer → Parquet      |
+| Event streaming (Kafka, Pulsar, Kinesis)          | Production analytics on large datasets → Parquet    |
+| Schema registry integration (Confluent, Apicurio) | Highly selective queries needing predicate pushdown |
+| Cross-system interchange with schema contracts    | Storage efficiency for wide tables → Parquet        |
+| Schema evolution (add/remove fields safely)       | Columnar analytics (aggregations, joins) → Parquet  |
+| Compact binary format (smaller than JSON)         | Need min/max statistics for optimizer → Parquet     |
 
 :::{admonition} Register for repeated queries and SQL access
 :class: tip

@@ -41,8 +41,7 @@ TODO(Docs): Fill out streaming.md (Creation Phase)
 2. INTRODUCTION
 -->
 
-```{contents}
+```{contents} Table of Content
 :local:
 :depth: 2
-:caption: Creating DataFrames with Streaming
 ```

@@ -24,10 +24,9 @@ APIs, logging pipelines, and NoSQL systems.**
 
 JSON is the default interchange format for web APIs, logging pipelines, message queues, and NoSQL databases (i.e.MongoDB, Elasticsearch, CouchDB...). DataFusion reads JSON in NDJSON format — also known as JSON Lines (.jsonl) or Newline-Delimited JSON (.ndjson) — where each line contains one complete JSON object.
 
-```{contents}
+```{contents} Table of Contents
 :local:
 :depth: 2
-:caption: In this section
 ```
 
 ## Reading JSON Files
@@ -112,14 +111,14 @@ schema, file extensions, compression, and streaming behavior.**
 
 JSON's simplicity means fewer variables than Parquet or CSV. There are no delimiter or quoting rules to configure. The main decisions are whether to provide an explicit schema, which file extensions to match, and whether the data is compressed. The following tables lists the available options.
 
-| Builder Method                                                                            | Default        | Usage                                                                                                  |
-| :---------------------------------------------------------------------------------------- | :------------- | :----------------------------------------------------------------------------------------------------- |
-| **[`.schema(&Schema)`][`ndjsonreadoptions::schema()`]**                                   | `None`         | Explicit schema. **Recommended for production** to enforce strict types and avoid inference surprises. |
-| **[`.schema_infer_max_records(usize)`][`ndjsonreadoptions::schema_infer_max_records()`]** | `1000`         | Number of objects sampled for schema inference. Increase for heterogeneous data; set `0` to disable.   |
-| **[`.file_extension(&str)`][`ndjsonreadoptions::file_extension()`]**                      | `".json"`      | Filters input files by suffix. Use `".jsonl"` or `".ndjson"` for non-standard extensions.              |
-| **[`.table_partition_cols(Vec)`][`ndjsonreadoptions::table_partition_cols()`]**           | `[]`           | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                              |
-| **[`.file_sort_order(Vec)`][`ndjsonreadoptions::file_sort_order()`]**                     | `[]`           | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries.         |
-| **[`.mark_infinite(bool)`][`ndjsonreadoptions::mark_infinite()`]**                        | `false`        | Marks this source as unbounded (never reaches EOF). Use for Unix named pipes or streaming inputs.      |
+| Builder Method                                                                            | Default   | Usage                                                                                                  |
+| :---------------------------------------------------------------------------------------- | :-------- | :----------------------------------------------------------------------------------------------------- |
+| **[`.schema(&Schema)`][`ndjsonreadoptions::schema()`]**                                   | `None`    | Explicit schema. **Recommended for production** to enforce strict types and avoid inference surprises. |
+| **[`.schema_infer_max_records(usize)`][`ndjsonreadoptions::schema_infer_max_records()`]** | `1000`    | Number of objects sampled for schema inference. Increase for heterogeneous data; set `0` to disable.   |
+| **[`.file_extension(&str)`][`ndjsonreadoptions::file_extension()`]**                      | `".json"` | Filters input files by suffix. Use `".jsonl"` or `".ndjson"` for non-standard extensions.              |
+| **[`.table_partition_cols(Vec)`][`ndjsonreadoptions::table_partition_cols()`]**           | `[]`      | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                              |
+| **[`.file_sort_order(Vec)`][`ndjsonreadoptions::file_sort_order()`]**                     | `[]`      | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries.         |
+| **[`.mark_infinite(bool)`][`ndjsonreadoptions::mark_infinite()`]**                        | `false`   | Marks this source as unbounded (never reaches EOF). Use for Unix named pipes or streaming inputs.      |
 
 ### Compression
 
@@ -142,8 +141,8 @@ random-access entry points, so the entire file must be read sequentially on
 a single thread. For large files, this creates a significant bottleneck.
 :::
 
-| Builder Method                                                                    | Default        | Usage                                                                                        |
-| :-------------------------------------------------------------------------------- | :------------- | :------------------------------------------------------------------------------------------- |
+| Builder Method                                                                    | Default        | Usage                                                                                          |
+| :-------------------------------------------------------------------------------- | :------------- | :--------------------------------------------------------------------------------------------- |
 | **[`.file_compression_type(...)`][`ndjsonreadoptions::file_compression_type()`]** | `UNCOMPRESSED` | Compression algorithm (GZIP, BZIP2, XZ, ZSTD). For reading `.json.gz` or `.json.zst` directly. |
 
 :::{admonition} Example: Reading compressed NDJSON
@@ -221,13 +220,13 @@ saves significant RAM even though all bytes are still read from disk.
 - **In-memory projection only** — all bytes are read from disk, but only
   selected columns are materialized as Arrow arrays
 
-| JSON Shines ✓                                       | Avoid JSON ✗                                        |
-| --------------------------------------------------- | --------------------------------------------------- |
-| Data interchange: APIs, logs, NoSQL exports          | Production analytics on large datasets → Parquet    |
-| Semi-structured / evolving schemas                   | Highly selective queries needing predicate pushdown  |
-| Streaming pipelines, message queues                  | Storage efficiency matters (verbose text format)     |
-| Healthcare data exchange (HL7 FHIR)                  | Strict schema contracts → Avro or Parquet            |
-| Append-friendly, human-readable                      | Deeply nested data queried analytically → Parquet    |
+| JSON Shines ✓                               | Avoid JSON ✗                                        |
+| ------------------------------------------- | --------------------------------------------------- |
+| Data interchange: APIs, logs, NoSQL exports | Production analytics on large datasets → Parquet    |
+| Semi-structured / evolving schemas          | Highly selective queries needing predicate pushdown |
+| Streaming pipelines, message queues         | Storage efficiency matters (verbose text format)    |
+| Healthcare data exchange (HL7 FHIR)         | Strict schema contracts → Avro or Parquet           |
+| Append-friendly, human-readable             | Deeply nested data queried analytically → Parquet   |
 
 :::{admonition} Register for repeated queries and SQL access
 :class: tip
