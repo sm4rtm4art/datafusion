@@ -25,6 +25,19 @@
 - [ ] **Create Navigation:** Add a list/table of links to the other files in this directory (`from-files.md`, `from-sql.md`, etc.).
 - [ ] **Clean up:** Remove specific code examples that belong in the sub-pages (keep high-level concepts only).
 
+TODO: Identifier Casing (from Creating-DataFrames/csv.md refactoring):
+- [ ] Document the PostgreSQL-style identifier folding rule: unquoted identifiers are lowercased.
+      Explain how this interacts with CSV headers, Parquet column names, and explicit schemas.
+      Cover workarounds: double-quoting (`col("\"Amount\"")`), `ident("Amount")`, and providing
+      explicit schemas with normalized (lowercase) field names. Cross-referenced from CSV
+      "Production Best Practices" section.
+
+TODO: Schema Evolution (from Creating-DataFrames/parquet.md refactoring):
+- [ ] Document schema evolution patterns: plain Parquet metadata merging (adding columns) is handled
+      automatically but is fragile across many producers. For robust production environments,
+      recommend layering table formats (Iceberg/Delta) which provide ACID guarantees and
+      manifest-based evolution. Cross-reference from Parquet "Production Best Practices" section.
+
 -->
 
 # Schema Management with DFSchema
@@ -45,35 +58,6 @@ creating-schemas
 dataframe-methods
 inspection-and-validation
 schema-transformation
-```
-
-## Introduction(Placeholde)
-
-**The “health” phase of the DataFrame lifecycle: inspect, validate, and evolve schema.**
-
-Schema management defines the structural contract of your data—names, types, and nullability—as it flows through DataFusion. Explicit schemas are critical for both correctness and performance, enabling the optimizer to push down predicates, select vectorized kernels, and prevent silent schema drift. You manage this contract via the [`DFSchema`] API, which wraps underlying Arrow types with the query-planning context needed for robust, predictable execution.
-
-In this guide, all code elements are highlighted with backticks.
-
-- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
-- standalone functions (e.g., `col()`) and static constructors (e.g., `SessionContext::new()`).
-- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
-
-:::{admonition} Style Note
-:class: note
-
-In this document, method notation follows a consistent pattern:
-
-- **DataFrame methods** use `df.method()` (for example, `df.select(...)`)
-- **DFSchema method**s use `df.schema().method()` (for example, `df.schema().fields()`)
-- **Associated functions** use `DFSchema::method()` (for example, `DFSchema::try_from(...)`).
-- **Standalone functions** use `function()` (for example, `col()`), and constructors use `Type::new()` (for example, `SessionContext::new()`).
-
-:::
-
-```{contents}
-:local:
-:depth: 2
 ```
 
 ## Introduction (placeholder)
@@ -99,13 +83,6 @@ In this document, method notation follows a consistent pattern:
 - **Standalone functions** use `function()` (for example, `col()`), and constructors use `Type::new()` (for example, `SessionContext::new()`).
 
 :::
-
-</details>
-
-```{contents}
-:local:
-:depth: 2
-```
 
 ## Introduction
 
@@ -177,7 +154,7 @@ DataFusion Schema Ownership Flow
 │ 3. USER API (DataFrame)                              │
 │                                                      │
 │   DataFrame                                          │
-│     ├── session_state: SessionState (Config Snapshot)│
+│     ├── session_state: SessionState (Structural Clone)│
 │     └── plan: LogicalPlan (Holds the DFSchema)       │
 │                                                      │
 │   df.schema() ────delegates────► plan.schema()       │

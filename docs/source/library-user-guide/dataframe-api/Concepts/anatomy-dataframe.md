@@ -19,9 +19,9 @@
 
 # Anatomy of a Dataframe: LogicalPlan + SessionState
 
-**A DataFrame is a lightweight handle pairing an immutable query plan (LogicalPlan) with a frozen execution environment (SessionState) — everything needed for reproducible execution.**
+**A DataFrame is a lightweight handle pairing an immutable query plan (LogicalPlan) with a cloned execution environment (SessionState) — the two components needed for query execution.**
 
-Every DataFrame you create captures two things: a LogicalPlan describing what to compute, and a SessionState snapshot describing how to compute it. Each LogicalPlan node carries a DFSchema that validates column names, types, and provenance at build time — long before any data flows. This separation is what makes DataFrames lightweight, cheaply cloneable, and safe to use across async boundaries.
+Every DataFrame you create captures two things: a LogicalPlan describing what to compute, and a SessionState clone providing the execution environment. Each LogicalPlan node carries a DFSchema that validates column names, types, and provenance at build time — long before any data flows. This separation is what makes DataFrames lightweight, cheaply cloneable, and safe to use across async boundaries.
 
 ```{contents} Table of Contents for Anatomy of a Dataframe
 :local:
@@ -45,15 +45,17 @@ DataFrame
     └── Functions   (UDFs, UDAFs, UDWFs)
 ```
 
-The **left branch** — the [`LogicalPlan`] — is the query recipe. Each node in the plan tree represents a relational operation (filter, join, aggregate) and carries a [`DFSchema`] that validates column names, types, and provenance at plan-build time (see [DFSchema: The Schema Layer](#dfschema-the-schema-layer) below). The **right branch** — the [`SessionState`] — is a frozen snapshot of the execution environment: configuration, registered tables, UDFs, and runtime resources.
+The **left branch** — the [`LogicalPlan`] — is the query recipe. Each node in the plan tree represents a relational operation (filter, join, aggregate) and carries a [`DFSchema`] that validates column names, types, and provenance at plan-build time (see [DFSchema: The Schema Layer](#dfschema-the-schema-layer) below). The **right branch** — the [`SessionState`] — is a structural clone of the execution environment at creation time.
 
-The [`SessionContext`] is mutable and evolves over your session, but each `DataFrame` captures an **immutable** `SessionState` snapshot at creation time. Transformations like `.filter()` or `.select()` return new DataFrames with updated plans but the same snapshot; actions like `.collect()` execute using that frozen state. This snapshot guarantees reproducibility:
+The [`SessionContext`] is mutable and evolves over your session, but each `DataFrame` holds its own [`SessionState`] clone. The clone is **structural, not deep**: value-type fields (config, function registries) become independent copies, while Arc-wrapped fields (catalog, runtime) remain shared references. Transformations like `.filter()` or `.select()` return new DataFrames with updated plans but the same state clone; actions like `.collect()` execute using that state.
 
-| What's captured                           | Why it matters                                            |
-| ----------------------------------------- | --------------------------------------------------------- |
-| Config (batch size, partitions, timezone) | Same performance even if global settings change           |
-| UDFs and registered tables                | Queries don't fail if dependencies are deregistered later |
-| Query start timestamp                     | Functions like [`.now()`] return consistent values        |
+| What's independent (cloned by value)      | What's shared (via Arc)                         |
+| ----------------------------------------- | ----------------------------------------------- |
+| Config (batch size, partitions, timezone) | Catalog (registered TableProviders)             |
+| Function registries (UDFs, UDAFs, UDWFs)  | Runtime environment (memory pool, disk manager) |
+| Query start timestamp                     |                                                 |
+
+For the complete clone semantics, see [The SessionState Clone](../Creating-DataFrames/creating-concepts.md#the-sessionstate-clone).
 
 The rest of this page explores each component in detail: first the inner workings with a step-by-step walkthrough, then the schema layer that validates every transformation, and finally the escape hatch to `LogicalPlanBuilder` for advanced use.
 

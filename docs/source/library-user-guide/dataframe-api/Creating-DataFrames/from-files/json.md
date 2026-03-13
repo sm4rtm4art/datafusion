@@ -136,16 +136,6 @@ Deeply nested, sparse, or late-appearing fields may not be detected.
 **[`NdJsonReadOptions`] configures how DataFusion parses JSON files —
 schema, file extensions, compression, format, and streaming behavior.**
 
-:::{admonition} JSON array support
-:class: tip
-
-`NdJsonReadOptions` supports reading standard JSON arrays
-(`[{...}, {...}]`) via the `.newline_delimited(false)` builder method.
-When set, DataFusion streams the array into NDJSON internally — no manual
-conversion needed. See [the admonition above](#reading-json-files) for a
-code example.
-:::
-
 JSON's simplicity means fewer variables than Parquet or CSV. There are no
 delimiter or quoting rules to configure. The main decisions are whether to
 provide an explicit schema, which file extensions to match, and whether the
@@ -161,6 +151,16 @@ available options.
 | **[`.table_partition_cols(Vec)`][`ndjsonreadoptions::table_partition_cols()`]**           | `[]`      | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                              |
 | **[`.file_sort_order(Vec)`][`ndjsonreadoptions::file_sort_order()`]**                     | `[]`      | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries.         |
 | **[`.mark_infinite(bool)`][`ndjsonreadoptions::mark_infinite()`]**                        | `false`   | Marks this source as unbounded (never reaches EOF). Use for Unix named pipes or streaming inputs.      |
+
+:::{admonition} JSON array support
+:class: tip
+
+`NdJsonReadOptions` supports reading standard JSON arrays
+(`[{...}, {...}]`) via the `.newline_delimited(false)` builder method.
+When set, DataFusion streams the array into NDJSON internally — no manual
+conversion needed. See [the admonition above](#reading-json-files) for a
+code example.
+:::
 
 ### Compression
 

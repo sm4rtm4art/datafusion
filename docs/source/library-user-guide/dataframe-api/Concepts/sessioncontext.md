@@ -21,7 +21,7 @@
 
 **SessionContext — the single entry point for both APIs, making data handling reproducible by managing configuration, catalogs, and execution state.**
 
-The `SessionContext` is where everything begins in DataFusion. Before you can read a file, run a SQL query, or build a DataFrame, you need a context that knows about your data sources, configuration, and registered functions. The `SessionContext` itself is **mutable** — it evolves over the lifetime of your session as you register tables, add UDFs, and change settings. But every DataFrame you create captures an **immutable** `SessionState` snapshot of the context at that moment, ensuring queries execute with consistent settings even if you modify the context later.
+The `SessionContext` is where everything begins in DataFusion. Before you can read a file, run a SQL query, or build a DataFrame, you need a context that knows about your data sources, configuration, and registered functions. The `SessionContext` itself is **mutable** — it evolves over the lifetime of your session as you register tables, add UDFs, and change settings. Every DataFrame you create receives a **structural clone** of the `SessionState`: config and function registries are independently copied, while the catalog and runtime remain shared via `Arc`. For the precise clone semantics, see [The SessionState Clone](../Creating-DataFrames/creating-concepts.md#the-sessionstate-clone).
 
 ```{contents} Table of Contents for SessionContext
 :local:
@@ -47,7 +47,7 @@ SessionContext (mutable, evolves over session lifetime)
 SessionState (immutable) ← frozen environment captured by DataFrame
 ```
 
-This separation ensures reproducibility: changes to the `SessionContext` after DataFrame creation don't affect existing DataFrames — each continues to execute with the `SessionState` snapshot it captured. Only newly created DataFrames will see the updated configuration, tables, or functions.
+This separation provides partial isolation: config and function registry changes to the `SessionContext` after DataFrame creation don't affect existing DataFrames — those are independently cloned. However, the catalog and runtime are shared via `Arc`, so new table registrations _are_ visible to previously created DataFrames.
 
 ---
 
@@ -96,14 +96,14 @@ fn main() {
 }
 ```
 
-Once you have a `SessionContext`, you register data sources, configure execution, and create DataFrames. When a DataFrame is created, it captures the current state as an immutable `SessionState` — the frozen snapshot that travels with the DataFrame through optimization and execution. This guarantees reproducible results: the same DataFrame re-executed later produces identical output, regardless of any subsequent changes to the `SessionContext`.
+Once you have a `SessionContext`, you register data sources, configure execution, and create DataFrames. When a DataFrame is created, it receives a structural clone of the `SessionState` — config and functions are independently copied, while the catalog and runtime remain shared via `Arc`. The `LogicalPlan` is what's truly frozen at creation time: it captures the relational operations as they existed at that moment.
 
 ---
 
 ## References
 
 - [`SessionContext`] documentation (API reference)
-- [`SessionState`] documentation (snapshot semantics)
+- [`SessionState`] documentation (clone semantics)
 - [Configuration Settings](../../user-guide/configs.md) (all configuration options)
 - [Creating DataFrames](creating-dataframes.md) (practical examples)
 

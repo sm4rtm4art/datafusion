@@ -23,6 +23,16 @@
 
 1. ABSTRACT
 2. INTRODUCTION
+3. DEDUP: "Understanding DataFusion's Data Organization" overlaps with
+   creating-concepts.md "The Catalog Model". Per agreement: 60-70% depth
+   lives in creating-concepts.md (cognitive authority), 30-40% here
+   (action-oriented, focused on registration mechanics). Trim the
+   catalog hierarchy explanation here to a brief summary + pointer.
+4. DEDUP: "Performance benefits" and "Mixing SQL and DataFrame APIs"
+   are solid action content — keep here. But verify no overlap with
+   index.md's "How Creation Works" section.
+5. REVIEW: Async note on line 118 references "concepts.md" which is
+   the legacy monolith — update link to point to the correct target.
 -->
 
 ```{contents} Table of Contents
@@ -71,119 +81,36 @@ For the catalog hierarchy and name resolution rules, see [Understanding DataFusi
 
 ### Understanding DataFusion's Data Organization
 
-**[`SessionContext`] is your session-local catalog: it maps names to [`TableProvider`]s.**
+<!--TODO:
 
-Tables live under a three-level hierarchy (**Catalog → Schema → Table**), which keeps queries readable and enables SQL interoperability and metadata discovery.
-
-DataFusion always has a default catalog (`datafusion`) and schema (`public`). When you register a table, you choose its name (for example `"sales"` or `"warehouse.analytics.metrics"`), and that name determines where the [`TableProvider`] is stored.
+Implement a overview schema of the name resolution in the catalog model
 
 ```text
 SessionContext
-└── Catalog ("datafusion")
-    └── Schema ("public")              ← Namespace schema (organizes tables)
+└── CatalogProvider ("datafusion")   ← default catalog
+    └── SchemaProvider ("public")    ← default schema
         └── Table ("sales")
-            └── Arrow Schema           ← Data schema (columns + types)
+            └── Arrow Schema         ← columns + types
 ```
+-->
 
-> **Disambiguation: "Schema" has two meanings in DataFusion**
->
-> 1. **Namespace schema** (like PostgreSQL): A container for organizing tables (e.g., `"public"`)
-> 2. **Arrow schema**: The columns and types of a table (e.g., `id: Int32, name: Utf8`)
->
-> ```text
-> ctx.table("public.sales").await?;   // "public" = namespace schema
-> let arrow_schema = df.schema();      // Arrow schema: columns + types
-> ```
+**Registered tables live in a three-level catalog hierarchy — Catalog →
+Schema → Table — with defaults `datafusion` and `public`.**
 
-**Adopting this structure offers three key advantages:**
+Unqualified names like `"sales"` resolve to `datafusion.public.sales`.
+Two-part names select a schema (`"analytics.sales"`), and fully-qualified
+names address a specific catalog (`"warehouse.analytics.sales"`).
 
-- **Performance**:<br>
-  When you register a table (e.g., a Parquet file), DataFusion analyzes its schema and metadata once. Every subsequent query skips this expensive step.
-- **Clarity**:<br>
-  Instead of passing file paths around your code, you refer to data with logical names like `"sales"` or `"fact_orders"`.
-- **Interoperability**:<br>
-  A registered table is available to both the DataFrame API and SQL. Register with one API and query from the other.
-
-The core pattern is simple: **register once, query many times**.
-
-```text
-ctx.register_parquet("sales", "data/sales/", ParquetReadOptions::default()).await?;
-
-let sales_df = ctx.table("sales").await?; // DataFrame API
-
-let sales_sql = ctx.sql("SELECT * FROM sales").await?;  // SQL API
-```
-
-#### How Names Resolve
-
-DataFusion resolves table names in both SQL (`FROM ...`) and the DataFrame API (`ctx.table(...)`) using **1-, 2-, or 3-part identifiers**:
-
-| Identifier                    | Resolves to                  | Use case              |
-| ----------------------------- | ---------------------------- | --------------------- |
-| `"sales"`                     | `datafusion.public.sales`    | Default (most common) |
-| `"analytics.sales"`           | `datafusion.analytics.sales` | Custom schema         |
-| `"warehouse.analytics.sales"` | Fully qualified              | Multi-catalog setups  |
-
-- **Default namespace:**<br>
-  Unqualified names resolve to `datafusion.public` (default catalog + schema). This is a namespace convention, not an access-control boundary.
-- **Lifetime:**<br>
-  Registrations are in-memory, scoped to the [`SessionContext`]. For persistence, implement a custom [`CatalogProvider`].
-- **Case sensitivity:**<br>
-  Unquoted identifiers fold to lowercase; quote to preserve case (`"Sales"`).
+For the complete catalog model — including the trait hierarchy, schema
+disambiguation, name resolution rules, case sensitivity, and extensibility
+— see [The Catalog Model](creating-concepts.md#the-catalog-model).
 
 > **Cloud storage (Rust):** <br>
-> To use `s3://`, `gs://`, or `az://` URLs, register an object store in the runtime environment. For the Rust API see [`datafusion::datasource::object_store`](https://docs.rs/datafusion/latest/datafusion/datasource/object_store/index.html). For a complete S3 setup example, see [`datafusion-examples/examples/external_dependency/main.rs`](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/main.rs).
-
-> **Going deeper?** <br>
-> For advanced catalog topics (custom `CatalogProvider`, persistent catalogs, dynamic schema discovery), see the [Catalogs Guide](../catalogs.md). For integrating external data sources, see [Custom Table Providers](../custom-table-providers.md).
-
-<details>
-<summary><strong>Example: Fully-qualified namespace setup</strong></summary>
-
-Use multi-part names like `warehouse.analytics.metrics` to separate domains or environments:
-
-```rust
-use std::sync::Arc;
-
-use datafusion::assert_batches_eq;
-use datafusion::catalog::{CatalogProvider, MemoryCatalogProvider, MemorySchemaProvider};
-use datafusion::dataframe;
-use datafusion::error::Result;
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    // 1. Register a catalog + schema: warehouse.analytics
-    let warehouse_catalog = Arc::new(MemoryCatalogProvider::new());
-    ctx.register_catalog("warehouse", warehouse_catalog.clone());
-    warehouse_catalog.register_schema("analytics", Arc::new(MemorySchemaProvider::new()))?;
-
-    // 2. Register a table into that namespace: warehouse.analytics.metrics
-    let metrics_df = dataframe!(
-        "metric" => ["latency"],
-    )?;
-    ctx.register_table("warehouse.analytics.metrics", metrics_df.into_view())?;
-
-    // 3. Resolve the fully-qualified name and execute
-    let results = ctx.table("warehouse.analytics.metrics").await?.collect().await?;
-    assert_batches_eq!(
-        &[
-            "+---------+",
-            "| metric  |",
-            "+---------+",
-            "| latency |",
-            "+---------+",
-        ],
-        &results
-    );
-
-    Ok(())
-}
-```
-
-</details>
+> To use `s3://`, `gs://`, or `az://` URLs, register an object store in the
+> runtime environment. See
+> [`datafusion::datasource::object_store`](https://docs.rs/datafusion/latest/datafusion/datasource/object_store/index.html)
+> and the
+> [S3 setup example](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/main.rs).
 
 #### Common registration methods
 

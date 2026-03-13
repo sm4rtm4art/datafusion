@@ -82,7 +82,7 @@ The following diagram traces how data enters DataFusion — from diverse sources
 │                         (Immutable, Lazy Handle)                       │
 ├────────────────────────────────────────────────────────────────────────┤
 │ 1. LogicalPlan: Relational operations (Filter, Join) + DFSchema        │
-│ 2. SessionState: Immutable snapshot of context during creation         │
+│ 2. SessionState: Structural clone of context at creation               │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     ▼
                             [ EXECUTION PATH ]

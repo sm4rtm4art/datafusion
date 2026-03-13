@@ -32,15 +32,15 @@ The [previous sections](bigger-picture.md) walked through DataFusion's architect
 
 **The core principles that run through every section of this documentation.**
 
-| Concept | Key Insight | Covered In |
-| :------ | :---------- | :--------- |
-| Architecture | Embeddable OLAP engine with pluggable `TableProvider`s | [Architectural Overview](architectural-dataframe.md) |
-| SessionContext | Mutable hub; each DataFrame captures an immutable `SessionState` snapshot | [SessionContext](sessioncontext.md) |
-| Two APIs | SQL (parser) and DataFrame (builder) produce identical `LogicalPlan`s | [Builder vs. Parser](builder-parser.md) |
-| DataFrame Anatomy | `LogicalPlan` + `SessionState` + `DFSchema` — everything needed for reproducible execution | [Anatomy](anatomy-dataframe.md) |
-| Expressions | `Expr` trees are the row-level logic inside plan nodes | [Expressions](expressions.md) |
-| Execution Lifecycle | Lazy transformations → action → optimizer → physical plan → streaming results | [Execution Lifecycle](execution-lifecycle.md) |
-| Bigger Picture | Vectorized Volcano model; DataFusion as reusable infrastructure ("LLVM for data") | [The Bigger Picture](bigger-picture.md) |
+| Concept             | Key Insight                                                                                | Covered In                                           |
+| :------------------ | :----------------------------------------------------------------------------------------- | :--------------------------------------------------- |
+| Architecture        | Embeddable OLAP engine with pluggable `TableProvider`s                                     | [Architectural Overview](architectural-dataframe.md) |
+| SessionContext      | Mutable hub; each DataFrame receives a structural `SessionState` clone                     | [SessionContext](sessioncontext.md)                  |
+| Two APIs            | SQL (parser) and DataFrame (builder) produce identical `LogicalPlan`s                      | [Builder vs. Parser](builder-parser.md)              |
+| DataFrame Anatomy   | `LogicalPlan` + `SessionState` + `DFSchema` — everything needed for reproducible execution | [Anatomy](anatomy-dataframe.md)                      |
+| Expressions         | `Expr` trees are the row-level logic inside plan nodes                                     | [Expressions](expressions.md)                        |
+| Execution Lifecycle | Lazy transformations → action → optimizer → physical plan → streaming results              | [Execution Lifecycle](execution-lifecycle.md)        |
+| Bigger Picture      | Vectorized Volcano model; DataFusion as reusable infrastructure ("LLVM for data")          | [The Bigger Picture](bigger-picture.md)              |
 
 Together these properties let you write declarative SQL for clarity, drop to Rust for control, and still get one optimized execution pipeline.
 
@@ -50,11 +50,11 @@ Together these properties let you write declarative SQL for clarity, drop to Rus
 
 **With concepts understood, the next phase in the DataFrame lifecycle is Birth — creating DataFrames from files, SQL, or in-memory data.**
 
-| Lifecycle Phase | Document | What Happens |
-| :-------------- | :------- | :----------- |
-| **Birth** | [Creating DataFrames](../Creating-Dataframes/index.md) | Load Parquet, CSV, JSON, or in-memory data into a DataFrame |
-| **Life** | [Transformations](../Transformations/index.md) | Select, filter, aggregate, join — build the lazy plan |
-| **Death** | [Writing & Executing](../Writing-Dataframes/index.md) | Collect, stream, or persist results to storage |
+| Lifecycle Phase | Document                                               | What Happens                                                |
+| :-------------- | :----------------------------------------------------- | :---------------------------------------------------------- |
+| **Birth**       | [Creating DataFrames](../Creating-DataFrames/index.md) | Load Parquet, CSV, JSON, or in-memory data into a DataFrame |
+| **Life**        | [Transformations](../Transformations/index.md)         | Select, filter, aggregate, join — build the lazy plan       |
+| **Death**       | [Writing & Executing](../Writing-DataFrames/index.md)  | Collect, stream, or persist results to storage              |
 
 ---
 
@@ -85,9 +85,9 @@ These references supplement the Concepts section. Each sub-page also links to it
 | Resource                                                     | Description                                                           |
 | ------------------------------------------------------------ | --------------------------------------------------------------------- |
 | [Using the DataFrame API](../using-the-dataframe-api.md)     | Overview + how this guide is structured                               |
-| [Creating DataFrames](../Creating-Dataframes/index.md)       | Read data and build an initial `DataFrame`                            |
+| [Creating DataFrames](../Creating-DataFrames/index.md)       | Read data and build an initial `DataFrame`                            |
 | [Transformations](../Transformations/index.md)               | Add filters, projections, joins, and aggregates (build the lazy plan) |
-| [Writing DataFrames](../Writing-Dataframes/index.md)         | Execute (`.collect()`, `.execute_stream()`) and write results         |
+| [Writing DataFrames](../Writing-DataFrames/index.md)         | Execute (`.collect()`, `.execute_stream()`) and write results         |
 | [Best Practices](../best-practices.md)                       | Performance tuning and correctness tips                               |
 | [Building Logical Plans](../building-logical-plans.md)       | Work directly with `LogicalPlan` / `LogicalPlanBuilder`               |
 | [Arrow Introduction](../../user-guide/arrow-introduction.md) | Arrow basics: `RecordBatch`, schemas, and columnar memory             |
@@ -101,7 +101,7 @@ These references supplement the Concepts section. Each sub-page also links to it
 | Type / Trait                                                                                                                                         | Description                                                       |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | [`SessionContext` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html)                           | Entry point: register data sources, create DataFrames, run SQL    |
-| [`SessionState` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html)                         | Snapshot of config/catalog/runtime used during planning/execution |
+| [`SessionState` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html)                         | Structural clone of config/catalog/runtime used during planning/execution |
 | [`DataFrame` (datafusion)](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html)                                             | Lazy plan builder; actions trigger execution                      |
 | [`LogicalPlan` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html)                         | Logical representation produced by SQL and DataFrames             |
 | [`LogicalPlanBuilder` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html) | Lower-level builder for `LogicalPlan`                             |

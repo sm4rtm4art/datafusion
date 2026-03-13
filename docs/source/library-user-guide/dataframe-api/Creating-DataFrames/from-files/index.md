@@ -90,7 +90,7 @@ DataFusion constructs a [`ListingTable`] configured for that format. The
 inference, partition discovery, and predicate pushdown against file
 metadata—so the query engine never reads more data than necessary. The
 result is a lazy [`DataFrame`]: a [`LogicalPlan`] paired with a
-[`SessionState`] snapshot, ready for transformations.
+[`SessionState`] clone, ready for transformations.
 
 File-based DataFrames reach the [`SessionContext`] through one of two access
 patterns:

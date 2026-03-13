@@ -21,7 +21,7 @@
 
 **Nothing runs until you ask for results — lazy execution lets the optimizer rewrite your query before a single byte is read.**
 
-You've seen that a [`DataFrame`] pairs a [`LogicalPlan`] with a [`SessionState`] snapshot (see [Anatomy of a DataFrame](anatomy-dataframe.md)). DataFrames are lazy: calling [`.filter()`] or [`.join()`] merely extends the plan — the recipe describing _what_ to compute. The `SessionState` freezes _how_ to compute it, ensuring reproducibility even if the [`SessionContext`] changes later. This section follows the plan from construction through optimization to streaming results, explaining what happens at each stage and why deferring execution produces faster queries.
+You've seen that a [`DataFrame`] pairs a [`LogicalPlan`] with a [`SessionState`] clone (see [Anatomy of a DataFrame](anatomy-dataframe.md)). DataFrames are lazy: calling [`.filter()`] or [`.join()`] merely extends the plan — the recipe describing _what_ to compute. The `SessionState` clone provides the execution environment, with config and functions independently copied while the catalog and runtime remain shared via `Arc` (see [The SessionState Clone](../Creating-DataFrames/creating-concepts.md#the-sessionstate-clone)). This section follows the plan from construction through optimization to streaming results, explaining what happens at each stage and why deferring execution produces faster queries.
 
 ```{contents} Table of Contents for Execution Lifecycle
 :local:
@@ -57,7 +57,7 @@ Everything above the **ACTION line** is **lazy** (building a plan -> no executio
         │        (Immutable Query Handle)          │
         ├──────────────────────────────────────────┤
         │  1. LogicalPlan (Abstract Query)         │
-        │  2. SessionState (Snapshot of Context)   │
+        │  2. SessionState (Clone of Context)      │
         └─────────────────────┬────────────────────┘
                               │                          LAZY
 ══════════════════════════════╪═══════════════════ ACTION BOUNDARY
@@ -97,7 +97,7 @@ The primary entry point holding your catalog, function registry, and configurati
 
 :::{admonition} SQL API / DataFrame API → DataFrame
 :class: note
-Both paths converge to the same `DataFrame` structure — an immutable handle wrapping a `LogicalPlan` (what to compute) and a `SessionState` snapshot (frozen context for reproducibility).
+Both paths converge to the same `DataFrame` structure — a lazy handle wrapping a `LogicalPlan` (what to compute) and a `SessionState` clone (execution environment).
 :::
 
 :::{admonition} ACTION boundary
@@ -121,8 +121,8 @@ Pull-based streaming via `poll_next()` — data flows as `RecordBatch` chunks th
 :class: seealso
 
 - **[`SessionContext`]**: Entry point for creating DataFrames, configuring execution, and registering tables/functions.
-- **[`SessionState`]**: Captured snapshot of context configuration and catalog state used when executing a DataFrame.
-- **[`DataFrame`]**: Lazy wrapper pairing a `LogicalPlan` with a `SessionState` snapshot; transformations build plans, actions execute them.
+- **[`SessionState`]**: Structural clone of context configuration and execution environment used when executing a DataFrame.
+- **[`DataFrame`]**: Lazy wrapper pairing a `LogicalPlan` with a `SessionState` clone; transformations build plans, actions execute them.
 - **[`LogicalPlan`]**: Tree describing _what_ to compute (projection, filter, join, etc.).
 - **[`ExecutionPlan`]**: Physical operator tree describing _how_ to compute (hash aggregate, parquet scan, shuffle, etc.).
 - **[`RecordBatch`]**: Arrow data structure representing a chunk of rows in columnar form; execution produces streams of batches.
@@ -473,7 +473,7 @@ The DataFusion DataFrame-API is written in Rust, enabling Rust's ownership model
 ### What's actually happening under the hood
 
 - A `DataFrame` is a **lightweight handle:** <br>
-  Just an `Arc`-wrapped `LogicalPlan` + `SessionState` snapshot.
+  Just a `LogicalPlan` + `SessionState` clone.
 - **Transformations are immutable:** <br>
   Methods like `.filter()` and `.select()` return _new_ DataFrames; they don't mutate the original.
 - **Actions consume the handle;** <br>

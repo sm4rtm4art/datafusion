@@ -73,7 +73,7 @@ For the full OLAP vs OLTP comparison, see [Architectural Fit](architectural-data
 
 **SessionContext — the single entry point for both APIs, managing configuration, catalogs, and execution state.**
 
-At the center of this architecture sits the `SessionContext` (commonly abbreviated as `ctx` in code examples). It acts as the central hub and entry point for all queries. The `SessionContext` registers your table providers, manages configurations, and exposes the underlying execution engine to the user through two distinct interfaces. When a DataFrame is created, it captures a `SessionState`—an immutable snapshot of the `SessionContext` at that exact moment. This design guarantees consistency during the entire data manipulation process.
+At the center of this architecture sits the `SessionContext` (commonly abbreviated as `ctx` in code examples). It acts as the central hub and entry point for all queries. The `SessionContext` registers your table providers, manages configurations, and exposes the underlying execution engine to the user through two distinct interfaces. When a DataFrame is created, it receives a structural clone of the `SessionState` — config and functions are independently copied, while the catalog and runtime remain shared via `Arc` (see [The SessionState Clone](../Creating-DataFrames/creating-concepts.md#the-sessionstate-clone)).
 
 ---
 

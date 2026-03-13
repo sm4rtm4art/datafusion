@@ -19,6 +19,17 @@
 
 # Creating DataFrames
 
+<!--TODO
+1. DEDUP: The "Trade-off: Registration vs. Direct Read" admonition
+   (lines ~82-95) near-duplicates the comparison table in
+   creating-concepts.md "Access Patterns → Choosing Between Them".
+   Decide: keep the full table in creating-concepts.md (cognitive
+   authority) and reduce this to a one-liner + pointer, or vice versa.
+2. REVIEW: "How Creation Works" section — verify it still aligns with
+   the updated creating-concepts.md (SessionState clone semantics,
+   renamed final section).
+-->
+
 **The "birth" phase of the DataFrame lifecycle: from data source to lazy query plan.**
 
 Data lives everywhere—files on disk, tables in databases, streams over the
