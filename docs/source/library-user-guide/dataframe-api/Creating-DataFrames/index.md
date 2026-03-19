@@ -165,7 +165,7 @@ for every example in this guide. For SessionContext configuration (batch
 size, parallelism, object stores), see
 [SessionContext](../Concepts/sessioncontext.md). For how table names resolve
 in the catalog, see
-[Data Organization](registered-tables.md#understanding-datafusions-data-organization).
+[The Catalog at a Glance](registered-tables.md#the-catalog-at-a-glance).
 
 ---
 

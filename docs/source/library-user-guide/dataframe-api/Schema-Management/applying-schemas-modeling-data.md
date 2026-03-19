@@ -119,10 +119,6 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-`````
-
-````
-
 > **Warning:** <br>
 > Schema inference samples only the first 1,000 rows by default ([`schema_infer_max_records`]). Common pitfalls: IDs inferred as `Int32` then overflow, currency inferred as `Float64` (rounding errors), sparse columns inferred as `Utf8`. Always provide explicit schemas for CSV in production.
 
@@ -360,5 +356,7 @@ fn main() {
 > Use `LargeUtf8` or `LargeList` only when a single value might exceed 2 GB. DataFusion does not enforce key uniqueness in maps—handle duplicate keys in query logic if needed.
 
 ---
-````
-`````
+
+```
+
+```
