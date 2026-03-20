@@ -43,6 +43,20 @@ differently when it knows the input has no end.
 | [`StreamConfig`]       | Configuration wrapper (encoding, ordering, constraints)    |
 | [`StreamingTableExec`] | Physical plan node executing streaming partitions          |
 
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, all code elements are highlighted with backticks.
+
+- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
+- standalone functions `method()` (e.g `col()`)
+
+- - static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
+- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+
+:::
+
 ```{contents} Table of Content
 :local:
 :depth: 2

@@ -45,6 +45,20 @@ together with [`dataframe!`] form a self-contained testing toolkit.
 | [`assert_contains!`]          | Partial string match (e.g., `EXPLAIN` plans)        |
 | [`assert_not_contains!`]      | Negative string match                               |
 
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, all code elements are highlighted with backticks.
+
+- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
+- standalone functions `method()` (e.g `col()`)
+
+- - static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
+- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+
+:::
+
 ```{contents} Table of Contents
 :local:
 :depth: 2
