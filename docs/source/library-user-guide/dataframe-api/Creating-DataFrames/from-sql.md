@@ -19,176 +19,464 @@
 
 # Creating DataFrames from SQL Queries
 
-<!--TODO
+**[`.sql()`] turns a SQL string into a lazy [`DataFrame`] — enabling
+SQL and the builder API as two paths to DataFusion's single query
+engine.**
 
-1. ABSTRACT
-2. INTRODUCTION
--->
+DataFusion provides two equally powerful ways to build query plans:
+SQL strings and the DataFrame builder API. Both compile to the same
+[`LogicalPlan`], receive the same optimizations, and execute with
+identical performance. [`.sql()`] parses SQL into a [`LogicalPlan`]
+and wraps it in a [`DataFrame`], so the result supports every builder
+method — `.filter()`, `.select()`, `.aggregate()` — just like any
+other DataFrame. This page covers the SQL entry point, safety
+controls, and patterns for combining both APIs in a single pipeline.
+
+**Key methods:**
+| Method | Purpose |
+| ------------------------------- | ------------------------------------------------------------ |
+| [`.sql()`] | Parse a SQL query, return a lazy [`DataFrame`] |
+| [`.sql_with_options()`] | Same, with controls to block DDL, DML, or session statements |
+| [`SessionContext::parse_sql_expr()`] | Parse a SQL expression into an [`Expr`] for builder chains |
+| [`.into_view()`] | Convert a [`DataFrame`]'s plan into a [`TableProvider`] |
+| [`.register_table()`] | Place a [`TableProvider`] in the catalog under a name |
 
 ```{contents} Table of Contents
 :local:
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## From SQL String to DataFrame
 
-**[`ctx.sql()`][`.sql()`] returns a lazy `DataFrame`—making SQL a first-class DataFrame creation method, not just a query interface.**
+**The DataFrame API builds plans method by method. [`.sql()`] builds
+the same plan from a SQL string — one call, same lazy [`DataFrame`]
+back.**
 
-[Section 2](#2-from-a-registered-table) showed how to register tables and access them via [`ctx.table()`][`.table()`]. Here, SQL itself becomes the entry point: you write a query, and the result is a `DataFrame` you can transform programmatically.
+In DataFusion, DataFrames can be created from multiple sources —
+[files](from-files/index.md),
+[registered tables](registered-tables.md), SQL queries, and more.
+[`.sql()`] takes the SQL path: it parses the string into an AST,
+converts the AST to a [`LogicalPlan`], and returns
+`DataFrame::new(state, plan)`. The result is lazy — no data is read
+until an action triggers execution. From that point, every builder
+method works exactly as it does on any other DataFrame.
 
-**The key insight**:<br> Since [`ctx.sql()`][`.sql()`] returns a DataFrame, you can combine SQL's
-declarative power (CTEs, window functions, complex joins) with the DataFrame API's
-programmatic flexibility (dynamic filters, conditional logic, Rust integration)—all
-in a single, optimized pipeline.
+### Basic Usage
 
-The following patterns show two directions for bridging both APIs:
+**Pass a SQL string to [`.sql()`] and chain builder methods on the
+result — SQL defines the starting plan, the builder API refines it.**
 
-- **Pattern 1 (SQL → DataFrame)**: Start with SQL, refine with DataFrame operations
-- **Pattern 2 (DataFrame → SQL → DataFrame)**: Use [`.into_view()`] to expose DataFrames to SQL mid-pipeline
-
-#### Pattern 1: SQL-first workflow
-
-**Start with SQL, finish with DataFrame—ideal when the analytical logic is naturally expressed in SQL.**
-
-SQL handles the core analytical logic; DataFrame operations add the programmatic
-finishing touches.
-
-**Use this when** the core logic is best expressed in SQL and you want programmatic refinement afterward.
+The [`.sql()`] method accepts any valid SQL `SELECT` statement. The
+returned [`DataFrame`] carries the parsed [`LogicalPlan`] and supports
+the full builder API. This example uses `VALUES` to create inline
+data, then applies `.filter()` and `.select()` to narrow the result.
 
 ```rust
-# use std::sync::Arc;
 use datafusion::prelude::*;
-# use datafusion::arrow::array::{ArrayRef, Int32Array, StringArray};
-# use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::assert_batches_eq;
 use datafusion::error::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let ctx = SessionContext::new();
-#
-#     // Create in-memory sales data
-#     let sales = RecordBatch::try_from_iter(vec![
-#         ("region", Arc::new(StringArray::from(vec!["North", "North", "South", "South"])) as ArrayRef),
-#         ("product", Arc::new(StringArray::from(vec!["Widget", "Gadget", "Widget", "Gadget"])) as ArrayRef),
-#         ("amount", Arc::new(Int32Array::from(vec![8000, 3000, 6000, 4500])) as ArrayRef),
-#     ])?;
-#     ctx.register_batch("sales", sales)?;
-    // Assume "sales" table is registered (Parquet, CSV, or in-memory)
 
-    // Step 1: Execute complex analytical query in SQL
-    let df = ctx.sql("
-        WITH ranked_sales AS (
-            SELECT
-                region,
-                product,
-                amount,
-                ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) as rank
+    // SQL creates the base plan — returns a lazy DataFrame
+    let df = ctx.sql(
+        "SELECT * FROM (VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Carol')) AS t(id, name)"
+    ).await?;
+
+    // Continue with the builder API
+    let result = df
+        .filter(col("id").gt(lit(1)))?
+        .select(vec![col("name")])?
+        .collect()
+        .await?;
+
+    assert_batches_eq!(
+        &[
+            "+-------+",
+            "| name  |",
+            "+-------+",
+            "| Bob   |",
+            "| Carol |",
+            "+-------+",
+        ],
+        &result
+    );
+
+    Ok(())
+}
+```
+
+### Controlling Allowed SQL with `.sql_with_options()`
+
+**Restrict which SQL operations are permitted before they reach the
+[`LogicalPlan`].**
+
+[`.sql_with_options()`] validates the [`LogicalPlan`] against
+[`SQLOptions`] before execution — rejecting disallowed operations
+with an error instead of running them. Use this whenever SQL strings
+come from outside your application (user input, configuration files,
+API endpoints). For hardcoded SQL within your own code, plain
+[`.sql()`] is sufficient.
+
+| Flag                            | Blocks                                                     | Default |
+| ------------------------------- | ---------------------------------------------------------- | ------- |
+| `.with_allow_ddl(false)`        | `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, `CREATE VIEW` | `true`  |
+| `.with_allow_dml(false)`        | `INSERT INTO`, `COPY`, `UPDATE`, `DELETE`                  | `true`  |
+| `.with_allow_statements(false)` | `SET VARIABLE`, `BEGIN TRANSACTION`                        | `true`  |
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    // Allow only SELECT — block DDL and DML
+    let safe = SQLOptions::new()
+        .with_allow_ddl(false)
+        .with_allow_dml(false);
+
+    // SELECT works: returns a DataFrame as usual
+    let df = ctx.sql_with_options("SELECT 1 AS id", safe.clone()).await?;
+    assert_eq!(df.collect().await?.len(), 1);
+
+    // DDL is rejected before execution
+    let err = ctx
+        .sql_with_options("CREATE TABLE forbidden (x INT)", safe)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("DDL"));
+
+    Ok(())
+}
+```
+
+[`.sql()`] can also execute DDL (`CREATE TABLE`, `DROP TABLE`) and
+DML (`INSERT INTO`, `COPY`). Unlike `SELECT` queries, **these execute
+eagerly** — the side effect happens inside the [`.sql()`] call itself,
+and the returned [`DataFrame`] is empty (zero rows, no plan). For the
+full SQL syntax, see the
+[SQL Reference](../../user-guide/sql/index.rst).
+
+:::{admonition} One statement at a time
+:class: warning
+[`.sql()`] currently accepts exactly **one** SQL statement per call.
+This is a known limitation; passing multiple semicolon-separated
+statements returns an error. Call [`.sql()`] once per statement
+instead:
+
+```rust
+# use datafusion::prelude::*;
+# use datafusion::error::Result;
+# #[tokio::main]
+# async fn main() -> Result<()> {
+# let ctx = SessionContext::new();
+// ✅ One call per statement
+ctx.sql("CREATE TABLE a (x INT)").await?;
+ctx.sql("CREATE TABLE b (y INT)").await?;
+# Ok(())
+# }
+```
+
+:::
+
+---
+
+## SQL Workflow Patterns
+
+**Each API has ergonomic blind spots — these patterns show how to
+combine them so each operates at its strongest.**
+
+The first pattern starts with a SQL query and extends it through the
+builder API — ideal when the core logic is naturally declarative.
+The second reverses the flow: build programmatically, expose to SQL
+via a view, then continue with either API. This flexibility lets
+DataFusion adapt to different architectural needs within the same
+pipeline.
+
+### SQL → DataFrame Refinement
+
+**Use SQL for the core analytical query, then extend it with the
+builder API — ideal when the heavy logic is naturally declarative.**
+
+The [`DataFrame`] returned by [`.sql()`] is the transition point:
+everything before it is SQL syntax, everything after it is the
+builder API. To see the full SQL result before applying the builder
+filter, we register the query as a view and query it twice:
+
+```rust
+# use std::sync::Arc;
+# use datafusion::arrow::array::{ArrayRef, Int32Array, StringArray};
+# use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    // Register "sales" (region, product, amount)
+    # let sales = RecordBatch::try_from_iter(vec![
+    #     ("region", Arc::new(StringArray::from(vec!["North", "North", "South", "South"])) as ArrayRef),
+    #     ("product", Arc::new(StringArray::from(vec!["Widget", "Gadget", "Widget", "Gadget"])) as ArrayRef),
+    #     ("amount", Arc::new(Int32Array::from(vec![8000, 3000, 6000, 4500])) as ArrayRef),
+    # ])?;
+    # ctx.register_batch("sales", sales)?;
+
+    // SQL: CTE + window function — rank products per region
+    let sql = "
+        WITH ranked AS (
+            SELECT region, product, amount,
+                   ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) AS rank
             FROM sales
         )
-        SELECT * FROM ranked_sales WHERE rank <= 3
-    ").await?;  // Returns a lazy DataFrame
+        SELECT region, product, amount FROM ranked WHERE rank = 1
+    ";
 
-    // Step 2: Continue with DataFrame API for dynamic refinement
-    let top_profitable = df.filter(col("amount").gt(lit(5000)))?;
+    // Register the SQL query as a view for reuse
+    ctx.register_table("top_products", ctx.sql(sql).await?.into_view())?;
 
-    top_profitable.show().await?;  // Executes the full, optimized pipeline
+    // Full SQL result — both region winners
+    let full_result = ctx.table("top_products").await?.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+--------+---------+--------+",
+            "| region | product | amount |",
+            "+--------+---------+--------+",
+            "| North  | Widget  | 8000   |",
+            "| South  | Widget  | 6000   |",
+            "+--------+---------+--------+",
+        ],
+        &full_result
+    );
+
+    // Builder API: apply a runtime threshold on top
+    let min_amount = 7000;
+    let filtered = ctx.table("top_products").await?
+        .filter(col("amount").gt(lit(min_amount)))?
+        .collect()
+        .await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+--------+---------+--------+",
+            "| region | product | amount |",
+            "+--------+---------+--------+",
+            "| North  | Widget  | 8000   |",
+            "+--------+---------+--------+",
+        ],
+        &filtered
+    );
+
     Ok(())
 }
 ```
 
-#### Pattern 2: Round-trip workflow
+### Round-Trip: DataFrame → SQL → DataFrame
 
-**DataFrame → SQL → DataFrame—use both APIs at their strongest points in a single pipeline.**
+**Build data programmatically, expose it to SQL, then continue with
+the builder API — use each API where its ergonomics shine.**
 
-This pattern uses [`.into_view()`] to convert a DataFrame into a logical view, which you then register with [`register_table()`][`.register_table()`] so SQL can reference it by name. The view captures the DataFrame's query plan (not materialized data)—each SQL query against it re-executes the underlying plan.
+This pattern lets you place the API boundary exactly where it helps
+most: dynamic logic and runtime conditions in the builder API,
+complex analytics (CTEs, window functions, aggregation) in SQL.
+The round-trip is possible because [`.into_view()`] and
+[`.register_table()`] work as a two-step pipeline:
 
-You prepare data programmatically (dynamic filters, computed columns), expose it to SQL for complex analytics, then continue with DataFrame operations for final enrichment.
+```text
+┌─────────────────────────────────────────┐
+│  DataFrame                              │
+│  (carries a lazy LogicalPlan)           │
+└──────────────┬──────────────────────────┘
+               │
+               │  .into_view()
+               │  Consumes the DataFrame, wraps its
+               │  LogicalPlan in a TableProvider.
+               │  No data is materialized.
+               ▼
+┌─────────────────────────────────────────┐
+│  Arc<dyn TableProvider>                 │
+│  (plan-backed, implements TableProvider)│
+└──────────────┬──────────────────────────┘
+               │
+               │  .register_table("name", provider)
+               │  Places the TableProvider in the
+               │  catalog under a queryable name.
+               ▼
+┌─────────────────────────────────────────┐
+│  Catalog                                │
+│  "SELECT ... FROM name" now resolves    │
+│  to the original LogicalPlan.           │
+└─────────────────────────────────────────┘
+```
 
-**Use this when** you need programmatic preparation, SQL-based analysis, and programmatic finishing—all in one pipeline.
+Both steps are required: [`.into_view()`] converts the
+[`DataFrame`] into a [`TableProvider`], and [`.register_table()`]
+makes it discoverable by name. The view stores the plan, not
+materialized data, so queries compose lazily. For additional
+details on view registration, see
+[Registering DataFrames as Views](registered-tables.md#registering-dataframes-as-views).
 
 ```rust
 # use std::sync::Arc;
-use datafusion::prelude::*;
 # use datafusion::arrow::array::{ArrayRef, Int32Array, StringArray};
 # use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 use datafusion::error::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let ctx = SessionContext::new();
-#
-#     // Create in-memory sales data with varied amounts
-#     let sales = RecordBatch::try_from_iter(vec![
-#         ("region", Arc::new(StringArray::from(vec![
-#             "North", "North", "North", "South", "South", "South"
-#         ])) as ArrayRef),
-#         ("product", Arc::new(StringArray::from(vec![
-#             "Widget", "Gadget", "Gizmo", "Widget", "Gadget", "Gizmo"
-#         ])) as ArrayRef),
-#         ("amount", Arc::new(Int32Array::from(vec![
-#             8000, 3000, 500, 12000, 4500, 200
-#         ])) as ArrayRef),
-#     ])?;
-#     ctx.register_batch("sales", sales)?;
-    // Assume "sales" table is registered
 
-    // Step 1 (DataFrame): Programmatically prepare and filter
+    // Register "sales" (region, product, amount)
+    # let sales = RecordBatch::try_from_iter(vec![
+    #     ("region", Arc::new(StringArray::from(vec![
+    #         "North", "North", "South", "South", "South"
+    #     ])) as ArrayRef),
+    #     ("product", Arc::new(StringArray::from(vec![
+    #         "Widget", "Gadget", "Widget", "Gadget", "Gizmo"
+    #     ])) as ArrayRef),
+    #     ("amount", Arc::new(Int32Array::from(vec![
+    #         8000, 3000, 12000, 4500, 200
+    #     ])) as ArrayRef),
+    # ])?;
+    # ctx.register_batch("sales", sales)?;
+
+    // Step 1 (Builder API): programmatic filter
     let high_value = ctx.table("sales").await?
-        .filter(col("amount").gt(lit(1000)))?
-        .select(vec![col("region"), col("product"), col("amount")])?;
+        .filter(col("amount").gt(lit(1000)))?;
 
-    // Step 2: Register intermediate DataFrame as temporary view
+    // Step 2: expose to SQL as a named view
     ctx.register_table("high_value_sales", high_value.into_view())?;
 
-    // Step 3 (SQL): Run complex aggregation on prepared data
+    // Step 3 (SQL): aggregation where declarative syntax shines
     let summary = ctx.sql("
         SELECT region,
-               COUNT(DISTINCT product) as product_count,
-               SUM(amount) as total_revenue
+               COUNT(DISTINCT product) AS product_count,
+               SUM(amount) AS total_revenue
         FROM high_value_sales
         GROUP BY region
-        HAVING SUM(amount) > 10000
     ").await?;
 
-    // Step 4 (DataFrame): Apply final programmatic enrichment
+    // Step 4 (Builder API): sort the result
     let result = summary
-        .with_column("revenue_millions", col("total_revenue") / lit(1_000_000))?
         .sort(vec![col("total_revenue").sort(false, true)])?
-        .limit(0, Some(5))?;
+        .collect()
+        .await?;
 
-    result.show().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+--------+---------------+---------------+",
+            "| region | product_count | total_revenue |",
+            "+--------+---------------+---------------+",
+            "| North  | 2             | 11000         |",
+            "| South  | 2             | 16500         |",
+            "+--------+---------------+---------------+",
+        ],
+        &result
+    );
+
     Ok(())
 }
 ```
 
-#### Choosing the right tool
+### When to Use Which
 
-Now that you've seen both patterns, here's a quick reference for when each API shines:
+**[`.into_view()`] and [`.register_table()`] bridge the two APIs —
+choose each API where its ergonomics fit best.**
+
+Because both APIs compile to the same [`LogicalPlan`], performance is
+identical. The choice is about developer ergonomics: where does your
+query logic originate, and which syntax expresses it most naturally?
+Use [`.into_view()`] + [`.register_table()`] at the boundary whenever
+you need to switch between APIs mid-pipeline.
 
 | SQL excels at                          | DataFrame excels at                   |
-| :------------------------------------- | ------------------------------------- |
+| -------------------------------------- | ------------------------------------- |
 | Window functions (`ROW_NUMBER`, `LAG`) | Dynamic filtering based on variables  |
 | CTEs for multi-step transformations    | Programmatic column selection         |
 | Complex JOINs and set operations       | Iterative/conditional transformations |
-| Familiar syntax for SQL developers     | Type-safe Rust integration            |
+| Familiar syntax for SQL developers     | Type-safe integration, no injection   |
+| Queries from config files / user input | Compile-time safety, IDE support      |
 
-For deeper guidance on when to choose which API, see [When to Choose Which?](concepts.md#when-to-choose-which) in the Concepts guide.
+For the full architectural comparison — including the parser vs.
+builder diagram and security analysis — see
+[Two Paths to the Same Plan](../Concepts/builder-parser.md).
 
-> **Advanced**: For external data sources (PostgreSQL, etc.) via custom [`TableProvider`]s, filters/projections may push down to the source system; remaining operations execute columnar in DataFusion.
+### External Data Sources and Pushdown
 
-#### Additional References
+**When querying external systems through custom [`TableProvider`]s,
+DataFusion's optimizer can push filters and projections to the
+source — reducing data transfer without changing your SQL or
+DataFrame code.**
+
+If a [`TableProvider`] wrapping an external database (e.g.,
+PostgreSQL) is registered in the catalog, both SQL and the builder
+API benefit from pushdown. The [`TableProvider`] reports which
+filters it can handle via `supports_filters_pushdown()`, and
+DataFusion's optimizer pushes matching predicates and projections
+to the source system automatically:
+
+```rust,ignore
+# use datafusion::prelude::*;
+# use datafusion::error::Result;
+# #[tokio::main]
+# async fn main() -> Result<()> {
+# let ctx = SessionContext::new();
+// SQL path — optimizer pushes WHERE and SELECT to the source
+let df = ctx.sql(
+    "SELECT name FROM pg_users WHERE active = true"
+).await?;
+
+// Builder path — same pushdown, same result
+let df = ctx.table("pg_users").await?
+    .filter(col("active").eq(lit(true)))?
+    .select(vec![col("name")])?;
+# Ok(())
+# }
+```
+
+For implementation details on building custom providers, see
+[Custom Table Providers](../../custom-table-providers.md).
+
+---
+
+## Bringing It Together
+
+[`.sql()`] and [`.sql_with_options()`] turn SQL strings into lazy
+DataFrames — the same [`LogicalPlan`], the same optimizer, the same
+execution engine as the builder API. Use SQL where declarative syntax
+is most natural (CTEs, window functions, complex joins), then switch
+to the builder API for dynamic logic, runtime conditions, and
+type-safe composition. [`.into_view()`] and [`.register_table()`]
+bridge the two directions, letting you place the API boundary
+wherever it helps most. For external data sources, DataFusion's
+pushdown optimization applies identically to both paths.
+
+---
+
+## References
 
 **Concepts & Guides:**
 
-- [Two Paths to the Same Plan](concepts.md#two-paths-to-the-same-plan-parser-vs-builder) — How SQL and DataFrame APIs converge
-- [When to Choose Which?](concepts.md#when-to-choose-which) — Decision guide for API selection
+- [Two Paths to the Same Plan](../Concepts/builder-parser.md) — How SQL and DataFrame APIs converge into the same [`LogicalPlan`]
+- [Choosing the Right API](../Concepts/builder-parser.md#choosing-the-right-api-for-the-task) — Decision guide for API selection
+- [Registered Tables](registered-tables.md) — Registration, views, and catalog inspection
 - [SQL Reference](../../user-guide/sql/index.rst) — Full SQL syntax, functions, and data types
+- [Custom Table Providers](../../custom-table-providers.md) — Building providers with filter and projection pushdown
 
 **API Documentation:**
 
-- [`SessionContext::sql()`][`.sql()`] — Execute SQL, returns a lazy DataFrame
-- [`SessionContext::sql_with_options()`][`.sql_with_options()`] — SQL with safety controls (disable DDL, DML, or statements)
-- [`.into_view()`] — Convert DataFrame to a view for SQL access
-- [`register_table()`][`.register_table()`] — Register a TableProvider (including views) in the catalog
+- [`SessionContext::sql()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql) — Execute SQL, returns a lazy [`DataFrame`]
+- [`SessionContext::sql_with_options()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql_with_options) — SQL with operation controls
+- [`SessionContext::parse_sql_expr()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.parse_sql_expr) — Parse a SQL expression into an [`Expr`]
+- [`SQLOptions`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SQLOptions.html) — DDL/DML/statement flags
+- [`.into_view()`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view) — Convert a [`DataFrame`]'s plan into a [`TableProvider`]
+- [`.register_table()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table) — Place a [`TableProvider`] in the catalog under a name
 
 ---

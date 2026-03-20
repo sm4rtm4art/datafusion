@@ -17,57 +17,64 @@
   under the License.
 -->
 
-# Creating DataFrames From Arrow RecordBatch`es
+# Creating DataFrames from RecordBatches
 
-<!--TODO
+**Arrow [`RecordBatch`]es are DataFusion's native in-memory format —
+wrapping them in a [`DataFrame`] requires no parsing, no inference,
+and no conversion.**
 
-1. ABSTRACT
-2. INTRODUCTION
--->
+When data already lives in Arrow's columnar format — from Arrow
+Flight streams, IPC deserialization, Parquet readers, or your own
+application logic — this is the most direct creation path into
+DataFusion. Every method on this page wraps batches in a [`MemTable`]
+(DataFusion's in-memory [`TableProvider`]) and returns a single lazy
+[`DataFrame`], ready for the full builder API. This page covers
+one-shot reads for ephemeral processing, catalog registration for
+multi-query reuse, and explicit [`MemTable`] construction for
+partitioned parallelism.
+
+**Key methods:**
+| Method | Purpose |
+| --------------------- | -------------------------------------------------- |
+| [`.read_batch()`] | Ephemeral DataFrame from a single [`RecordBatch`] |
+| [`.read_batches()`] | Ephemeral DataFrame from multiple batches |
+| [`.register_batch()`] | Register a batch as a named table in the catalog |
+| [`MemTable::try_new()`] | Full control over partitions for parallel execution |
 
 ```{contents} Table of Contents
 :local:
 :depth: 2
-
 ```
 
-<!--### 4. From Arrow [`RecordBatch`]es: The Native Pathway-->
+## From RecordBatch to DataFrame
 
-## Introduction (placeholder)
+**Every method on this page wraps [`RecordBatch`]es in a [`MemTable`]
+and returns one lazy [`DataFrame`] — no conversion overhead.**
 
-**Create DataFrames directly from in-memory Arrow `RecordBatch`es—the engine's native format—often with zero-copy overhead.**
+DataFusion is built on [Apache Arrow](../../user-guide/arrow-introduction.md),
+and [`RecordBatch`] is Arrow's standard unit for in-memory columnar
+data. A [`RecordBatch`] commonly arrives from Arrow Flight streams,
+IPC deserialization, Parquet readers, or your own application logic.
+To bring these batches into DataFusion, every creation method on
+this page wraps them in a [`MemTable`] — DataFusion's in-memory
+[`TableProvider`] — and produces a single lazy [`DataFrame`].
 
-When your data is already in [Arrow format], this is the most direct route into DataFusion. No parsing, no schema inference—the data is already in the engine's native format.
+Regardless of how many batches you pass, each method call produces
+**one** [`DataFrame`] representing one logical table. Multiple
+batches are not physically concatenated; they are stored inside the
+[`MemTable`] and streamed batch-by-batch during execution. For the
+architectural role of [`MemTable`] in DataFusion's provider model,
+see [MemTable (In-Memory)](creating-concepts.md#memtable-in-memory).
 
-A [`RecordBatch`] commonly arrives from:
+### Single Batch with `.read_batch()`
 
-- **Network streams**: [Arrow Flight] for high-performance data transfer
-- **File readers**: Libraries that deserialize into Arrow (e.g., Parquet → RecordBatch)
-- **Your application**: Programmatically constructed data or output from other Arrow-native components
+**Wrap a single [`RecordBatch`] in an ephemeral [`DataFrame`] — no
+catalog entry, no name, immediate access.**
 
-Once you have a RecordBatch, you choose between two creation methods:
-
-#### The Architectural Choice: Read vs. Register
-
-When you have a [`RecordBatch`], you face a fundamental decision:
-
-| Aspect            | **One-Shot Query** ([`.read_batch()`])  | **Reusable Table** ([`.register_batch()`])                  |
-| ----------------- | --------------------------------------- | ----------------------------------------------------------- |
-| **What it does**  | Creates an ephemeral DataFrame directly | Adds the batch to the catalog under a name                  |
-| **When to use**   | Immediate, one-off transformations      | Multiple references or SQL access needed                    |
-| **How to access** | Pass the DataFrame object around        | Reference by name: [`ctx.table("name")`][`.table()`] or SQL |
-| **Analogy**       | Like a temporary variable               | Like a temporary view in a database                         |
-
-#### Pattern 1: One-Shot Query with [`.read_batch()`]
-
-Use this when you want to process a batch immediately and don't need to reference it again. The DataFrame is created directly—no catalog entry, no name.
-
-- [`.read_batch(batch)`][`.read_batch()`] — single RecordBatch
-- [`.read_batches(vec![batch1, batch2, ...])`][`.read_batches()`] — multiple RecordBatches
-
-> **Note:** Multiple batches must have identical schemas. They're treated as partitions of one logical table—not physically concatenated—enabling parallel processing.
-
-**Example:** Processing a batch immediately after receiving it:
+[`.read_batch()`] is the simplest entry point: pass one
+[`RecordBatch`], get one [`DataFrame`]. The DataFrame exists only
+as long as you hold the variable — nothing is registered in the
+catalog.
 
 ```rust
 use std::sync::Arc;
@@ -77,23 +84,22 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 use datafusion::assert_batches_eq;
 
-#[tokio::test]
-async fn test_read_batch_one_shot() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let ctx = SessionContext::new();
 
-    // Assume this batch came from Arrow Flight or another source
     let batch = RecordBatch::try_from_iter(vec![
         ("product_id", Arc::new(Int32Array::from(vec![1, 2, 3, 4])) as ArrayRef),
         ("revenue", Arc::new(Float64Array::from(vec![1200.0, 450.0, 890.0, 2100.0])) as ArrayRef),
     ])?;
 
-    // Process immediately and discard
-    let df = ctx.read_batch(batch)?
+    // Wrap in a DataFrame — no catalog entry
+    let result = ctx.read_batch(batch)?
         .filter(col("revenue").gt(lit(500.0)))?
-        .sort(vec![col("revenue").sort(false, true)])?;
+        .sort(vec![col("revenue").sort(false, true)])?
+        .collect()
+        .await?;
 
-    // Verify the filtered and sorted results
-    let batches = df.collect().await?;
     assert_batches_eq!(
         &[
             "+------------+---------+",
@@ -104,16 +110,91 @@ async fn test_read_batch_one_shot() -> Result<()> {
             "| 3          | 890.0   |",
             "+------------+---------+",
         ],
-        &batches
+        &result
     );
 
     Ok(())
 }
 ```
 
-#### Pattern 2: Reusable Table with [`.register_batch()`]
+### Multiple Batches with `.read_batches()`
 
-When you need the data accessible from multiple places—or want SQL access—register the batch as a named table:
+**Combine multiple [`RecordBatch`]es with the same schema into a
+single ephemeral [`DataFrame`] — batches are streamed, not
+concatenated.**
+
+[`.read_batches()`] is useful when data arrives in chunks — for
+example, from multiple Arrow Flight streams or a chunked file
+reader. All batches must share the exact same schema. They are
+stored within one [`MemTable`] partition and streamed sequentially
+during execution; DataFusion does not physically merge them into
+a single batch.
+
+```rust
+use std::sync::Arc;
+use datafusion::prelude::*;
+use datafusion::arrow::array::{ArrayRef, Int32Array, StringArray};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::error::Result;
+use datafusion::assert_batches_sorted_eq;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    // Two batches with identical schemas — e.g., from two Arrow Flight streams
+    let batch_a = RecordBatch::try_from_iter(vec![
+        ("sensor_id", Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef),
+        ("location", Arc::new(StringArray::from(vec!["North", "South"])) as ArrayRef),
+    ])?;
+    let batch_b = RecordBatch::try_from_iter(vec![
+        ("sensor_id", Arc::new(Int32Array::from(vec![3, 4])) as ArrayRef),
+        ("location", Arc::new(StringArray::from(vec!["East", "West"])) as ArrayRef),
+    ])?;
+
+    // One DataFrame from both batches
+    let result = ctx.read_batches(vec![batch_a, batch_b])?
+        .sort(vec![col("sensor_id").sort(true, true)])?
+        .collect()
+        .await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+-----------+----------+",
+            "| sensor_id | location |",
+            "+-----------+----------+",
+            "| 1         | North    |",
+            "| 2         | South    |",
+            "| 3         | East     |",
+            "| 4         | West     |",
+            "+-----------+----------+",
+        ],
+        &result
+    );
+
+    Ok(())
+}
+```
+
+:::{admonition} Schema consistency
+:class: warning
+All batches passed to [`.read_batches()`] must share the exact same
+schema (column names, types, order, nullability). A mismatch
+produces an error at creation time. For details on constructing
+[`RecordBatch`]es and common pitfalls, see the
+[Arrow Introduction](../../user-guide/arrow-introduction.md).
+:::
+
+### Registering for Reuse
+
+**Register a [`RecordBatch`] as a named table in the catalog —
+making it accessible to both the DataFrame API and SQL across
+multiple queries.**
+
+[`.register_batch()`] wraps the batch in a [`MemTable`] and places
+it in the catalog under the given name. From that point, you can
+query the table by name via [`.table()`] or [`.sql()`], and
+reference it in any number of downstream queries.
 
 ```rust
 use std::sync::Arc;
@@ -123,28 +204,27 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 use datafusion::assert_batches_eq;
 
-#[tokio::test]
-async fn test_register_batch_reusable() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let ctx = SessionContext::new();
 
-    // Create a batch (imagine this came from Arrow Flight or another source)
     let batch = RecordBatch::try_from_iter(vec![
         ("product_id", Arc::new(Int32Array::from(vec![1, 2, 3, 4])) as ArrayRef),
         ("revenue", Arc::new(Float64Array::from(vec![1200.0, 450.0, 890.0, 2100.0])) as ArrayRef),
     ])?;
 
-    // Register the batch as a named table
+    // Register as a named table
     ctx.register_batch("live_sales", batch)?;
 
-    // Now query it multiple times, even from SQL
+    // Query via SQL
     let high_revenue = ctx.sql(
-        "SELECT product_id, revenue
-        FROM live_sales
-        WHERE revenue > 1000
-        ORDER BY revenue DESC"
+        "SELECT product_id, revenue \
+         FROM live_sales \
+         WHERE revenue > 1000 \
+         ORDER BY revenue DESC"
     ).await?;
 
-    let batches = high_revenue.collect().await?;
+    let result = high_revenue.collect().await?;
     assert_batches_eq!(
         &[
             "+------------+---------+",
@@ -154,40 +234,160 @@ async fn test_register_batch_reusable() -> Result<()> {
             "| 1          | 1200.0  |",
             "+------------+---------+",
         ],
-        &batches
+        &result
     );
 
-    // Can also access via DataFrame API
-    let all_products = ctx.table("live_sales").await?
-        .select_columns(&["product_id"])?
-        .collect().await?;
-    assert_eq!(all_products.len(), 1);  // One batch returned
+    // Also accessible via the DataFrame API
+    let count = ctx.table("live_sales").await?
+        .count()
+        .await?;
+    assert_eq!(count, 4);
 
     Ok(())
 }
 ```
 
-#### Common Pitfalls
+For details on catalog registration, deregistration, and how
+registered tables interact with SQL, see
+[Registered Tables](registered-tables.md).
 
-When constructing `RecordBatch`es manually, these invariants must hold:
+### Explicit MemTable for Partitioned Data
 
-- **Equal length**: All arrays (columns) in a batch must have exactly the same row count
-- **Nullable columns**: Must be built with `Option<T>`; non-nullable columns must not contain `None`
-- **Multiple batches**: Schemas must be identical (names, types, order, nullability)
+**Create a [`MemTable`] directly for full control over partitioning
+— enabling parallel execution across multiple batch groups.**
 
-> **Need help debugging?** See the full checklist in [Arrow Introduction](../../user-guide/arrow-introduction.md)
+The convenience methods ([`.read_batch()`], [`.read_batches()`],
+[`.register_batch()`]) all create a [`MemTable`] internally with a
+single partition. When you need multiple partitions — for example,
+to let DataFusion process batch groups in parallel across CPU
+cores — construct the [`MemTable`] explicitly with
+`MemTable::try_new()`:
 
-#### Record Batch References
+```rust
+use std::sync::Arc;
+use datafusion::prelude::*;
+use datafusion::arrow::array::{ArrayRef, Int32Array, StringArray};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::MemTable;
+use datafusion::error::Result;
+use datafusion::assert_batches_sorted_eq;
 
-**DataFusion:**
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
 
-- [Arrow Introduction](../../user-guide/arrow-introduction.md) — RecordBatch fundamentals and debugging
-- [`SessionContext::read_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch) — One-shot DataFrame from RecordBatch
-- [`SessionContext::register_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch) — Register RecordBatch as table
+    // Partition 1: sensors from region North
+    let north = RecordBatch::try_from_iter(vec![
+        ("sensor_id", Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef),
+        ("region", Arc::new(StringArray::from(vec!["North", "North"])) as ArrayRef),
+    ])?;
+
+    // Partition 2: sensors from region South
+    let south = RecordBatch::try_from_iter(vec![
+        ("sensor_id", Arc::new(Int32Array::from(vec![3, 4])) as ArrayRef),
+        ("region", Arc::new(StringArray::from(vec!["South", "South"])) as ArrayRef),
+    ])?;
+
+    // Two partitions — DataFusion can process them in parallel
+    let schema = north.schema();
+    let provider = MemTable::try_new(schema, vec![vec![north], vec![south]])?;
+
+    ctx.register_table("sensors", Arc::new(provider))?;
+
+    let result = ctx.table("sensors").await?
+        .sort(vec![col("sensor_id").sort(true, true)])?
+        .collect()
+        .await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+-----------+--------+",
+            "| sensor_id | region |",
+            "+-----------+--------+",
+            "| 1         | North  |",
+            "| 2         | North  |",
+            "| 3         | South  |",
+            "| 4         | South  |",
+            "+-----------+--------+",
+        ],
+        &result
+    );
+
+    Ok(())
+}
+```
+
+The `partitions` argument to `MemTable::try_new()` is a
+`Vec<Vec<RecordBatch>>` — each inner `Vec` is one partition. During
+execution, DataFusion can assign different partitions to different
+threads. Within a partition, batches are streamed sequentially.
+
+:::{admonition} When to use explicit MemTable
+:class: tip
+Use `MemTable::try_new()` when you have naturally partitioned data
+(e.g., batches from different sources or regions) and want DataFusion
+to parallelize across them. For single-batch or single-partition
+scenarios, the convenience methods are simpler.
+:::
+
+---
+
+## Choosing the Right Method
+
+**All paths produce the same lazy [`DataFrame`] — choose based on
+batch count, catalog needs, and parallelism.**
+
+The four methods differ only in their input shape and catalog
+behavior — the resulting [`DataFrame`] is identical regardless of
+which method created it. The table below summarizes the trade-offs.
+
+| Method                | Input                   | Catalog entry | Partitions | Best for                               |
+| --------------------- | ----------------------- | ------------- | ---------- | -------------------------------------- |
+| [`.read_batch()`]     | Single `RecordBatch`    | No            | 1          | One-off processing of a single batch   |
+| [`.read_batches()`]   | `Vec<RecordBatch>`      | No            | 1          | Combining multiple same-schema batches |
+| [`.register_batch()`] | Single `RecordBatch`    | Yes (named)   | 1          | SQL access, multi-query reuse          |
+| `MemTable::try_new()` | `Vec<Vec<RecordBatch>>` | Manual        | N          | Parallel execution across partitions   |
+
+:::{admonition} Multiple batches via `.register_batch()`
+:class: note
+[`.register_batch()`] accepts only a single [`RecordBatch`]. To
+register multiple batches under one name, construct a [`MemTable`]
+explicitly and register it with [`.register_table()`].
+:::
+
+---
+
+## Bringing It Together
+
+Every creation method on this page wraps Arrow [`RecordBatch`]es in
+a [`MemTable`] and produces a single lazy [`DataFrame`]. Use
+[`.read_batch()`] or [`.read_batches()`] for ephemeral, one-off
+processing. Use [`.register_batch()`] when you need a named table
+accessible to SQL and multiple queries. And when you need
+partitioned parallelism, construct a [`MemTable`] directly with
+`MemTable::try_new()`. In all cases, the data stays in Arrow's
+native columnar format — no conversion, no serialization overhead.
+
+---
+
+## References
+
+**Concepts & Guides:**
+
+- [Arrow Introduction](../../user-guide/arrow-introduction.md) — RecordBatch fundamentals, construction, and common pitfalls
+- [MemTable (In-Memory)](creating-concepts.md#memtable-in-memory) — Architectural role of MemTable in DataFusion's provider model
+- [Registered Tables](registered-tables.md) — Catalog registration, deregistration, and SQL access
+
+**API Documentation:**
+
+- [`SessionContext::read_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch) — One-shot DataFrame from a single RecordBatch
+- [`SessionContext::read_batches()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batches) — One-shot DataFrame from multiple RecordBatches
+- [`SessionContext::register_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch) — Register a RecordBatch as a named table
+- [`MemTable`](https://docs.rs/datafusion/latest/datafusion/datasource/struct.MemTable.html) — In-memory TableProvider for RecordBatches
+- [`RecordBatch`](https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html) — Arrow's columnar in-memory data format
 
 **Arrow Ecosystem:**
 
-- [`RecordBatch`](https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html) — Arrow's columnar in-memory format
-- [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) — Network protocol for Arrow data
+- [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) — Network protocol for high-performance Arrow data transfer
 
 ---
