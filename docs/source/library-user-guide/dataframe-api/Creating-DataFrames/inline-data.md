@@ -17,76 +17,77 @@
   under the License.
 -->
 
-# Creating DataFrames From Inline Data (using the [`dataframe!`] macro)
+# Creating DataFrames from Inline Data
 
-<!--TODO
+**Create DataFrames directly from code — the self-contained
+toolkit for tests, examples, and prototyping.**
 
-1. ABSTRACT
-2. INTRODUCTION
--->
+DataFusion's inline creation methods let you build DataFrames
+entirely from code. The [`dataframe!`] macro is the most concise
+path: pass column names and Rust arrays, and it returns a ready-to-use
+[`DataFrame`] with Arrow types inferred automatically. When the
+macro's inference is not enough, [`.from_columns()`] accepts
+pre-built Arrow arrays with explicit types. And [`.read_empty()`]
+provides a minimal one-row context for scalar expression evaluation.
+This page also covers DataFusion's assertion macros —
+[`assert_batches_eq!`] and [`assert_batches_sorted_eq!`] — which
+together with [`dataframe!`] form a self-contained testing toolkit.
+
+**Key methods and macros:**
+
+| Method / Macro                | Purpose                                             |
+| ----------------------------- | --------------------------------------------------- |
+| [`dataframe!`]                | Create a [`DataFrame`] from Rust literals           |
+| [`.from_columns()`]           | Create from pre-built Arrow arrays (explicit types) |
+| [`.read_empty()`]             | One-row, zero-column DataFrame for expressions      |
+| [`assert_batches_eq!`]        | Strict batch comparison (values and order)          |
+| [`assert_batches_sorted_eq!`] | Order-independent batch comparison                  |
+| [`assert_contains!`]          | Partial string match (e.g., `EXPLAIN` plans)        |
+| [`assert_not_contains!`]      | Negative string match                               |
 
 ```{contents} Table of Contents
 :local:
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## The `dataframe!` Macro
 
-**Create DataFrames from Rust literals—perfect for tests, examples, and prototyping without external data dependencies.**
+**Build a [`DataFrame`] from Rust literals in a single expression —
+no files, no network, no [`SessionContext`] setup required.**
 
-This approach shines when your data is small, temporary, and lives entirely in code.
+The [`dataframe!`] macro is DataFusion's most concise creation path.
+It accepts column names and Rust arrays, infers the corresponding
+Arrow types, wraps the data in a [`MemTable`], and returns a lazy
+[`DataFrame`] ready for the full builder API. Because the macro
+creates its own default [`SessionContext`] internally, the resulting
+[`DataFrame`] is completely self-contained — ideal for unit tests,
+documentation examples, and rapid prototyping.
 
-**Perfect for:**
-
-- **Unit tests**: Verify transformations work correctly without file I/O overhead or test data management
-- **Documentation examples**: Create self-contained, runnable code snippets that anyone can execute
-- **Prototyping**: Quickly experiment with DataFusion's API and operations in REPL or notebooks
-- **Benchmarking**: Generate controlled test data with known characteristics for performance testing
-
-**Not ideal for:**
-
-- Production data pipelines (use file-based or streaming sources instead)
-- Large datasets (literals are compiled into your binary and loaded into memory)
-- Dynamic data (values must be known at compile time)
-
-> **DataFrame API advantage**:<br>
-> SQL has no direct equivalent for inline test data. SQL's `VALUES` clause requires a `SessionContext` and produces a query result—not a reusable DataFrame you can transform programmatically.
-
-#### 1. [`dataframe!`] macro: Basic syntax
-
-The dataframe! macro uses a declarative, column-oriented syntax. It mimics the structure of a hash map, where keys are column names and values are lists of data.
-
-**Syntax Pattern:**
+**Syntax:**
 
 ```text
-dataframe! (
+dataframe!(
     "column_name" => [value1, value2, ...],
-     ... )
+    "column_name" => [value1, value2, ...],
+)
 ```
 
-- Column Name: A string literal (e.g., "id").
-
-* Operator: The => arrow associates the name with its data.
-
-- Data: A Rust vector or array literal (e.g., [1, 2, 3]).
-
-> Note:<br>
-> This macro automatically creates a new default SessionContext to host the DataFrame. If you need to attach the data to an existing context (e.g., to share configuration), use ctx.read_batch() instead.
+- **Column name**: A string literal (e.g., `"sensor_id"`).
+- **`=>`**: Associates the name with its data.
+- **Data**: A Rust array or `Vec` literal (e.g., `[1, 2, 3]`).
 
 ```rust
 use datafusion::prelude::*;
 use datafusion::error::Result;
 use datafusion::assert_batches_eq;
 
-#[tokio::test]
-async fn test_dataframe_macro_basic() -> Result<()> {
-    // Create DataFrame from inline data
+#[tokio::main]
+async fn main() -> Result<()> {
     let df = dataframe!(
         "id" => [1, 2, 3],
         "name" => ["Alice", "Bob", "Carol"]
     )?;
 
-    // Verify the DataFrame contains expected data
     let batches = df.collect().await?;
     assert_batches_eq!(
         &[
@@ -105,53 +106,124 @@ async fn test_dataframe_macro_basic() -> Result<()> {
 }
 ```
 
-#### Complete testing workflow
+The macro infers Arrow types from Rust literals via the
+`IntoArrayRef` trait. The following types are supported:
 
-The [`dataframe!`] macro pairs perfectly with [`assert_batches_eq!`] for validating DataFrame transformations.
+| Rust type                 | Arrow type           |
+| ------------------------- | -------------------- |
+| `bool`                    | `Boolean`            |
+| `i8`, `i16`, `i32`, `i64` | `Int8` … `Int64`     |
+| `u8`, `u16`, `u32`, `u64` | `UInt8` … `UInt64`   |
+| `f32`, `f64`              | `Float32`, `Float64` |
+| `&str`, `String`          | `Utf8`               |
 
-Here is a complete unit test showing the **Three-Step Pattern**.
+Wrap any of these in `Option<T>` to express nulls. For the full
+DataFusion type system, see:
 
-> **Sophisticated Usage:**<br>
-> Notice step 1. Instead of hardcoding literals, we use a standard Rust loop to generate the data programmatically. This demonstrates how to inject dynamic data (e.g., from a fuzzer or random generator) into the declarative macro.
+- [Data Types](../../user-guide/sql/data_types.md)
+- [Type Coercion](../Schema-Management/type-coercion.md)
+
+:::{admonition} Own SessionContext
+:class: note
+[`dataframe!`] creates a new default [`SessionContext`] internally.
+The returned [`DataFrame`] lives in an isolated session — it cannot
+be joined with tables registered in another [`SessionContext`], and
+it does not inherit custom configuration (batch size, parallelism,
+optimizer rules). To use inline data alongside existing tables,
+`.collect()` the [`DataFrame`] into [`RecordBatch`]es and re-import
+them via [`.read_batch()`] on your target context (see
+[Creating DataFrames from RecordBatches](from-memory.md)).
+:::
+
+Calling [`dataframe!`] with no arguments — `dataframe!()` — produces
+an empty [`DataFrame`] with zero rows and zero columns, equivalent
+to `ctx.read_batch(RecordBatch::new_empty(Arc::new(Schema::empty())))`.
+
+### Null Values with `Option<T>`
+
+**Represent missing data with Rust's `Option<T>` type — `None`
+maps directly to Arrow's null representation.**
+
+When test data requires missing values, wrap column entries in
+`Option<T>`. `None` becomes Arrow's null, which appears as an
+empty cell in assertion output.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::error::Result;
 use datafusion::assert_batches_eq;
 
-#[tokio::test]
-async fn test_filter_and_aggregate() -> datafusion::error::Result<()> {
-    // 1) CREATE: Generate data programmatically
-    // We want to simulate:
-    // - 2 entries for "Sales" (Base salary 50k)
-    // - 2 entries for "Engineering" (Base salary 80k)
+#[tokio::main]
+async fn main() -> Result<()> {
+    let df = dataframe!(
+        "id"    => [1, 2, 3],
+        "value" => [Some("foo"), None, Some("bar")],
+        "score" => [Some(100), Some(200), None]
+    )?;
+
+    let batches = df.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----+-------+-------+",
+            "| id | value | score |",
+            "+----+-------+-------+",
+            "| 1  | foo   | 100   |",
+            "| 2  |       | 200   |",
+            "| 3  | bar   |       |",
+            "+----+-------+-------+",
+        ],
+        &batches
+    );
+
+    Ok(())
+}
+```
+
+For the distinction between `None`, SQL `NULL`, and `NaN`, see
+[Understanding Null Values](../../user-guide/dataframe.md#understanding-null-values-none-null-and-nan).
+
+### Programmatic Data Generation
+
+**Inject dynamically generated `Vec`s into the macro — useful for
+fuzz tests, parameterized test matrices, or synthetic benchmarks.**
+
+The right-hand side of `=>` is not limited to array literals — the
+[`dataframe!`] macro accepts any expression that evaluates to a
+`Vec<T>` or `&[T]` where `T` implements `IntoArrayRef`. This means
+you can generate test data with `for` loops, iterator chains
+(`.map().collect()`), the `rand` crate, or any other Rust logic
+that produces a supported `Vec`:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::functions_aggregate::expr_fn::sum;
+use datafusion::assert_batches_eq;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
     let mut departments = Vec::new();
     let mut salaries = Vec::new();
 
     for i in 0..4 {
         if i < 2 {
             departments.push("Sales");
-            salaries.push(50000 + (i * 5000)); // 50000, 55000
+            salaries.push(50000 + (i * 5000));
         } else {
             departments.push("Engineering");
-            salaries.push(80000 + ((i - 2) * 5000)); // 80000, 85000
+            salaries.push(80000 + ((i - 2) * 5000));
         }
     }
 
-    // Inject the generated vectors directly into the macro
     let df = dataframe!(
         "department" => departments,
-        "salary" => salaries
+        "salary"     => salaries
     )?;
 
-    // 2) TRANSFORM: Apply the operations you want to test
     let result = df
         .aggregate(vec![col("department")], vec![sum(col("salary")).alias("total")])?
         .filter(col("total").gt(lit(100000)))?
         .sort(vec![col("total").sort(false, true)])?;
 
-    // 3) VERIFY: Assert the exact expected output
-    // Sales: 50k + 55k = 105k
-    // Eng:   80k + 85k = 165k
     let batches = result.collect().await?;
     assert_batches_eq!(
         &[
@@ -169,118 +241,129 @@ async fn test_filter_and_aggregate() -> datafusion::error::Result<()> {
 }
 ```
 
-This three-step pattern (**CREATE → TRANSFORM → VERIFY**) is your blueprint for testing DataFrames.
+---
 
-#### Testing macros for asserting results
+## Explicit Arrow Types with `.from_columns()`
 
-DataFusion provides specialized macros to verify your results. These handle the complexity of formatting Arrow RecordBatches so you don't have to manually iterate over rows.
+**When the [`dataframe!`] macro's type inference is not enough,
+[`.from_columns()`] lets you supply pre-built Arrow arrays with
+exact types.**
 
-| Macro                          | Best Use Case                                                                                                                                              |
-| :----------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Data Verification**          |                                                                                                                                                            |
-| [`assert_batches_eq!`]         | **Strict Check.** Use when the output is deterministic (e.g., after a [`.sort()`]). Checks values _and_ order.                                             |
-| [`assert_batches_sorted_eq!`]  | **Loose Check.** Use when parallel execution might scramble row order (e.g., aggregations). It sorts both sides before comparing.                          |
-| **String & Plan Verification** |                                                                                                                                                            |
-| [`assert_contains!`]           | **Partial Match.** Use to check if an error message contains a specific phrase, or if an `EXPLAIN` plan contains a specific operator (e.g., "FilterExec"). |
-| [`assert_not_contains!`]       | **Negative Check.** Use to ensure a specific operator was optimized away (e.g., ensuring a "Filter" is no longer present after optimization).              |
+The [`dataframe!`] macro infers Arrow types from Rust literals —
+`i32` becomes `Int32`, `&str` becomes `Utf8`. When you need a
+specific Arrow type that differs from the default inference (e.g.,
+`Int64` instead of `Int32`), or when you already have Arrow arrays
+from another library, use [`DataFrame::from_columns()`][`.from_columns()`].
 
-> **Pro Tip: The Copy-Paste Workflow**<br>
-> When [`assert_batches_eq!`] fails, it prints the actual output in the exact ASCII format expected by the macro. You can simply copy this output from your terminal and paste it into your test code to update the expected result.
-
-#### Special cases
-
-The basic [`dataframe!`] syntax handles most scenarios, but two situations require additional techniques:
-
-**Null values** — Use Rust's `Option<T>` type to represent missing data:
-
-```rust
-use datafusion::prelude::*;
-# use datafusion::error::Result;
-# #[tokio::main]
-# async fn main() -> Result<()> {
-let df = dataframe!(
-    "id" => [1, 2, 3],
-    "value" => [Some("foo"), None, Some("bar")],  // Option<T> for nulls
-    "score" => [Some(100), Some(200), None]
-)?;
-# df.show().await?;
-# Ok(())
-# }
-```
-
-> For a deeper understanding of Null handling, see: <br> [Understanding Null Values](../../user-guide/dataframe.md#understanding-null-values-none-null-and-nan) for distinctions between `None`, SQL `NULL`, and `NaN`.
-
-> **Explicit Arrow types** <br>
-> The [`dataframe!`] macro infers Arrow types from Rust literals (e.g., `i32` → `Int32`, `&str` → `Utf8`). Use [`DataFrame::from_columns()`][`.from_columns()`] when you need direct control:
-
-| Use [`.from_columns()`] when... | Example                                                                     |
-| :------------------------------ | :-------------------------------------------------------------------------- |
-| You already have Arrow arrays   | Output from another Arrow-native library or computation                     |
-| You need a specific Arrow type  | `Int64` instead of inferred `Int32`, or `Timestamp` with specific precision |
-| You're bridging systems         | Receiving arrays from Arrow IPC, Flight, or custom TableProviders           |
+| Use [`.from_columns()`] when …    | Example                                                    |
+| --------------------------------- | ---------------------------------------------------------- |
+| You already have Arrow arrays     | Output from another Arrow-native library or computation    |
+| You need a specific Arrow type    | `Int64` instead of inferred `Int32`, `Timestamp` precision |
+| You are bridging external systems | Arrays from Arrow IPC, Flight, or custom `TableProvider`s  |
 
 ```rust
 use std::sync::Arc;
 use datafusion::prelude::*;
 use datafusion::arrow::array::{ArrayRef, Int64Array, StringArray};
 use datafusion::error::Result;
+use datafusion::assert_batches_eq;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Explicit Int64 (dataframe! would infer Int32 from literals)
     let df = DataFrame::from_columns(vec![
         ("id", Arc::new(Int64Array::from(vec![1_i64, 2, 3])) as ArrayRef),
         ("name", Arc::new(StringArray::from(vec!["Alice", "Bob", "Carol"])) as ArrayRef),
     ])?;
-    df.show().await?;
+
+    let batches = df.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----+-------+",
+            "| id | name  |",
+            "+----+-------+",
+            "| 1  | Alice |",
+            "| 2  | Bob   |",
+            "| 3  | Carol |",
+            "+----+-------+",
+        ],
+        &batches
+    );
+
     Ok(())
 }
 ```
 
-> **Decision rule**:<br>
-> Start with `dataframe!`—it's readable and sufficient for most tests. Switch to `from_columns()` only when you already have Arrow arrays or need explicit type control that the macro can't infer.
+:::{admonition} Own SessionContext
+:class: note
+Like [`dataframe!`], [`.from_columns()`] creates a new default
+[`SessionContext`] internally. The returned [`DataFrame`] is not
+attached to any user-provided context.
+:::
 
-### 2. Generative Data (Calculations & Placeholders)
+:::{admonition} Decision rule
+:class: tip
+Start with [`dataframe!`] — it is readable and sufficient for most
+tests. Switch to [`.from_columns()`] only when you already have
+Arrow arrays or need explicit type control that the macro cannot
+infer.
+:::
 
-Sometimes you need a DataFrame purely to evaluate expressions, or you need a schema-compliant "empty" table to handle edge cases in pipelines.
+---
 
-#### 1. The "Calculation Root" ([`ctx.read_empty()`][`.read_empty()`])\*\*
+## Expression Evaluation with `.read_empty()`
 
-This creates a DataFrame with **one row and zero columns**. It acts like a "blank sheet" (similar to `DUAL` in Oracle or a `SELECT` without `FROM` in Postgres) that allows you to execute scalar expressions.
+**Create a one-row, zero-column [`DataFrame`] for evaluating scalar
+expressions — similar to Oracle's `DUAL` or PostgreSQL's
+`SELECT` without `FROM`.**
+
+[`.read_empty()`] is useful when you need to compute a value without
+any underlying data — for example, evaluating a mathematical
+expression, calling `now()`, or testing a UDF in isolation. The
+resulting [`DataFrame`] contains exactly one row and zero columns;
+you add columns via [`.select()`] with literal or function
+expressions.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_eq;
 
 #[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
+async fn main() -> Result<()> {
     let ctx = SessionContext::new();
 
-    // Create a single-row, column-less DataFrame
-    let df = ctx.read_empty()?;
+    let result = ctx.read_empty()?
+        .select(vec![
+            lit(5).mul(lit(5)).alias("result"),
+        ])?
+        .collect()
+        .await?;
 
-    // Use it to evaluate scalar expressions
-    let result = df.select(vec![
-        lit(5).mul(lit(5)).alias("result"), // 5 * 5
-        now().alias("execution_time")       // Current time
-    ])?;
+    assert_batches_eq!(
+        &[
+            "+--------+",
+            "| result |",
+            "+--------+",
+            "| 25     |",
+            "+--------+",
+        ],
+        &result
+    );
 
-    // FIX: Clone the DataFrame to count it, so we don't consume 'result'
-    assert_eq!(result.clone().count().await?, 1);
-
-    result.show().await?;
     Ok(())
 }
 ```
 
-#### 2. The Empty Placeholder (Safe Unions)
+### Empty Schema Placeholder
 
-If you need a DataFrame with **zero rows** but a specific schema (e.g., to handle "no data found" cases while keeping a `UNION` valid), do **not** use `read_empty()`. Instead, use `read_batch` with an empty `RecordBatch`.
+**Create a zero-row [`DataFrame`] that preserves a specific schema
+— useful for safe `UNION`s, pipeline stubs, and edge-case testing.**
 
-> **Use Case:**<br> > _The "Structural Placeholder."_<br>
-> This creates a valid DataFrame object that contains no data. It acts like an empty container that satisfies function signatures and pipeline requirements (like UNION schemas or Parquet writers) when the actual data is missing or filtered out.
->
-> **Testing Tip:** <br>
-> Use this to verify that your functions handle "no results" scenarios gracefully without crashing (e.g., avoiding division-by-zero errors in aggregations).
+When you need a [`DataFrame`] with **zero rows** but a defined
+schema (e.g., to handle "no data found" cases while keeping a
+`.union()` valid), do not use [`.read_empty()`] — that produces one
+row with zero columns. Instead, create an empty [`RecordBatch`]
+with the target schema and wrap it via [`.read_batch()`]:
 
 ```rust
 use datafusion::prelude::*;
@@ -291,26 +374,19 @@ use datafusion::assert_batches_eq;
 async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
-    // 1. Simulate an existing DataFrame
     let df_real = dataframe!("id" => [1, 2, 3])?;
 
-    // 2. Get the schema
-    // FIX: Use .inner().clone() to get the Arc<Schema>
     let schema = df_real.schema().inner().clone();
-
-    // 3. Create a truly empty DataFrame (0 rows) with that exact schema
     let empty_batch = RecordBatch::new_empty(schema);
     let df_empty = ctx.read_batch(empty_batch)?;
 
-    // VERIFICATION 1: Prove it is actually empty
-    // (We clone here just to be safe, though count() is the last usage of df_empty)
     assert_eq!(df_empty.clone().count().await?, 0);
 
-    // 4. Safe Union: This works because both have column "id"
-    let combined = df_real.union(df_empty)?;
+    // Safe union: both DataFrames share the "id" column
+    let result = df_real.union(df_empty)?
+        .collect()
+        .await?;
 
-    // VERIFICATION 2: Prove the union worked (3 rows + 0 rows = 3 rows)
-    let result = combined.collect().await?;
     assert_batches_eq!(
         &[
             "+----+",
@@ -328,19 +404,98 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Key Distinction:**
->
-> - **`read_empty()`**: 1 Row, 0 Columns. (Used for logic/math).
-> - **`RecordBatch::new_empty()`**: 0 Rows, N Columns. (Used for data pipelines).
+:::{admonition} Key distinction
+:class: warning
 
-#### Inline data References
+- **[`.read_empty()`]**: 1 row, 0 columns — for scalar expression evaluation.
+- **`RecordBatch::new_empty(schema)`**: 0 rows, N columns — for schema-compliant pipeline stubs.
 
-**DataFusion:**
+:::
 
-- [`dataframe!` macro](https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html) — Create DataFrames from literals
-- [`assert_batches_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html) — Test DataFrame outputs
-- [`assert_batches_sorted_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_sorted_eq.html) — Order-insensitive test comparison
-- [`DataFrame::from_columns()`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.from_columns) — Create from Arrow arrays
-- [`ctx.read_empty()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_empty) — Create empty DataFrame
+---
+
+## Verifying DataFrame Results
+
+**DataFusion provides assertion macros that format Arrow
+[`RecordBatch`]es into readable ASCII tables and compare them
+against expected output — the standard way to validate
+transformations in tests.**
+
+Every code example in this documentation uses these macros. They
+handle the complexity of formatting columnar data so you can focus
+on the expected result as a simple string table. The two data
+macros cover ordered and unordered output; the two string macros
+cover partial and negative matching on text like `EXPLAIN` plans
+or error messages.
+
+| Macro                          | Best use case                                                                                                 |
+| :----------------------------- | :------------------------------------------------------------------------------------------------------------ |
+| **Data Verification**          |                                                                                                               |
+| [`assert_batches_eq!`]         | **Strict.** Checks values _and_ row order. Use after an explicit [`.sort()`].                                 |
+| [`assert_batches_sorted_eq!`]  | **Order-independent.** Sorts both sides before comparing. Use when parallel execution may scramble row order. |
+| **String & Plan Verification** |                                                                                                               |
+| [`assert_contains!`]           | **Partial match.** Checks if a string contains a phrase — e.g., an `EXPLAIN` plan contains `"FilterExec"`.    |
+| [`assert_not_contains!`]       | **Negative match.** Ensures a phrase is absent — e.g., verifying an optimizer removed a `"Filter"` node.      |
+
+:::{admonition} Copy-paste workflow
+:class: tip
+When [`assert_batches_eq!`] fails, the error message prints the
+actual output in the exact ASCII format the macro expects. Copy
+this output from your terminal and paste it directly into your
+test to update the expected result.
+:::
+
+---
+
+## Choosing the Right Approach
+
+**All inline creation methods produce a lazy [`DataFrame`] without
+external dependencies — choose based on type control and data
+shape.**
+
+The three creation methods on this page serve different needs but
+share a common trait: the data lives entirely in your Rust source.
+No files, no network calls, no pre-existing catalog entries.
+
+| Method              | Input              | Type control | SessionContext     | Best for                                    |
+| ------------------- | ------------------ | ------------ | ------------------ | ------------------------------------------- |
+| [`dataframe!`]      | Rust literals/Vecs | Inferred     | Created internally | Tests, examples, prototyping                |
+| [`.from_columns()`] | Arrow `ArrayRef`s  | Explicit     | Created internally | Specific Arrow types, bridging Arrow arrays |
+| [`.read_empty()`]   | None               | N/A          | User-provided      | Scalar expressions, UDF testing             |
+
+---
+
+## Bringing It Together
+
+[`dataframe!`] is the fastest way to get data into a [`DataFrame`]
+— a single expression turns Rust literals into a lazy query plan
+with no external dependencies. When the macro's type inference is
+not enough, [`.from_columns()`] gives explicit control over Arrow
+types. And [`.read_empty()`] provides a minimal one-row context for
+evaluating scalar expressions. Combined with DataFusion's assertion
+macros — [`assert_batches_eq!`] and [`assert_batches_sorted_eq!`] —
+these tools form a self-contained testing toolkit: create, transform,
+verify, all within a single Rust source file.
+
+---
+
+## References
+
+**Concepts & Guides:**
+
+- [Data Types](../../user-guide/sql/data_types.md) — SQL-to-Arrow type mappings
+- [Type Coercion](../Schema-Management/type-coercion.md) — Automatic type promotion and explicit casting
+- [Understanding Null Values](../../user-guide/dataframe.md#understanding-null-values-none-null-and-nan) — `None`, SQL `NULL`, and `NaN`
+- [Creating DataFrames from RecordBatches](from-memory.md) — `.read_batch()`, `.read_batches()`, and `MemTable`
+
+**API Documentation:**
+
+- [`dataframe!`](https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html) — Create DataFrames from Rust literals
+- [`DataFrame::from_columns()`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.from_columns) — Create from pre-built Arrow arrays
+- [`SessionContext::read_empty()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_empty) — One-row, zero-column DataFrame
+- [`assert_batches_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html) — Strict batch comparison
+- [`assert_batches_sorted_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_sorted_eq.html) — Order-independent batch comparison
+- [`assert_contains!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_contains.html) — Partial string match
+- [`assert_not_contains!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_not_contains.html) — Negative string match
 
 ---
