@@ -54,8 +54,7 @@ The documentation follows the **lifecycle of a DataFrame**—from creation to ex
 | **Health**        | [Schema Management](schema-management.md)     | Inspect, validate, and evolve schema            |
 | **Life**          | [Transformations](transformations.md)         | Filter, join, aggregate, sort, enrich           |
 | **Death**         | [Writing & Executing](writing-dataframes.md)  | Materialize results or persist to storage       |
-| **Wellness**      | [Best Practices](best-practices.md)           | Optimize performance and debug issues           |
-| **Graduation**    | [Advanced Topics](dataframes-advance.md)      | S3, Kafka, Arrow Flight, ADBC, custom execution |
+
 
 ## Quick Navigation
 

@@ -22,7 +22,9 @@
 <!--TODO
 
 1. ABSTRACT
-2. INTRODUCTION
+2. Fix cross-references to anatomy-schema.md and creating-schemas.md (anchors moved across files)
+3. Add cross-ref to schema-concepts.md "Schema Propagation Through Transformations" for the conceptual overview
+
 -->
 
 ```{contents} Transforming Schemas

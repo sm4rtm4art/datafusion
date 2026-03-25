@@ -19,17 +19,6 @@
 
 # Creating DataFrames
 
-<!--TODO
-1. DEDUP: The "Trade-off: Registration vs. Direct Read" admonition
-   (lines ~82-95) near-duplicates the comparison table in
-   creating-concepts.md "Access Patterns → Choosing Between Them".
-   Decide: keep the full table in creating-concepts.md (cognitive
-   authority) and reduce this to a one-liner + pointer, or vice versa.
-2. REVIEW: "How Creation Works" section — verify it still aligns with
-   the updated creating-concepts.md (SessionState clone semantics,
-   renamed final section).
--->
-
 **The "birth" phase of the DataFrame lifecycle: from data source to lazy query plan.**
 
 Data lives everywhere—files on disk, tables in databases, streams over the
@@ -77,6 +66,8 @@ ecosystem-sources
 Each method below produces the same lazy DataFrame. The differences are in
 where your data lives and how much catalog integration you need.
 
+A gerneral [Concepts](creating-concepts.md) part is given additionaly the following topics are based on where your data lives. 
+
 **Choose based on where your data lives and how you'll access it:**
 
 | Category               | Method                                    | Best for                                          | Prefer alternatives when                     |
@@ -84,11 +75,11 @@ where your data lives and how much catalog integration you need.
 | **Direct Read**        | [From Files](from-files/index.md)         | Ad-hoc analysis, ETL pipelines, one-off scripts   | You need stable names or multi-query reuse   |
 | **DataFusion Catalog** | [Registered Tables](registered-tables.md) | SQL interoperability, shared schemas, multi-query | Simple one-shot queries                      |
 | **SQL**                | [SQL Queries](from-sql.md)                | Complex joins, CTEs, window functions             | Dynamic logic, programmatic column selection |
-| **Native**             | [RecordBatches](from-memory.md)           | Arrow Flight, IPC, single batch processing        | Multiple batches (use [`MemTable`] instead)  |
+| **Native**             | [RecordBatches](from-memory.md)           | Arrow ecosystem, single or multi-batch processing | Large file-based datasets                    |
 | **Testing**            | [Inline Data](inline-data.md)             | Unit tests, small hand-authored examples          | Production ingestion or large datasets       |
 | **Streaming**          | [Streaming Sources](streaming.md)         | Unbounded data, real-time pipelines               | Bounded/batch workloads                      |
 | **Advanced**           | [LogicalPlan](from-logical-plan.md)       | Custom DSLs, federation, optimizer testing        | Higher-level methods suffice                 |
-| **Ecosystem**          | [External Sources](ecosystem-sources.md)  | Delta Lake, Iceberg, Lance, and more              | Core formats (Parquet, CSV, etc.) suffice    |
+| **Ecosystem**          | [External Sources](ecosystem-sources.md)  | Lakehouse formats, databases, distributed engines | Core formats (Parquet, CSV, etc.) suffice    |
 
 :::{admonition} Trade-off: Registration vs. Direct Read
 :class: tip
@@ -139,6 +130,7 @@ DataFrame, register it for reuse, and query by name:
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_eq;
 use datafusion::error::Result;
 
 #[tokio::main]
@@ -153,8 +145,17 @@ async fn main() -> Result<()> {
     ctx.register_table("greetings", df.into_view())?;
 
     // 4. Query the registered table — via DataFrame API or SQL
-    let result = ctx.table("greetings").await?;
-    result.show().await?;
+    let batches = ctx.table("greetings").await?.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----+----------+",
+            "| id | greeting |",
+            "+----+----------+",
+            "| 1  | hello    |",
+            "+----+----------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
@@ -170,3 +171,26 @@ in the catalog, see
 ---
 
 <!-- Link references -->
+
+[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`ListingTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`MemTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/struct.MemTable.html
+[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
+[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
+[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
+[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
+[`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
+[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`.register_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_csv
+[`.register_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_json
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`.register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table

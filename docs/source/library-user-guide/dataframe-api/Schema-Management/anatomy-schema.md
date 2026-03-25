@@ -21,8 +21,13 @@
 
 <!--TODO
 
-1. ABSTRACT
-2. INTRODUCTION
+1. ABSTRACT (ALWAYS DEFINED LAST)
+2. Fix cross-references to other files (e.g., concepts.md#handling-null-values no longer exists)
+3. Add cross-ref back to schema-concepts.md for the "big picture" overview
+4. Confirm "Primary/Secondary" property labels align with the "hard/soft metadata" framing in schema-concepts.md
+5. Primary vs Secondary metadata — implementation detail: clarify that "Primary" metadata (name, type, nullability) consists of first-class fields in the Arrow `Field` struct, while "Secondary" metadata is physically stored in the `Field`'s key-value `metadata` HashMap. Mention that recent updates ensure this metadata is preserved through transformations like projections.
+6. Functional dependency use cases: provide a concrete example of GROUP BY reduction — how the optimizer uses functional dependencies (e.g., a Primary Key) to remove redundant columns from an aggregation, reducing memory overhead during hash aggregation.
+
 -->
 
 ```{contents} Table of Contents for the Anatomy DataFrame Schema
@@ -30,7 +35,7 @@
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## DFSchema an Overview
 
 **Dissecting the schema reveals how DataFusion structures data: from the DataFrame down to each field's type, nullability, and meaning.**
 

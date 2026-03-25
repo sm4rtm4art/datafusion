@@ -96,7 +96,7 @@ DATAFRAME CREATION PATHWAYS
                 │                                   │
        ┌────────▼─────────┐                ┌────────▼─────────┐
        │  A. DIRECT READ  │                │   B. REGISTER    │
-       │   (Ephemeral)    │                │     (Named)      │
+       │   (Ephemeral)    │                │(registered Named)│
        │                  │                │                  │
        │   read_parquet() │                │ register_parquet │
        │   read_csv()     │                │ register_csv     │
@@ -304,7 +304,7 @@ Actual data reading only happens when an action like [`.collect()`] or
 `register_*` methods.
 :::
 
-### Registration (Named)
+### Registration (registered Named)
 
 Methods like [`.register_parquet()`] or [`.register_table()`] store the
 [`TableProvider`] in the session catalog under a logical name (e.g.,
@@ -322,7 +322,7 @@ the upstream schema changes (new columns, type changes), you must
 re-register to pick up the new schema. For schema evolution strategies,
 see [Schema Management](../Schema-Management/index.md).
 
-### Choosing Between Ephemeral and Named Path
+### Choosing Between Ephemeral and registered Named Path
 
 :::{admonition} Rule of thumb
 :class: tip

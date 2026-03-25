@@ -22,7 +22,8 @@
 <!--TODO
 
 1. ABSTRACT
-2. INTRODUCTION
+2. Fix monolith cross-references (concepts.md, creating-dataframes.md no longer exist here)
+
 -->
 
 ```{contents} Applying Schemas and Modeling Data

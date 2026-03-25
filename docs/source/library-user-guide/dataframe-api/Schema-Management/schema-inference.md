@@ -22,7 +22,11 @@
 <!--TODO
 
 1. ABSTRACT
-2. INTRODUCTION
+2. Expand content (currently light at ~91 lines)
+3. Fix typo in validation cross-ref ("interfered" should be "inferred")
+4. Incorporate schema drift discussion more prominently (schema-concepts.md references this file for drift details)
+5. Drift mitigation strategies: expand beyond "use explicit schemas" — cover ListingTable's ability to cache file statistics for consistent schema resolution, enforcing specific file sort orders to ensure consistent inference across runs, and schema evolution patterns for production pipelines.
+
 -->
 
 ```{contents} Table of Contents for Schema inference

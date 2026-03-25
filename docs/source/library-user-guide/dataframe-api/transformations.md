@@ -23,7 +23,7 @@
 
 Way to much content!
 
-- every mayor Methods (join, merge, filter..) As individuall document.
+- every mayor Methods (join, merge, filter..) As individual document.
 - Concept part adatping
 -  Futher ideas: ???
 

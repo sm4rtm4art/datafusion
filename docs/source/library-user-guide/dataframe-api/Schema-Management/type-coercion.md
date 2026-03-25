@@ -22,7 +22,8 @@
 <!--TODO
 
 1. ABSTRACT
-2. INTRODUCTION
+2. Fix cross-references to other files in this directory
+
 -->
 
 ```{contents} Type Coercion: Auto-Alignment vs Explicit Casting

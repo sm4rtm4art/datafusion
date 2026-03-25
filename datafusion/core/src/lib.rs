@@ -1333,6 +1333,60 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-concepts.md",
+    dataframe_api_schema_management_schema_concepts
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/anatomy-schema.md",
+    dataframe_api_schema_management_anatomy_schema
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/creating-schemas.md",
+    dataframe_api_schema_management_creating_schemas
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/type-coercion.md",
+    dataframe_api_schema_management_type_coercion
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-inference.md",
+    dataframe_api_schema_management_schema_inference
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/applying-schemas-modeling-data.md",
+    dataframe_api_schema_management_applying_schemas_modeling_data
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/inspecting-and-validating.md",
+    dataframe_api_schema_management_inspecting_and_validating
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-transformation.md",
+    dataframe_api_schema_management_schema_transformation
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/dataframe-methods.md",
+    dataframe_api_schema_management_dataframe_methods
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
     "../../../docs/source/library-user-guide/dataframe-api/transformations.md",
     dataframe_api_transformations
 );
