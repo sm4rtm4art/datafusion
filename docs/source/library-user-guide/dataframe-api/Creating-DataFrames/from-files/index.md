@@ -30,6 +30,22 @@ metadata-level optimizations behind a simple `read_<format>()` API. The
 result is always a lazy [`DataFrame`]: metadata is read at creation time,
 but actual data processing waits until you trigger an action.
 
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
+
 ```{toctree}
 :maxdepth: 1
 :caption: DataFusion supported file formats

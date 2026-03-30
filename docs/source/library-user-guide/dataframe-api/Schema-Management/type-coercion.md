@@ -26,6 +26,24 @@
 
 -->
 
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `df.method()` (e.g., `df.select(...)`, `df.filter(...)`)
+- **DFSchema instance methods:** `df.schema().method()` (e.g., `df.schema().fields()`)
+- **DFSchema associated functions:** `DFSchema::function()` (e.g., `DFSchema::try_from(...)`)
+- **Standalone functions:** `function()` (e.g., `col(...)`, `lit(...)`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
+
 ```{contents} Type Coercion: Auto-Alignment vs Explicit Casting
 :local:
 :depth: 2
@@ -200,5 +218,5 @@ Now that you understand schema structure and type coercion, you're ready to work
 - **[Creating Schemas](#creating-schemas)** — Construct schemas explicitly for type safety
 - **[Transforming Schemas](#transforming-schemas)** — Modify qualifiers, combine schemas, handle nullability
 - **[Validating Schemas](#validating-schemas)** — Check existence, compare schemas, verify compatibility
-- **[Concepts: Handling Null Values](./concepts.md#handling-null-values)** — Deep dive into NULL behavior in expressions, filters, and joins
+- **[Handling Null Values](../Concepts/null-handling.md)** — Deep dive into NULL behavior in expressions, filters, and joins
 - **Type coercion internals:** [`TypeCoercion`] analyzer behavior for nested and scalar types

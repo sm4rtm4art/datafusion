@@ -24,8 +24,28 @@
 1. ABSTRACT
 2. Fix cross-references to anatomy-schema.md and creating-schemas.md (anchors moved across files)
 3. Add cross-ref to schema-concepts.md "Schema Propagation Through Transformations" for the conceptual overview
+4. Add .union_by_name() operational content (moved from anatomy-schema.md): NULL filling for missing columns, type mismatch handling with TypeCoercion analyzer, positional .union() vs name-based .union_by_name() comparison
+5. Add .with_functional_dependencies() method documentation to the DFSchema Transform Methods table
 
 -->
+
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `df.method()` (e.g., `df.select(...)`, `df.filter(...)`)
+- **DFSchema instance methods:** `df.schema().method()` (e.g., `df.schema().fields()`)
+- **DFSchema associated functions:** `DFSchema::function()` (e.g., `DFSchema::try_from(...)`)
+- **Standalone functions:** `function()` (e.g., `col(...)`, `lit(...)`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
 
 ```{contents} Transforming Schemas
 :local:
@@ -376,7 +396,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **See also:**<br>
 
-- [Concepts: Handling Null Values](./concepts.md#handling-null-values) for SQL NULL semantics and three-valued logic.
+- [Handling Null Values](../Concepts/null-handling.md) for SQL NULL semantics and three-valued logic.
 - [Nullability](#schema-field-nullability) for the widening rule when schemas are merged.
 - [Default Values](#default-values) for applying defaults during schema creation.
 

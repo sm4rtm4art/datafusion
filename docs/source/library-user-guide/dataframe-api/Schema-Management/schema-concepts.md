@@ -24,22 +24,20 @@
 The DataFrame schema is essential for transforming raw information into structured, processable data. [`DFSchema`] — DataFusion's schema type — wraps an Arrow [`Schema`] and adds relational context such as table qualifiers, enabling the query engine to validate operations, optimize execution, and catch errors at plan-build time rather than at runtime.
 DataFusion uses the term "schema" for [four distinct concepts](#schema-terminology-in-datafusion) — this page disambiguates them and covers the foundational concepts and patterns for schema management, and how the DataFrame API interacts with the [`DFSchema`] type.
 
-
 **Concepts covered on this page:**
 
-| Concept                                                                                   | Description                                                                        |
-| :---------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------- |
-| [The Schema Contract](#the-schema-a-data-contract-with-the-query-engine)                  | The schema as data contract with the query engine, defined by metadata              |
-| [Schema Terminology in DataFusion](#schema-terminology-in-datafusion)                     | **Schema** an overlapping terminology with different semantics                      |
-| [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer)                 | DFSchema as query-planning wrapper, immutability, Expr validation                  |
-| [Type Coercion at a Glance](#type-coercion-at-a-glance)                                   | The widening principle, two coercion modes                                         |
-| [How the Initial Schema is Determined](#how-the-initial-schema-is-determined)             | Self-describing formats, text formats, custom sources                              |
-| [Schema Ownership — From Source to DataFrame](#schema-ownership-from-source-to-dataframe) | Schema origin, resolution paths, ownership delegation from source to DataFrame     |
-| [Schema Propagation Through Transformations](#schema-propagation-through-transformations) | Schema evolution through transformations, fail-fast validation at plan-build time   |
-| [Logical vs Physical Schema](#logical-vs-physical-schema)                                 | Schema representation and the resulting plan and physical execution layout          |
+| Concept                                                                                   | Description                                                                       |
+| :---------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------- |
+| [The Schema Contract](#the-schema-a-data-contract-with-the-query-engine)                  | The schema as data contract with the query engine, defined by metadata            |
+| [Schema Terminology in DataFusion](#schema-terminology-in-datafusion)                     | **Schema** an overlapping terminology with different semantics                    |
+| [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer)                 | DFSchema as query-planning wrapper, immutability, Expr validation                 |
+| [Type Coercion at a Glance](#type-coercion-at-a-glance)                                   | The widening principle, two coercion modes                                        |
+| [How the Initial Schema is Determined](#how-the-initial-schema-is-determined)             | Self-describing formats, text formats, custom sources                             |
+| [Schema Ownership — From Source to DataFrame](#schema-ownership-from-source-to-dataframe) | Schema origin, resolution paths, ownership delegation from source to DataFrame    |
+| [Schema Propagation Through Transformations](#schema-propagation-through-transformations) | Schema evolution through transformations, fail-fast validation at plan-build time |
+| [Logical vs Physical Schema](#logical-vs-physical-schema)                                 | Schema representation and the resulting plan and physical execution layout        |
 
 ---
-
 
 ## The Schema: A data contract with the query engine
 
@@ -47,13 +45,12 @@ DataFusion uses the term "schema" for [four distinct concepts](#schema-terminolo
 
 Defined data structures are essential for DataFusion's query engine to plan and execute transformations. The column name, data type, and nullability of each column must be consistent across all data provided to a [`DataFrame`]. For humans, additional context — timestamps, units, source identifiers — adds interpretive value and supports downstream data validation.
 
-
 In DataFusion, every [`DataFrame`], every table, and every [`LogicalPlan`] node carries a schema that answers: _"What columns exist, what types do they hold, and which values may be null?"_ This contract is captured by [`DFSchema`], which wraps Apache Arrow's type system with query-planning context and is accessed via [`df.schema()`][`.schema()`].
-
 
 :::{admonition} An Example
 :class: tip
 Raw information like _`22.5`_ has no meaning without metadata like:
+
 - `column named: "temperature"`
 - `type: "Float16"`
 - `nullable: "false"`
@@ -82,8 +79,7 @@ This distinction clarifies which parts of a schema affect query behavior and whi
 | `data_type`               | Arrow Field | Storage format and compute kernel selection                         |
 | `nullable`                | Arrow Field | Validity bitmap, null-safe operations, schema merging               |
 | `field_qualifiers`        | DFSchema    | Table provenance — disambiguates `users.id` vs `orders.id` in joins |
-| `functional_dependencies` | DFSchema    | Key relationships the optimizer uses for deduplication and ordering  |
-
+| `functional_dependencies` | DFSchema    | Key relationships the optimizer uses for deduplication and ordering |
 
 **Secondary metadata:**
 
@@ -122,12 +118,12 @@ For the detailed breakdown of each field property, see [Anatomy of a Schema](ana
 
 [`DFSchema`] and Arrow [`Schema`] are the two data-describing schemas used throughout this documentation. DataFusion also uses "schema" as a catalog namespace ([`SchemaProvider`]) and provides `Arc`-wrapped reference types (`SchemaRef`, `DFSchemaRef`) for efficient sharing. The table below separates all four:
 
-| Term                                    | Abstraction Layer | Description                                                                                                                          | Accessed via                                             |
-| :-------------------------------------- | :---------------- | :----------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------- |
-| Catalog Schema ([`SchemaProvider`])       | DataFusion        | A namespace in the catalog hierarchy (like `"public"` in PostgreSQL). Contains registered tables — not a data description.           | `SessionState` → `CatalogProvider` → `SchemaProvider`    |
-| **→ DataFrame Schema ([`DFSchema`])**     | **DataFusion**    | **Wraps an Arrow `Schema` and adds table qualifiers and functional dependencies for query planning. Embedded in [`LogicalPlan`].**   | **[`df.schema()`][`.schema()`] returns `&DFSchema`**     |
-| **→ Arrow Schema ([`Schema`])**           | **Apache Arrow**  | **The columnar data description: field names, data types, nullability, and metadata. Knows nothing about table names or query context.** | **[`TableProvider::schema()`] returns `SchemaRef`**  |
-| SchemaRef / DFSchemaRef                   | Both              | `Arc`-wrapped reference-counted pointers (`Arc<Schema>` and `Arc<DFSchema>`) for passing schemas cheaply without cloning.            | [`df.schema().inner()`][`.inner()`] returns `&SchemaRef` |
+| Term                                  | Abstraction Layer | Description                                                                                                                              | Accessed via                                             |
+| :------------------------------------ | :---------------- | :--------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------- |
+| Catalog Schema ([`SchemaProvider`])   | DataFusion        | A namespace in the catalog hierarchy (like `"public"` in PostgreSQL). Contains registered tables — not a data description.               | `SessionState` → `CatalogProvider` → `SchemaProvider`    |
+| **→ DataFrame Schema ([`DFSchema`])** | **DataFusion**    | **Wraps an Arrow `Schema` and adds table qualifiers and functional dependencies for query planning. Embedded in [`LogicalPlan`].**       | **[`df.schema()`][`.schema()`] returns `&DFSchema`**     |
+| **→ Arrow Schema ([`Schema`])**       | **Apache Arrow**  | **The columnar data description: field names, data types, nullability, and metadata. Knows nothing about table names or query context.** | **[`TableProvider::schema()`] returns `SchemaRef`**      |
+| SchemaRef / DFSchemaRef               | Both              | `Arc`-wrapped reference-counted pointers (`Arc<Schema>` and `Arc<DFSchema>`) for passing schemas cheaply without cloning.                | [`df.schema().inner()`][`.inner()`] returns `&SchemaRef` |
 
 :::{admonition} For SQL engineers
 :class: tip
@@ -326,14 +322,14 @@ Schema propagation is how the [`DFSchema`] changes as transformations are chaine
 
 Each node derives its output schema from its input:
 
-| Operation                    | Schema effect                                                            |
-| :--------------------------- | :----------------------------------------------------------------------- |
-| `.filter(expr)`              | Schema passes through unchanged — filtering rows does not change columns |
-| `.select(exprs)`             | New schema with only the selected/computed columns                       |
-| `.aggregate(group_by, aggs)` | New schema with group-by columns + aggregate result columns              |
+| Operation                    | Schema effect                                                                                                                                                                                       |
+| :--------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.filter(expr)`              | Schema passes through unchanged — filtering rows does not change columns                                                                                                                            |
+| `.select(exprs)`             | New schema with only the selected/computed columns                                                                                                                                                  |
+| `.aggregate(group_by, aggs)` | New schema with group-by columns + aggregate result columns                                                                                                                                         |
 | `.join(right, ...)`          | Combined schema from both inputs — qualifiers prevent column ambiguity. `LEFT`, `RIGHT`, and `FULL` joins force nullability on the null-extended side, even if the source fields were non-nullable. |
-| `.with_column(name, expr)`   | Existing schema + one new or replaced column                             |
-| `.drop_columns(names)`       | Existing schema minus the dropped columns                                |
+| `.with_column(name, expr)`   | Existing schema + one new or replaced column                                                                                                                                                        |
+| `.drop_columns(names)`       | Existing schema minus the dropped columns                                                                                                                                                           |
 
 The plan tree below illustrates how the schema narrows at each step:
 

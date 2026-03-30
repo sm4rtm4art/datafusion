@@ -48,6 +48,23 @@ This section covers methods that keep results in memory—as `RecordBatch` objec
 
 > **Note:** Both execute and write methods process data internally as `RecordBatch` streams—Arrow's fundamental unit of columnar data. The difference is where results end up: memory (RAM) or storage (disk). With the individual I/O costs.
 
+
+
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
 ```{contents} Table of Contents DataFrame Execution
 :local:
 :depth: 2

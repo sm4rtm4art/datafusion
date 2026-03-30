@@ -29,6 +29,21 @@ embedded statistics, and benefit from excellent compression ratios. If you
 control the storage format and are unsure which to choose, **start with
 Parquet** — its metadata-driven optimizations compound as data volume grows.
 
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
 ```{contents} Table of Contents
 :local:
 :depth: 2

@@ -26,8 +26,28 @@
 3. Fix typo in validation cross-ref ("interfered" should be "inferred")
 4. Incorporate schema drift discussion more prominently (schema-concepts.md references this file for drift details)
 5. Drift mitigation strategies: expand beyond "use explicit schemas" — cover ListingTable's ability to cache file statistics for consistent schema resolution, enforcing specific file sort orders to ensure consistent inference across runs, and schema evolution patterns for production pipelines.
+6. Consider absorbing the "Where Arrow Schema originates" table from anatomy-schema.md (currently lists TableProvider, read_parquet, CsvReadOptions, Schema::new — overlaps with this file's scope)
 
 -->
+
+
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `df.method()` (e.g., `df.select(...)`, `df.filter(...)`)
+- **DFSchema instance methods:** `df.schema().method()` (e.g., `df.schema().fields()`)
+- **DFSchema associated functions:** `DFSchema::function()` (e.g., `DFSchema::try_from(...)`)
+- **Standalone functions:** `function()` (e.g., `col(...)`, `lit(...)`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
 
 ```{contents} Table of Contents for Schema inference
 :local:

@@ -17,6 +17,8 @@
   under the License.
 -->
 
+
+
 # Schema Management
 
 **Every [`DataFrame`] carries a [`DFSchema`] — the structural contract
@@ -31,6 +33,24 @@ needed for column resolution, type coercion, and optimizer decisions. Every
 [`LogicalPlan`] node carries its own `DFSchema`, and the [`DataFrame`]
 exposes it via [`.schema()`] — making schema management a first-class,
 programmatic concern rather than an implicit runtime detail.
+
+:::{admonition} Style Note
+:class: note
+:collapsible: open
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `df.method()` (e.g., `df.select(...)`, `df.filter(...)`)
+- **DFSchema instance methods:** `df.schema().method()` (e.g., `df.schema().fields()`)
+- **DFSchema associated functions:** `DFSchema::function()` (e.g., `DFSchema::try_from(...)`)
+- **Standalone functions:** `function()` (e.g., `col(...)`, `lit(...)`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
 
 ```{toctree}
 :maxdepth: 1

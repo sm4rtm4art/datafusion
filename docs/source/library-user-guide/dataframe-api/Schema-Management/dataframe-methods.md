@@ -27,6 +27,24 @@
 
 -->
 
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `df.method()` (e.g., `df.select(...)`, `df.filter(...)`)
+- **DFSchema instance methods:** `df.schema().method()` (e.g., `df.schema().fields()`)
+- **DFSchema associated functions:** `DFSchema::function()` (e.g., `DFSchema::try_from(...)`)
+- **Standalone functions:** `function()` (e.g., `col(...)`, `lit(...)`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
+
 ```{contents} Table of Contents for Schema Management with DataFrame methods
 :local:
 :depth: 2

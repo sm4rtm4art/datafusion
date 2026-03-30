@@ -31,11 +31,32 @@ TODO(Docs): streaming-execution.md - Unbounded Data & Memory Efficiency
 3. KEY TAKEAWAYS TO HIGHLIGHT:
    - Streaming is the safest default for large datasets to avoid OOM.
    - Explain that even with streaming, operators like Sort, Join, and Aggregate still require memory for intermediate state (mention spilling to disk via `DiskManager`).
+
+4. USERS INSIGHT: MIGHT BE WRONG! 
+
+We have a creational part for streaming, how does this differ ? 
 -->
 
 ## Streaming Execution
 
 **Streaming execution processes data natively as streams of `RecordBatch`es, avoiding application-side buffering and supporting backpressure.**
+
+
+
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
 
 ```{contents} Table of Contents Streaming Execution
 :local:

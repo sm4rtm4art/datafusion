@@ -1243,6 +1243,12 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Concepts/null-handling.md",
+    dataframe_api_concepts_null_handling
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
     "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes.md",
     dataframe_api_creating_dataframes
 );

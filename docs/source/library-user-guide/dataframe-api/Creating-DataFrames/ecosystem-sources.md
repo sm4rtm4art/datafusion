@@ -33,7 +33,7 @@ page maps what is available and shows the universal integration pattern.
 
 **Key concepts:**
 
-| Concept                  | Role                                                          |
+| Concept                  | Purpose                                                          |
 | ------------------------ | ------------------------------------------------------------- |
 | [`TableProvider`]        | Trait that bridges any external source to DataFusion          |
 | [`.register_table()`]    | Registers a `TableProvider` in the session catalog            |
@@ -43,13 +43,14 @@ page maps what is available and shows the universal integration pattern.
 :class: note
 :collapsible: closed
 
-In this document, all code elements are highlighted with backticks.
+In this document, code elements follow a consistent pattern:
 
-- DataFrame methods are written as `.method()` (e.g., `.select()`) to reflect the chaining syntax central to the API.
-- standalone functions `method()` (e.g `col()`)
-
-- - static constructors `Struckt::method()` (e.g., `SessionContext::new()`).
-- Rust types are formatted as `TypeName` (e.g., `SchemaRef`).
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
 
 :::
 
