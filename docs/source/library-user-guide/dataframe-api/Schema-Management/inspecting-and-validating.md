@@ -22,7 +22,16 @@
 1. ABSTRACT
 2. Unify introduction (merge the two intro paragraphs into one coherent narrative)
 3. Fix cross-references to other files
+4. Add arrow inspection methods to the DFSchema Methods table
 
+The Arrow [`Schema`] inside [`DFSchema`] originates from the data source. How it arrives depends on the source type:
+
+| Source                                                   | Returns                           | Example                             |
+| :------------------------------------------------------- | :-------------------------------- | :---------------------------------- |
+| [`TableProvider::schema()`]                              | `SchemaRef` (Arrow)               | Custom data sources, catalog tables |
+| [`ctx.read_parquet(...)`][`.read_parquet()`]             | Arrow Schema from file metadata   | Self-describing formats             |
+| `CsvReadOptions::new().schema(&schema)`                  | Explicit Arrow Schema you provide | Text formats requiring schema       |
+| [`Schema::new(vec![Field::new(...)])`][`Schema::new()`]  | Constructed Arrow Schema          | Programmatic schema definition      |
 -->
 
 # Inspecting and Validating Schemas
