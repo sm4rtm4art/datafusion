@@ -19,7 +19,9 @@
 
 # Type Coercion: Auto-Alignment vs Explicit Casting
 
-<!-- TODO: ABSTRACT — written last -->
+**DataFusion resolves most type mismatches automatically at plan time — and gives you [`cast()`] and [`try_cast()`] for the rest.**
+
+Real-world data arrives in mixed types — integers alongside floats, dates as strings, booleans where counters are expected. The [`TypeCoercion`] analyzer widens operands within the same type family and parses literals to match their context, all before any data flows. When no safe automatic path exists, explicit casts provide full control. This guide explains the coercion hierarchy, how the analyzer applies it in expressions and set operations, and when to reach for explicit casts.
 
 :::{admonition} Style Note
 :class: note
@@ -45,11 +47,11 @@ In this document, code elements follow a consistent pattern:
 
 ## Arrow Data Types in DataFusion
 
-**The Arrow [`DataType`] is the foundation of every column — determining storage layout, kernel selection, and every implicit coercion decision the query engine makes.**
+**The Arrow [`DataType`] is the foundation of every value in DataFusion — determining how bytes are stored, which kernels operate on them, and how the [`TypeCoercion`] analyzer resolves mismatches.**
 
-DataFusion operates on Apache Arrow's columnar memory format. Every [`DataFrame`] column carries an Arrow [`Field`], and each [`Field`] declares a [`DataType`] that determines how the underlying bytes are interpreted. The same raw value (`1735689600_i64`) becomes a date (`2025-01-01T00:00:00`) when the field declares `DataType::Timestamp` instead of `DataType::Int64` — unlocking temporal arithmetic, date-range pruning, and timezone-aware comparisons that an integer type cannot provide. The [`DataType`] also governs coercion: when two columns of different types meet in an expression or set operation, the [`TypeCoercion`] analyzer consults the [coercion hierarchy](#the-coercion-hierarchy) to determine whether a safe widening path exists.
+DataFusion operates on Apache Arrow's columnar memory format. Every [`DataFrame`] column carries an Arrow [`Field`], and each [`Field`] declares a [`DataType`] that determines how the underlying bytes are interpreted. The same raw value (`1735689600_i64`) becomes a date (`2025-01-01T00:00:00`) when the field declares `DataType::Timestamp` instead of `DataType::Int64` — unlocking temporal arithmetic, date-range pruning, and timezone-aware comparisons that an integer type cannot provide.
 
-The table below lists the common Arrow data types encountered in DataFusion. Each entry corresponds to a variant of the [`DataType`] enum (e.g., `DataType::Int32`, `DataType::Utf8`).
+The table below lists the common Arrow data types encountered in DataFusion. Each entry corresponds to a variant of the [`DataType`] enum (e.g., `DataType::Int32`, `DataType::Utf8`). For the complete SQL-to-Arrow type mapping, see [SQL Data Types](../../sql/data_types.md).
 
 | Category           | Arrow Types                                                                | Example Values                        |           Common Use Cases            |
 | :----------------- | :------------------------------------------------------------------------- | :------------------------------------ | :-----------------------------------: |
@@ -66,23 +68,34 @@ Beyond primitive types, DataFusion fully supports Arrow's nested types (`List`, 
 
 :::{admonition} DataFrame API types are a superset of SQL types
 :class: note
-The DataFrame API works directly with Arrow [`DataType`] enum variants, which is a superset of the types available through SQL syntax. Types like `Utf8View`, `BinaryView`, `Float16`, and `Duration` have no SQL literal syntax but are fully usable through the DataFrame API via `cast()` and `DataType::` constructors.
+The DataFrame API works directly with Arrow [`DataType`] enum variants, which is a superset of the types available through SQL syntax. Types like `Utf8View`, `BinaryView`, `Float16`, and `Duration` have no SQL literal syntax but are fully usable through the DataFrame API via [`cast()`] and `DataType::` constructors.
 :::
 
 :::{admonition} Type references
 :class: seealso
-
-- [SQL Data Types](../../sql/data_types.md) — SQL-to-Arrow type mapping, `arrow_typeof()`, and `arrow_cast()` functions
-- [Apache Arrow Data Types][arrow data types] — complete Arrow type system, memory layouts, and encoding details
-  :::
+[Apache Arrow Data Types][arrow data types] — complete Arrow type system, memory layouts, and encoding details
+:::
 
 ## Type Coercion
 
-**The [`TypeCoercion`] analyzer — running between plan construction and optimization — inserts implicit widening casts that promote narrower types to wider ones without data loss, following the principle: always widen, never narrow.**
+**The [`TypeCoercion`] analyzer inserts implicit widening casts between plan construction and optimization — always widening to the broader type within the same family, never narrowing, and rejecting incompatible types outright.**
 
-Type coercion is the automatic conversion of one data type to another to make an operation valid. DataFusion's [`TypeCoercion`] analyzer rule inspects every node in the [`LogicalPlan`] and inserts `CAST` expressions where a safe widening path exists — you don't write `cast()` by hand for `DataType::Int32 + DataType::Int64`. Narrowing (e.g., `Float64` to `Int32`) is never performed implicitly because it risks silent data loss.
+Type coercion is the automatic conversion of one data type to another to make an operation valid. The [`TypeCoercion`] analyzer rule walks every node in the [`LogicalPlan`] and inserts `CAST` expressions where a safe widening path exists — you don't write [`cast()`] by hand for `DataType::Int32 + DataType::Int64`. Narrowing (e.g., `Float64` to `Int32`) is never performed implicitly because it risks silent data loss. Coercion is a one-time **plan rewrite**, not a per-row runtime operation.
 
-The [`TypeCoercion`] analyzer runs as part of the **analysis phase** — after the [`LogicalPlan`] is constructed but before the optimizer rewrites the plan. This means the schema you inspect via `df.schema()` reflects the pre-analysis state; types only settle to their final coerced form when execution is triggered (`.collect()`, `.show()`). The coercion applies to both expressions (arithmetic, comparisons, filters) and set operations (unions, intersections, exceptions), but the failure behavior differs: expressions fail on the specific incompatible operation, while set operations fail when any column pair across the entire schema has no safe coercion path.
+```text
+df.select(...)                                              df.collect()
+      │                                                          │
+      ▼                                                          ▼
+┌─────────────┐   ┌──────────┐   ┌───────────┐   ┌──────────────┐   ┌───────────┐
+│ LogicalPlan │──▶│ Analyzer │──▶│ Optimizer │──▶│ PhysicalPlan │──▶│ Execution │
+└─────────────┘   └──────────┘   └───────────┘   └──────────────┘   └───────────┘
+                       │
+                       └── TypeCoercion inserts CAST nodes here
+```
+
+The [`TypeCoercion`] analyzer runs during [`SessionState`]`.optimize()` — the first step when [`.collect()`] or [`.show()`] triggers execution. The schema you inspect via [`.schema()`] reflects the pre-analysis state; to observe the coerced types — including the inserted `CAST` nodes — call [`.explain()`]`(false, false)`.
+
+The coercion applies to both expressions (arithmetic, comparisons, filters) and set operations (unions, intersections, exceptions), but the failure behavior differs: expressions fail on the specific incompatible operation, while set operations fail when any column at the same ordinal position has no safe coercion path. In both cases, an explicit [`cast()`] is required to bridge incompatible types — see [Explicit Casting](#explicit-casting).
 
 ### The Coercion Hierarchy
 
@@ -90,7 +103,7 @@ The [`TypeCoercion`] analyzer runs as part of the **analysis phase** — after t
 
 The diagram below shows the safe upcasting paths that the [`TypeCoercion`] analyzer uses to resolve type mismatches. Each arrow represents an implicit cast that preserves data without loss — "safe" means no information loss and no runtime error. When an operation mixes two types connected by an arrow, the analyzer automatically inserts a `CAST` from the narrower type to the wider one.
 
-Types in **different boxes have no implicit coercion path** between them. `Boolean` and `Int32`, for example, belong to separate families with no connecting arrow — mixing them requires an explicit `cast()`. When no path exists, expressions fail with a coercion error and set operations are rejected during analysis.
+Types in **different boxes have no implicit coercion path** between them. `Boolean` and `Int32`, for example, belong to separate families with no connecting arrow — mixing them requires an explicit [`cast()`]. When no path exists, expressions fail with a coercion error and set operations are rejected during analysis.
 
 ```text
 ┌ Numeric Widening ───────────────────────────────────────────────┐
@@ -100,18 +113,22 @@ Types in **different boxes have no implicit coercion path** between them. `Boole
 │ Unsigned: UInt8 ──► UInt16 ──► UInt32 ──► UInt64 ──┤            │
 │                                                    │            │
 │ Signed ∩ Unsigned: UInt64 + Int64 ──► Decimal128   │            │
-│                                       (Precision)  ▼   (Range)  │
-│                                       Decimal128 ──┬──► Float64 │
+│                                       (Precision)  ▼            │
+│                                       Decimal128 ──┤            │
 │                                                    │            │
-│ Floats:             Float16 ──► Float32 ───────────┘            │
+│ Floats:             Float16 ──► Float32 ──► Float64             │
+│                                                                 │
+│ Decimal + Float:    Decimal128 + Float__ ──► Float64  (lossy!)  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌ Temporal Widening ──────────────────────────────────────────────┐
 │                                                                 │
-│ Dates:    Date32 ──► Date64 ──► Timestamp (ns) ──► +Timezone    │
+│ Dates:      Date32 ──► Date64                                   │
+│             Date32/Date64 + Timestamp ──► Timestamp(ns)         │
 │                                                                 │
-│ Times:    Time32 ──► Time64                                     │
+│ Timezones:  Comparisons coerce to the left-hand timezone.       │
+│             Arithmetic requires matching timezones — cast first. │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -130,131 +147,128 @@ Types in **different boxes have no implicit coercion path** between them. `Boole
 
 :::{admonition} Decimal128 → Float64 trades precision for range
 :class: caution
-`Decimal128` provides exact arithmetic (up to 38 digits), while `Float64` offers only ~15–17 significant digits. For financial or high-precision data, prefer keeping values as `Decimal128` and only convert to `Float64` when approximate results are acceptable (e.g., charting, statistical aggregates).
+When a `Decimal128` value is mixed with a `Float` type, the result widens to `Float64`. Two `Decimal128` values stay as `Decimal128` — the lossy conversion only happens when mixing families. `Decimal128` provides exact arithmetic (up to 38 digits), while `Float64` offers only ~15–17 significant digits. For financial or high-precision data, prefer keeping values as `Decimal128` and only convert to `Float64` when approximate results are acceptable (e.g., charting, statistical aggregates).
 :::
 
 ### Data Type Interaction Rules
 
 **Each type family follows its own coercion rules — and the rules differ between arithmetic and comparison operators.**
 
-Arithmetic operators (`+`, `-`, `*`, `/`) are strictly numeric: both operands must be numeric types, and the result follows the numeric widening hierarchy. Comparison operators (`=`, `>`, `<`, `!=`) are broader: they accept cross-family pairs like string vs. numeric, resolving them via type-specific coercion paths. The rules below apply per type family.
+The hierarchy above defines *which* types widen, but the *operator* determines which coercion paths are available. Arithmetic operators (`+`, `-`, `*`, `/`) restrict to numeric families — both operands must be numeric, and the result follows the numeric widening hierarchy. Comparison operators (`=`, `>`, `<`, `!=`) are broader: they accept cross-family pairs like string vs. numeric and resolve them via type-specific coercion paths.
 
-- **Numeric:** Integers widen to the smallest container that holds both ranges (`DataType::Int32 + DataType::Int64 → Int64`). Mixed with floats, the result is `Float64`. Decimals preserve precision when combined with integers. **Signed + unsigned mixing** uses `Decimal128` when neither integer type can hold the other's full range — `UInt64 + Int64` produces `Decimal128(20, 0)` because `Int64` cannot represent `u64::MAX` and `UInt64` cannot represent negative values.
+#### Numeric
+Widens to the smallest type that holds both ranges.
 
-- **Temporal:** Dates promote to `Timestamp` for comparisons and arithmetic. Timezones must match — cast explicitly to align them. `Date64` is rarely used; dates typically coerce directly to `Timestamp(Nanosecond)`.
+- `Int32 + Int64` → `Int64`
+- `Int64 + Float32` → `Float32` — float takes precedence when mixed with integers
+- `UInt64 + Int64` → `Decimal128(20, 0)` — neither type can hold the other's full range
 
-- **Strings:** `Utf8`, `LargeUtf8`, and `Utf8View` coerce toward the view type (`Utf8View`) because `StringArray → StringViewArray` is cheap while the reverse requires memory allocation. In **comparison operators**, a string column mixed with a numeric column coerces both to the string type (e.g., `col("name").gt(lit(42))` compares as strings). In **arithmetic**, string columns are rejected — only numeric types are valid.
+#### Temporal
+Dates promote to `Timestamp` when mixed with temporal types.
 
-- **Boolean:** Does not auto-coerce to numeric or any other type family. Use explicit `cast(col("flag"), DataType::Int32)` when needed.
+- `Date32 + Timestamp(ns)` → `Timestamp(ns)`
+- Comparisons coerce to the left-hand timezone (non-strict matching).
+- Arithmetic requires matching timezones (UTC and `+00:00` are equivalent) — cast explicitly to align.
 
-- **NULL:** Adopts the other operand's type in expressions — this is safe widening. When both operands are `NULL`, the type defaults to `Utf8View`.
+#### Strings
+Coercion favors view types (`StringArray → StringViewArray` is cheap O(1); the reverse allocates).
+
+- `Utf8 + Utf8View` → `Utf8View`
+- Comparisons: `Utf8 > Int32` → `Utf8` — lexicographic, so `"12" < "9"` is `true`.
+- Arithmetic: `Utf8 + Int32` → **Error** — strings are rejected.
+
+#### Boolean
+Does not auto-coerce to any other type family.
+
+- `Boolean + Int32` → **Error** — use `cast(col("flag"), DataType::Int32)`.
+
+#### NULL
+Adopts the other operand's type (safe widening).
+
+- `NULL + Int32` → `Int32`
+- `NULL + NULL` → `Int64` (arithmetic) — the engine assigns a concrete numeric type so the operation returns `NULL`.
 
 :::{admonition} Comparison coercion has two variants
 :class: caution
-Binary comparison operators (`col("x").gt(col("y"))`) use `comparison_coercion()`, which coerces string + numeric → **string**. Some scalar functions with `Comparable` signatures (e.g., `nullif`) use `comparison_coercion_numeric()`, which coerces string + numeric → **numeric**. When debugging unexpected comparison results, check which coercion path the operation uses.
+Binary comparison operators (`col("x").gt(col("y"))`) use [`comparison_coercion()`], which coerces string + numeric → **string**. Some scalar functions with `Comparable` signatures (e.g., `nullif`) use [`comparison_coercion_numeric()`], which coerces string + numeric → **numeric**. When debugging unexpected comparison results, check which coercion path the operation uses.
 :::
+
+The [`TypeCoercion`] analyzer applies these rules in three contexts — expressions, set operations, and literals — each described below.
 
 ### Automatic Widening in Expressions
 
-**Expressions auto-widen to the common, wider type — `Int32 + Int64` produces `Int64` without an explicit cast.**
+**Mixed-type expressions resolve automatically — the [`TypeCoercion`] analyzer widens the narrower operand so arithmetic and filtering work without explicit conversion.**
 
-DataFusion automatically promotes types to a common, wider type when they are mixed within an expression. This applies to methods like [`.select()`], [`.with_column()`], and [`.filter()`]. The promotion always follows the safe upcasting paths defined in the [coercion hierarchy](#the-coercion-hierarchy) to prevent data loss.
+Any method that adds an expression node to the [`LogicalPlan`] triggers the same widening logic. The analyzer finds the common wider type from the [coercion hierarchy](#the-coercion-hierarchy) and wraps the narrower operand in a `CAST`. If no safe path exists (e.g., `Boolean + Int32`), the plan is rejected during analysis rather than failing silently at execution time.
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::assert_batches_eq;
 use datafusion::arrow::datatypes::DataType;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // Create a DataFrame with Int32 and Int64 columns
-    let df = dataframe!(
-        "int32_col" => [1_i32, 2_i32],
-        "int64_col" => [100_i64, 200_i64]
-    )?;
+let df = dataframe!(
+    "int32_col" => [1_i32, 2_i32],
+    "int64_col" => [100_i64, 200_i64]
+)?;
 
-    // Adding Int32 + Int64 produces Int64 (automatic widening)
-    let result = df.select(vec![
-        (col("int32_col") + col("int64_col")).alias("sum")
-    ])?;
+// Int32 + Int64 — the analyzer widens Int32 to Int64
+let result = df.select(vec![
+    (col("int32_col") + col("int64_col")).alias("sum")
+])?;
 
-    // Verify the result type is Int64 (widened from Int32)
-    let field = result.schema().field_with_name(None, "sum")?;
-    assert_eq!(field.data_type(), &DataType::Int64);
+// The result schema proves the type change: Int32 was widened to Int64
+let field = result.schema().field_with_name(None, "sum")?;
+assert_eq!(field.data_type(), &DataType::Int64);
 
-    // Execute eagerly and verify the computed values
-    let batches = result.collect().await?;
-    assert_batches_eq!(
-        &[
-            "+-----+",
-            "| sum |",
-            "+-----+",
-            "| 101 |",  // 1 + 100
-            "| 202 |",  // 2 + 200
-            "+-----+",
-        ],
-        &batches
-    );
-
+// Output schema: { sum: Int64 }  (not Int32 — the analyzer widened it)
+#     let batches = result.collect().await?;
+#     use datafusion::assert_batches_eq;
+#     assert_batches_eq!(
+#         &[
+#             "+-----+",
+#             "| sum |",
+#             "+-----+",
+#             "| 101 |",
+#             "| 202 |",
+#             "+-----+",
+#         ],
+#         &batches
+#     );
     Ok(())
 }
 ```
+
+:::{admonition} Inspecting implicit CASTs without executing
+:class: tip
+`df.explain(false, false)?.show().await?` reveals the `CAST` nodes the analyzer inserted — for example, `Projection: CAST(int32_col AS Int64) + int64_col AS sum`. This is the fastest way to verify coercion behavior without running the query against data.
+:::
 
 ### Coercion in Set Operations
 
-**Set operations coerce compatible types automatically — `Int32` union `Int64` widens to `Int64` just like expressions — but fail when no safe coercion path exists between column pairs.**
+**Set operations must resolve every column at the same ordinal position — one incompatible pair rejects the entire plan.**
 
-Set operations like [`.union()`], [`.except()`], and [`.intersect()`] match columns by position and apply the same [`TypeCoercion`] analyzer to find a common type for each column pair. When the types are compatible (connected in the [coercion hierarchy](#the-coercion-hierarchy)), the narrower type is widened automatically. When no safe path exists — for example, `Boolean` and `Int32` have no common type — the query fails during analysis rather than producing wrong results.
+Unlike expressions, where coercion targets a single operand pair, set operations (union, except, intersect) align two full schemas column-by-column. The [`TypeCoercion`] analyzer widens each pair independently using the same [coercion hierarchy](#the-coercion-hierarchy). Compatible pairs (e.g., `Int32` and `Int64`) widen silently. If any column pair has no safe coercion path (e.g., `Boolean` and `Int32`), the entire plan is rejected during analysis — before any data flows. Use `cast()` to align types explicitly before the set operation — see [Explicit Casting](#explicit-casting).
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::assert_batches_sorted_eq;
-use datafusion::arrow::datatypes::DataType;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // Two DataFrames with compatible but different integer types
-    let orders_v1 = dataframe!("order_id" => [1_i32, 2_i32])?;
-    let orders_v2 = dataframe!("order_id" => [3_i64, 4_i64])?;
+// Boolean and Int32 have no common type
+let flags    = dataframe!("flag" => [true, false])?;
+let counters = dataframe!("flag" => [1_i32, 0_i32])?;
 
-    // Union succeeds — TypeCoercion widens Int32 to Int64
-    let combined = orders_v1.union(orders_v2)?;
-
-    // Execute eagerly and verify all four rows are present
-    let batches = combined.collect().await?;
-    assert_batches_sorted_eq!(
-        &[
-            "+----------+",
-            "| order_id |",
-            "+----------+",
-            "| 1        |",
-            "| 2        |",
-            "| 3        |",
-            "| 4        |",
-            "+----------+",
-        ],
-        &batches
-    );
-
-    Ok(())
+// union() builds the plan — the error surfaces during execution
+// when the TypeCoercion analyzer rejects the incompatible pair
+let combined = flags.union(counters)?;
+let result = combined.collect().await;
+assert!(result.is_err());
+// Error: "Incompatible inputs for Union: Previous inputs were
+//  of type Boolean, but got incompatible type Int32 on column 'flag'"
+     Ok(())
 }
 ```
-
-When the types are incompatible, the [`TypeCoercion`] analyzer rejects the plan:
-
-```rust,no_run
-use datafusion::prelude::*;
-
-// Boolean and Int32 have no common type — this fails during analysis:
-// "Incompatible inputs for Union: Previous inputs were of type Boolean,
-//  but got incompatible type Int32 on column 'flag'"
-let flags    = dataframe!("flag" => [true, false]).unwrap();
-let counters = dataframe!("flag" => [1_i32, 0_i32]).unwrap();
-let combined = flags.union(counters).unwrap();
-// combined.collect().await fails — no safe coercion path
-```
-
-When no automatic coercion path exists, use `cast()` to align types explicitly before the set operation. See [Explicit Casting](#explicit-casting) below.
 
 :::{admonition} Join keys are auto-coerced
 :class: note
@@ -263,57 +277,62 @@ Join keys are an exception to strict positional matching — DataFusion automati
 
 ### Literal Coercion
 
-**Scalar literals in expressions adopt the type required by the context — `lit(42_i32)` compared against an `Int64` column widens to `Int64` automatically.**
+**Literals adopt the type of their context — the analyzer widens or parses them to match the column they interact with.**
 
-When a literal value is used in an expression alongside a typed column, the [`TypeCoercion`] analyzer coerces the literal to match the column's type (or their common wider type). This is the same widening principle at work — `lit(42_i32)` compared against an `Int64` column becomes an `Int64` value, and the string literal `"2024-01-15"` compared against a `Date32` column is parsed as a date.
+The [`TypeCoercion`] analyzer resolves literal types the same way it resolves column types: by finding a common wider type. Rust's type inference determines the initial literal type (`lit(30)` → `Int32`, `lit(3.14)` → `Float64`), and the analyzer then widens the literal to match the column. This is particularly powerful for temporal columns: string literals like `"2024-01-15"` are automatically parsed as the corresponding temporal type when compared against `Date32` or `Timestamp` columns — no explicit cast needed.
 
 ```rust
 use datafusion::prelude::*;
-use datafusion::assert_batches_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "sensor_id" => [1_i64, 2_i64, 3_i64],
-        "temperature" => [22.5, 38.1, 19.8]
-    )?;
+let df = dataframe!(
+    "sensor_id" => [1_i64, 2_i64, 3_i64],
+    "temperature" => [22.5, 38.1, 19.8]
+)?;
 
-    // lit(30) is i32 by default, but temperature is Float64 —
-    // the TypeCoercion analyzer widens 30 to Float64 for the comparison
-    let hot_sensors = df.filter(col("temperature").gt(lit(30)))?;
+// lit(30) is Int32, but temperature is Float64 —
+// the analyzer widens 30 to Float64 for the comparison
+let hot_sensors = df.filter(col("temperature").gt(lit(30)))?;
 
-    let batches = hot_sensors.collect().await?;
-    assert_batches_eq!(
-        &[
-            "+-----------+-------------+",
-            "| sensor_id | temperature |",
-            "+-----------+-------------+",
-            "| 2         | 38.1        |",
-            "+-----------+-------------+",
-        ],
-        &batches
-    );
-
+// explain() confirms: Filter: temperature > CAST(Int32(30) AS Float64)
+#     use datafusion::assert_batches_eq;
+#     let batches = hot_sensors.collect().await?;
+#     assert_batches_eq!(
+#         &[
+#             "+-----------+-------------+",
+#             "| sensor_id | temperature |",
+#             "+-----------+-------------+",
+#             "| 2         | 38.1        |",
+#             "+-----------+-------------+",
+#         ],
+#         &batches
+#     );
     Ok(())
 }
 ```
 
-:::{admonition} String literals and temporal columns
-:class: note
-String literals compared against temporal columns (`Date32`, `Timestamp`) are parsed as the corresponding temporal type. This enables `col("event_date").gt(lit("2024-01-15"))` without an explicit cast — the string `"2024-01-15"` is interpreted as a `Date32` value.
-:::
+:::{admonition} Debugging coercion failures
+:class: tip
+When a query fails with a type coercion error, follow these steps:
+
+1. **Inspect column types:** [`.schema()`] shows the pre-analysis types of every column.
+2. **Check the plan:** [`.explain()`]`(false, false)?.show().await?` reveals which `CAST` nodes the analyzer inserted — and where it could not.
+3. **Use `arrow_typeof()` in SQL:** `SELECT arrow_typeof(column) FROM table` returns the concrete Arrow type of any expression.
+4. **Apply explicit casts:** Use [`cast()`] or [`try_cast()`] to bridge incompatible types before the failing operation.
+   :::
 
 ## Explicit Casting
 
-**When automatic coercion cannot resolve a type mismatch — or when you want to control the target type — `cast()` and `try_cast()` provide explicit conversion.**
+**[`cast()`] and [`try_cast()`] give explicit control over type conversion — use them when automatic coercion has no safe path or when you need a specific target type.**
 
-Automatic coercion covers safe widenings within the [coercion hierarchy](#the-coercion-hierarchy), but some conversions require explicit action: incompatible types in set operations, narrowing conversions (e.g., `Float64` to `Int32`), or cross-family conversions (e.g., `Boolean` to `Int32`). The `cast()` and `try_cast()` functions give you direct control over these conversions.
+Automatic coercion covers safe widenings within the [coercion hierarchy](#the-coercion-hierarchy), but some conversions require explicit action: incompatible types in set operations, narrowing conversions (e.g., `Float64` to `Int32`), or cross-family conversions (e.g., `Boolean` to `Int32`). The two functions differ in failure behavior: [`cast()`] fails the query on unconvertible values (hard cast), while [`try_cast()`] returns `NULL` instead (soft cast). Choose based on whether partial results are acceptable.
 
-### cast() — Hard Cast
+### Hard Cast — cast() 
 
-**`cast()` converts a column to the target type and fails the query if any value cannot be converted.**
+**[`cast()`] converts a column to the target type and fails the query if any value cannot be converted.**
 
-The `cast()` function creates a `CAST` expression in the [`LogicalPlan`]. If a value cannot be represented in the target type, the query fails at execution time. Use `cast()` when you know the conversion is safe and want a hard failure on unexpected values.
+The [`cast()`] function creates a `CAST` expression in the [`LogicalPlan`] — like automatic coercion, it operates at plan level, not per-row. If a value cannot be represented in the target type, the query fails at execution time. Use [`cast()`] when the conversion is guaranteed safe and you want a hard failure on unexpected values: aligning incompatible types before a union, narrowing a wide type for storage (e.g., `Float64` → `Int32` when values are known to be integral), or converting across type families (e.g., `Boolean` → `Int32`).
 
 ```rust
 use datafusion::prelude::*;
@@ -355,11 +374,11 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-### try_cast() — Soft Cast
+### Soft Cast — try_cast() 
 
-**`try_cast()` converts values to the target type but returns `NULL` instead of failing when a value cannot be converted.**
+**[`try_cast()`] preserves partial results — unconvertible values become `NULL` instead of failing the query.**
 
-Use `try_cast()` when data quality is uncertain and you prefer `NULL` over a query failure. This is particularly useful for user-provided data, mixed-format columns, or ETL pipelines where partial results are preferable to hard errors.
+Where [`cast()`] treats any conversion failure as fatal, [`try_cast()`] substitutes `NULL` and continues. This makes [`try_cast()`] the safer choice for ETL pipelines, user-provided data, or mixed-format columns where data quality is uncertain. The resulting `NULL` values propagate through downstream expressions following standard [null-handling rules](../Concepts/null-handling.md) — filter them with `.is_not_null()` or replace them with `coalesce()`.
 
 ```rust
 use datafusion::prelude::*;
@@ -397,14 +416,14 @@ async fn main() -> datafusion::error::Result<()> {
 
 :::{admonition} SQL equivalents
 :class: note
-In DataFusion SQL, `CAST(col AS type)` corresponds to `cast()`, and `TRY_CAST(col AS type)` corresponds to `try_cast()`. The `arrow_cast()` SQL function provides Arrow-specific casting with full type syntax (e.g., `arrow_cast(col, 'Timestamp(Second, None)')`), and `arrow_typeof()` returns the Arrow type of any expression — useful for debugging coercion behavior. See [SQL Data Types](../../sql/data_types.md) for details.
+In DataFusion SQL, `CAST(col AS type)` corresponds to [`cast()`], and `TRY_CAST(col AS type)` corresponds to [`try_cast()`]. The `arrow_cast()` SQL function provides Arrow-specific casting with full type syntax (e.g., `arrow_cast(col, 'Timestamp(Second, None)')`), and `arrow_typeof()` returns the Arrow type of any expression — useful for debugging coercion behavior. See [SQL Data Types](../../sql/data_types.md) for details.
 :::
 
 ## Conclusion & Further Reading
 
-**Type coercion bridges the gap between mixed-type data and the query engine's need for uniform types — widening automatically where safe, requiring explicit casts where no safe path exists.**
+**The [`TypeCoercion`] analyzer resolves most type mismatches automatically — use [`cast()`] or [`try_cast()`] for the rest.**
 
-The Arrow data type determines how every column is stored and computed. DataFusion's [`TypeCoercion`] analyzer inserts implicit widening casts in both expressions and set operations, following the coercion hierarchy toward the wider type. When no safe path exists, `cast()` and `try_cast()` provide explicit control — with hard failure or `NULL` fallback, respectively.
+Automatic coercion widens within type families and parses literals to match their context. Set operations require column-by-column compatibility. When the analyzer rejects a mismatch, [`cast()`] provides a hard conversion that fails on bad values, while [`try_cast()`] substitutes `NULL` for resilient pipelines. Use `explain()` to inspect the `CAST` nodes the analyzer inserts, and `.schema()` to verify result types before execution.
 
 :::{admonition} Next steps
 :class: seealso
@@ -419,11 +438,12 @@ The Arrow data type determines how every column is stored and computed. DataFusi
 <!-- Link references -->
 
 [`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
+[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`DataType`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
 [`Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
 [`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
 [`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
 [arrow data types]: https://arrow.apache.org/docs/format/Columnar.html#data-type-descriptions
 [`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
 [`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
@@ -431,3 +451,13 @@ The Arrow data type determines how every column is stored and computed. DataFusi
 [`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
 [`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
 [`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`cast()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.cast.html
+[`try_cast()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.try_cast.html
+[`comparison_coercion()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/binary/fn.comparison_coercion.html
+[`comparison_coercion_numeric()`]: https://docs.rs/datafusion/latest/datafusion/expr_common/type_coercion/binary/fn.comparison_coercion_numeric.html
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
