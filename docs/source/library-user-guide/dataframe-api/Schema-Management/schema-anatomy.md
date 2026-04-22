@@ -155,7 +155,7 @@ Schema {
 :::
 
 
-For comprehensive inspection patterns — human-readable display, programmatic field access, existence checks, and schema comparison — see [Inspecting and Validating Schemas](inspecting-and-validating.md).
+For comprehensive inspection patterns — human-readable display, programmatic field access, existence checks, and schema comparison — see [Inspecting and Validating Schemas](schema-inspection.md).
 
 ### DFSchema Components
 
@@ -171,7 +171,7 @@ For comprehensive inspection patterns — human-readable display, programmatic f
 
 :::{admonition} Accessing and inspecting schemas
 :class: seealso
-For access patterns, source-type differences, and programmatic field inspection — see [Inspecting and Validating Schemas](inspecting-and-validating.md).
+For access patterns, source-type differences, and programmatic field inspection — see [Inspecting and Validating Schemas](schema-inspection.md).
 :::
 
 ### Table Qualifiers
@@ -384,7 +384,7 @@ Schema {
 
 The `DFSchema` display does not show metadata — use [`.inner()`] or [`.as_arrow()`] to reach the Arrow [`Schema`] with full metadata details.
 
-For the full metadata API and inspection patterns, see [Inspecting and Validating Schemas](inspecting-and-validating.md).
+For the full metadata API and inspection patterns, see [Inspecting and Validating Schemas](schema-inspection.md).
 
 ---
 
@@ -397,7 +397,7 @@ The Arrow [`Schema`] and its individual [`Field`] properties (`name`, `data_type
 :::{admonition} Next steps
 :class: seealso
 - **[Schema Concepts](schema-concepts.md):** Ownership chains, memory management, and the big-picture schema lifecycle.
-- **[Inspecting and Validating Schemas](inspecting-and-validating.md):** Hands-on patterns for programmatic field access and schema comparison.
+- **[Inspecting and Validating Schemas](schema-inspection.md):** Hands-on patterns for programmatic field access and schema comparison.
 - **[Transforming Schemas](schema-transformation.md):** Qualifier manipulation, schema combining, and functional dependency methods.
 - **[Type Coercion](type-coercion.md):** How DataFusion automatically reconciles types when they do not match.
 :::

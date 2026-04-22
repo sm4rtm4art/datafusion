@@ -63,7 +63,7 @@ The query engine uses the primary metadata for processing and optimizing. The hu
 
 ### What the Contract Contains
 
-The schema contract carries two categories of metadata serving different audiences. For what [`DFSchema`] structurally adds to Arrow's [`Schema`] — table qualifiers, functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer). For the full field-level breakdown, see [Anatomy of a Schema](anatomy-schema.md).
+The schema contract carries two categories of metadata serving different audiences. For what [`DFSchema`] structurally adds to Arrow's [`Schema`] — table qualifiers, functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer). For the full field-level breakdown, see [Anatomy of a Schema](schema-anatomy.md).
 
 1. **Primary metadata:** structural properties that the query engine uses for planning and execution.
 
@@ -108,7 +108,7 @@ Two common violations:
 
 These errors come from [`DFSchema`] validation — the contract doing its job.
 
-For the detailed breakdown of each field property, see [Anatomy of a Schema](anatomy-schema.md). For how types are reconciled when they don't match, see [Type Coercion](type-coercion.md).
+For the detailed breakdown of each field property, see [Anatomy of a Schema](schema-anatomy.md). For how types are reconciled when they don't match, see [Type Coercion](type-coercion.md).
 
 ---
 
@@ -134,7 +134,7 @@ In relational databases like PostgreSQL, Oracle, or SQL Server, "schema" primari
 :class: caution
 The remaining pages in Schema Management focus on [`DFSchema`] and Arrow [`Schema`] — the data-describing contracts. When this documentation says "schema" without qualification, it means the column-level contract, not the catalog namespace.
 
-For the detailed internal structure of `DFSchema` (fields, qualifiers, dependencies), see [Anatomy of a Schema](anatomy-schema.md).
+For the detailed internal structure of `DFSchema` (fields, qualifiers, dependencies), see [Anatomy of a Schema](schema-anatomy.md).
 :::
 
 ---
@@ -177,7 +177,7 @@ Schema errors in expressions surface at plan-build time — every `col()` refere
 The optimizer's [`TypeCoercion`] rule reads the [`DFSchema`] to insert implicit widening casts. See [Type Coercion at a Glance](#type-coercion-at-a-glance) and [Type Coercion](type-coercion.md).
 :::
 
-For the detailed field-level anatomy (name, data_type, nullable, metadata), see [Anatomy of a Schema](anatomy-schema.md).
+For the detailed field-level anatomy (name, data_type, nullable, metadata), see [Anatomy of a Schema](schema-anatomy.md).
 
 ---
 
@@ -219,7 +219,7 @@ The initial schema is the first [`DFSchema`] in the plan tree, set at the `Table
 Inferred schemas can drift as data evolves — a column inferred as `Int32` today may encounter values exceeding its range tomorrow. Explicit schemas eliminate drift entirely. For details and mitigation strategies, see [Schema Inference](schema-inference.md).
 :::
 
-For constructing schemas programmatically, see [Creating Schemas](creating-schemas.md). For applying schemas to specific formats (CSV, Parquet, partitioned data), see [Applying Schemas](applying-schemas-modeling-data.md).
+For constructing schemas programmatically, see [Creating Schemas](schema-creation.md). For applying schemas to specific formats (CSV, Parquet, partitioned data), see [Applying Schemas](schema-application.md).
 
 ---
 
@@ -310,7 +310,7 @@ SCHEMA OWNERSHIP FLOW
 For a detailed explanation of the `SessionState` clone semantics and how each `DataFrame` captures its execution environment, see [Anatomy of a DataFrame](../Concepts/anatomy-dataframe.md).
 :::
 
-For what lives inside the [`DFSchema`] — fields, qualifiers, and functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer) above and [Anatomy of a Schema](anatomy-schema.md).
+For what lives inside the [`DFSchema`] — fields, qualifiers, and functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer) above and [Anatomy of a Schema](schema-anatomy.md).
 
 ---
 
@@ -346,7 +346,7 @@ Aggregate(group=[region], agg=[sum(amount)])
 
 Schema validation happens at plan-build time — `.filter(col("nonexistent").gt(lit(100)))` fails immediately with a "Column not found" error, before any data is scanned. For the full list of contract violations and error types, see [Contract Violations](#contract-violations--fail-fast-at-plan-build-time).
 
-For detailed transformation patterns (qualifiers, combining schemas, nullability handling), see [Schema Transformation](schema-transformation.md). For the specific DataFrame methods that change schema, see [DataFrame Methods](dataframe-methods.md).
+For detailed transformation patterns (qualifiers, combining schemas, nullability handling), see [Schema Transformation](schema-transformation.md). For the specific DataFrame methods that change schema, see [DataFrame Methods](schema-methods.md).
 
 ---
 
@@ -374,7 +374,7 @@ Schema management in DataFusion follows one principle: define the data contract 
 
 SQL queries in DataFusion follow the same schema lifecycle — parsing produces a [`LogicalPlan`] with identical [`DFSchema`] validation, coercion, and propagation rules.
 
-The next step is to explore the internal structure of [`DFSchema`] in detail — see [Anatomy of a Schema](anatomy-schema.md) for the field-level deep dive into names, types, nullability, and metadata.
+The next step is to explore the internal structure of [`DFSchema`] in detail — see [Anatomy of a Schema](schema-anatomy.md) for the field-level deep dive into names, types, nullability, and metadata.
 
 ---
 

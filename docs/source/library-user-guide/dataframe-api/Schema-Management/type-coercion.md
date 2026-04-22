@@ -64,7 +64,7 @@ The table below lists the common Arrow data types encountered in DataFusion. Eac
 | **Binary**         | `Binary`, `LargeBinary`, `BinaryView`                                      | `[0x12, 0x34]`                        |           Raw data, hashes            |
 | **Nested Types**   | `Struct(Fields)`, `List(Field)`, `Map`                                     | `{"a": 1}`, `[1, 2, 3]`               |  JSON/Parquet data, complex objects   |
 
-Beyond primitive types, DataFusion fully supports Arrow's nested types (`List`, `Struct`, `Map`, `Union`) for complex data structures common in Parquet and semi-structured sources. For details on nested type structures and per-field properties, see [Anatomy of a Schema — Data Type](anatomy-schema.md#data-type).
+Beyond primitive types, DataFusion fully supports Arrow's nested types (`List`, `Struct`, `Map`, `Union`) for complex data structures common in Parquet and semi-structured sources. For details on nested type structures and per-field properties, see [Anatomy of a Schema — Data Type](schema-anatomy.md#data-type).
 
 :::{admonition} DataFrame API types are a superset of SQL types
 :class: note
@@ -428,10 +428,10 @@ Automatic coercion widens within type families and parses literals to match thei
 :::{admonition} Next steps
 :class: seealso
 
-- [Anatomy of a Schema](anatomy-schema.md) — per-column field properties (`name`, `data_type`, `nullable`, `metadata`)
-- [Inspecting and Validating Schemas](inspecting-and-validating.md) — display, access, and programmatic field inspection
+- [Anatomy of a Schema](schema-anatomy.md) — per-column field properties (`name`, `data_type`, `nullable`, `metadata`)
+- [Inspecting and Validating Schemas](schema-inspection.md) — display, access, and programmatic field inspection
 - [Schema Transformation](schema-transformation.md) — qualifier manipulation, combining schemas, nullability handling
-- [DataFrame Methods](dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
+- [DataFrame Methods](schema-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
 - [Handling Null Values](../Concepts/null-handling.md) — NULL behavior in expressions, filters, and joins
   :::
 

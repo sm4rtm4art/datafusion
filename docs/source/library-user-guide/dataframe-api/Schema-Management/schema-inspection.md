@@ -19,28 +19,35 @@
 
 <!--TODO
 
-1. ABSTRACT (write last, after content stabilizes)
-2. Sibling cross-references: add links TO this file from creating-schemas.md,
-   applying-schemas-modeling-data.md, schema-transformation.md, dataframe-methods.md
-3. Test all new code examples with cargo test --doc
+1. Sibling cross-references: add links TO this file from schema-creation.md,
+   schema-application.md, schema-transformation.md, schema-methods.md
+2. Test all code examples with: cargo test --doc --package datafusion dataframe_api_schema_management_inspecting_and_validating
 
 -->
 
 # Inspecting and Validating Schemas
 
-[TODO: Abstract — universe → needle tip. Written last after content stabilizes.]
+**Display, query, compare, and extract every aspect of a DataFrame's structural contract — at plan time, before a single row of data is processed.**
+
+The schema attached to every [`DataFrame`] is a rich, queryable object — not just static metadata. This document shows how to work with that object across four progressively deeper levels: **displaying** schemas for quick debugging and logging, **accessing** individual field properties — names, types, nullability, qualifiers — for programmatic pipeline logic, **comparing and validating** schemas against expected contracts to catch mismatches before execution, and **extracting** the underlying Arrow `Schema` for ecosystem interop. Each section builds on the previous, moving from human-readable inspection to compile-time–safe, `Result`-based validation.
 
 **Key methods:**
 
-| Method                                  | Purpose                                       |
-| --------------------------------------- | --------------------------------------------- |
-| [`.schema()`]                           | Access the `DFSchema` from a `DataFrame`      |
-| [`.tree_string()`]                      | Human-readable schema with types & nullability |
-| [`.fields()`]                           | Iterate over field definitions                 |
-| `.data_type(&col)`                      | Get a column's Arrow data type (`ExprSchema`)  |
-| [`.has_column_with_unqualified_name()`] | Check column existence                         |
-| [`.has_equivalent_names_and_types()`]   | Compare schemas with error detail              |
-| [`.inner()`]                            | Extract Arrow `Schema` for interop             |
+| Method                                           | Purpose                                          | Section                                                            |
+| ------------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------ |
+| [`.schema()`]                                    | Access `&DFSchema` from a `DataFrame`            | [The Schema as a Queryable Contract](#the-schema-as-a-queryable-contract) |
+| [`.tree_string()`]                               | Human-readable schema with types & nullability   | [Displaying Schemas](#displaying-schemas)                          |
+| [`.fields()`]                                    | Iterate over field definitions                   | [Accessing Fields and Properties](#accessing-fields-and-properties) |
+| [`.field_with_unqualified_name()`]               | Get field definition by name                     | [Field Lookup by Name](#field-lookup-by-name)                      |
+| [`.has_column_with_unqualified_name()`]          | Check column existence (returns `bool`)          | [Validating Column Existence](#validating-column-existence)        |
+| `.data_type(&col)` ([`ExprSchema`])              | Get a column's Arrow data type                   | [Per-Column Type and Nullability](#per-column-type-and-nullability) |
+| [`.iter()`]                                      | Field + qualifier pairs                          | [Qualified Field Access](#qualified-field-access)                  |
+| [`.index_of_column()`]                           | Get column's positional index                    | [Index-Based Lookup](#index-based-lookup)                          |
+| [`.has_equivalent_names_and_types()`]            | Compare schemas with error detail                | [Schema Equivalence](#schema-equivalence)                          |
+| [`DFSchema::datatype_is_logically_equal()`]      | Compare two data types tolerantly                | [Type-Level Comparison](#type-level-comparison)                    |
+| [`.check_names()`]                               | Detect duplicate or ambiguous field names        | [Validating Schema Integrity](#validating-schema-integrity)        |
+| [`.matches_arrow_schema()`]                      | Positional name-alignment with Arrow `Schema`    | [Validating Against Arrow Schemas](#validating-against-arrow-schemas) |
+| [`.inner()`] / [`.as_arrow()`]                   | Extract Arrow `Schema` for ecosystem interop     | [Arrow Interop](#arrow-interop)                                    |
 
 :::{admonition} Style Note
 :class: note
@@ -65,11 +72,18 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-## Schema Inspection and Validation
+## The Schema as a Queryable Contract
 
-**[`df.schema()`][`.schema()`] returns a `&DFSchema` from the [`LogicalPlan`] — the single entry point for reading field names, types, nullability, qualifiers, and metadata, all at plan time before execution.**
+**Every structural mismatch — missing columns, incompatible types, broken contracts — can be caught at plan time through schema inspection and validation, before a single row of data is processed.**
 
-The schema carries field names, Arrow data types, nullability flags, table qualifiers, and metadata — the full structural contract of the [`DataFrame`]. Inspection methods read these properties: display for debugging, iteration for programmatic access, lookups for specific fields. Validation methods check them against expectations: existence checks for guard clauses, equivalence comparisons for contract enforcement, integrity checks for consistency. Both categories operate at plan time — type mismatches, missing columns, and contract violations surface before execution begins.
+Data arrives from heterogeneous sources — Parquet files with evolving schemas, CSV feeds from external partners, programmatic `RecordBatch` construction — and every source carries its own structural assumptions. Schemas drift between releases, upstream changes silently add or drop fields, and type mismatches hide until they break a downstream join or aggregation. DataFusion exposes the schema as a first-class, queryable object through [`df.schema()`][`.schema()`], which returns a `&DFSchema` containing field names, Arrow data types, nullability flags, table qualifiers, and metadata — the full structural contract of the [`DataFrame`].
+
+This document covers two complementary paths for working with that contract:
+
+- **Human-readable inspection** — displaying the schema for debugging, logging, and quick verification ([Displaying Schemas](#displaying-schemas)).
+- **Programmatic validation** — accessing field properties, checking column existence, comparing schemas against expectations, and extracting Arrow schemas for ecosystem interop ([Accessing Fields and Properties](#accessing-fields-and-properties) through [Arrow Interop](#arrow-interop)).
+
+Consider a pipeline that joins customer data from Parquet files with transaction records from a partner's CSV feed. Before the join, you need to verify that both sources share the expected key columns, that types are compatible, and that no upstream schema change has silently added or dropped fields. All of this happens through [`df.schema()`][`.schema()`] — a plan-time operation that catches mismatches before execution begins.
 
 The schema you inspect originates from the data source. How it arrives depends on how the [`DataFrame`] was created:
 
@@ -80,13 +94,18 @@ The schema you inspect originates from the data source. How it arrives depends o
 | `CsvReadOptions::new().schema(&schema)`                  | Explicit Arrow Schema you provide | Text formats requiring schema       |
 | [`Schema::new(vec![Field::new(...)])`][`Schema::new()`]  | Constructed Arrow Schema          | Programmatic schema definition      |
 
-For a deeper treatment of schema origins and ownership, see [Schema Concepts](schema-concepts.md). For the internal structure of [`DFSchema`], see [Anatomy of a Schema](anatomy-schema.md).
+For a deeper treatment of schema origins and ownership, see [Schema Concepts](schema-concepts.md). For the internal structure of [`DFSchema`], see [Anatomy of a Schema](schema-anatomy.md).
+
+:::{admonition} Pre-analysis vs post-analysis schema
+:class: tip
+The schema returned by [`.schema()`] reflects the **pre-analysis** state of the [`LogicalPlan`]. After the [`TypeCoercion`] analyzer runs (triggered by [`.collect()`] or [`.show()`]), types may change due to implicit widening. To see the post-analysis schema with inserted `CAST` nodes, use [`.explain(false, false)`] — see [Type Coercion](type-coercion.md) for details.
+:::
 
 ## Displaying Schemas
 
-**A compact field list or a full type-and-nullability tree — two `Display` methods cover every human-readable schema output need.**
+**A compact field list or a full type-and-nullability tree — two display methods cover every human-readable schema output need.**
 
-Two methods cover every display need: [`.to_string()`] produces a compact field list for quick logging, and [`.tree_string()`] produces a tree with types and nullability — the format you want when debugging coercion errors or null mismatches. Both implement `Display`, so they work directly with `println!`, `format!`, or logging frameworks.
+`DFSchema` implements `Display` directly, so `println!("{}", df.schema())` works — but the output is a compact field list with names only, no types or nullability. For debugging type mismatches or coercion errors, you almost always want [`.tree_string()`], which reveals the type information that the `Display` output omits. Both work directly with `println!`, `format!`, or logging frameworks. For programmatic field access, see [Accessing Fields and Properties](#accessing-fields-and-properties).
 
 | Method                                          | Returns        | Output                                                                |
 | ----------------------------------------------- | -------------- | --------------------------------------------------------------------- |
@@ -139,9 +158,9 @@ When debugging schema mismatches, use [`df.schema().tree_string()`][`.tree_strin
 
 ## Accessing Fields and Properties
 
-**Field definitions, column names, qualifiers, and metadata are all accessible as standard Rust types — enabling guard clauses, iteration, and error handling before any data is processed.**
+**Programmatic access to every field property — names, types, nullability, qualifiers — flows through a single `&DFSchema` reference, giving you compile-time type safety and `Result`-based error handling over the schema contract.**
 
-All access goes through [`df.schema()`][`.schema()`], which returns a `&DFSchema`. The methods below fall into two categories: **collection methods** that return the full set of fields or metadata, and **lookup methods** (covered in the subsections) that target specific columns by name, qualifier, or index.
+All access goes through [`df.schema()`][`.schema()`], which returns a `&DFSchema`. For a detailed breakdown of what each field contains — name, data type, nullability, and metadata — see [Anatomy of a Schema](schema-anatomy.md). The methods below fall into two categories: **collection methods** that return the full set of fields or metadata, and **lookup methods** that target specific columns by name, qualifier, or index. Collection methods are useful for iteration, counting, or bulk validation. Lookup methods are useful for guard clauses, type checks, and error handling. The subsections below cover lookups by name, per-column type inspection via [`ExprSchema`], qualifier-aware access, existence checks, and index-based lookups.
 
 | Method                                                      | Returns                                          | Use Case                           |
 | ----------------------------------------------------------- | ------------------------------------------------ | ---------------------------------- |
@@ -161,7 +180,7 @@ All access goes through [`df.schema()`][`.schema()`], which returns a `&DFSchema
 
 **Two method families handle field lookup: `has_column_*` returns `bool` for guard clauses, `field_with_*` returns `Result<>` for explicit error handling.**
 
-Schema lookups can fail — a column may not exist, or a name may be ambiguous after a join. Pick the error handling pattern that matches your goal:
+Name-based lookups are the most common access pattern — you know the column name from your domain logic and need to verify it exists or retrieve its definition. Two method families serve this need: `has_column_*` methods return `bool` for branching (is this optional field present?), while `field_with_*` methods return `Result<&Arc<Field>>` for access (retrieve the field or fail with a descriptive error). The choice between them depends on whether absence is expected or exceptional:
 
 | Pattern            | Method                            | Returns              | Use When                                |
 | ------------------ | --------------------------------- | -------------------- | --------------------------------------- |
@@ -214,11 +233,52 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
+### Validating Column Existence
+
+**Check column presence before accessing — use `has_column_*` methods as guard clauses to branch safely.**
+
+The [Field Lookup by Name](#field-lookup-by-name) section introduced `has_column_*` alongside `field_with_*`. This section focuses on the `has_column_*` family for guard clauses — when you need to branch based on column presence rather than access the field definition. All three methods return `bool` and never error:
+
+| Method                                             | Takes                    | Use When                                 |
+| -------------------------------------------------- | ------------------------ | ---------------------------------------- |
+| `.has_column_with_unqualified_name(name)`          | `&str`                   | Check by name only (most common)         |
+| `.has_column_with_qualified_name(qualifier, name)` | `&TableReference, &str`  | Check after joins (table-qualified)      |
+| `.has_column(&column)`                             | `&Column`                | Dispatches based on qualifier presence   |
+
+```rust
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let df = dataframe!(
+        "id" => [1_i64, 2_i64],
+        "amount" => [100.0, 200.0]
+    )?;
+
+    let schema = df.schema();
+
+    // Guard clause: validate required columns before processing
+    let required = ["id", "amount", "timestamp"];
+    let missing: Vec<_> = required.iter()
+        .filter(|name| !schema.has_column_with_unqualified_name(name))
+        .collect();
+
+    if !missing.is_empty() {
+        // "timestamp" is missing — handle gracefully
+        println!("Missing columns: {:?}", missing);
+        // Output: Missing columns: ["timestamp"]
+        assert_eq!(missing, vec![&"timestamp"]);
+    }
+
+    Ok(())
+}
+```
+
 ### Per-Column Type and Nullability
 
-**[`DFSchema`] implements the [`ExprSchema`] trait — giving you per-column type, nullability, and metadata lookups via [`Column`] references.**
+**Per-column type and nullability lookups let you build conditional logic, validation gates, and dynamic expressions based on a column's Arrow [`DataType`] — accessed through the [`ExprSchema`] trait that [`DFSchema`] implements.**
 
-When you need the data type or nullability of a specific column — for conditional logic, validation gates, or building dynamic expressions — use the [`ExprSchema`] methods:
+These methods take a [`Column`] reference (constructed via `Column::from("name")` for unqualified lookups) and return the property for that specific column. Unlike the collection methods in the parent section which return all fields at once, [`ExprSchema`] methods target a single column — useful when your logic needs to branch based on whether a column is `Float64` vs `Decimal128`, or whether NULLs are possible:
 
 | Method                              | Returns                   | Use Case                          |
 | ----------------------------------- | ------------------------- | --------------------------------- |
@@ -262,7 +322,7 @@ The `data_type()`, `nullable()`, and per-column `metadata()` methods come from t
 
 **The [`.iter()`] method returns `(Option<&TableReference>, &Arc<Field>)` pairs — the qualifier distinguishes columns with the same name from different tables.**
 
-The qualifier is `Some` when fields come from named tables (e.g., after registering tables and joining them). This is how DataFusion disambiguates columns with the same name from different sources.
+Fields from the [`dataframe!`] macro or single-table queries have no qualifier (`None`). When you register tables with names (via `CREATE TABLE`, `register_table`, or file readers) and join them, fields carry their source table as a qualifier. This is how DataFusion disambiguates columns with the same name from different sources — without qualifiers, accessing `id` after joining `users` and `orders` would be ambiguous.
 
 ```rust
 use datafusion::prelude::*;
@@ -308,50 +368,11 @@ For qualifier-specific lookups, [`DFSchema`] provides methods that filter by qua
 Fields from the [`dataframe!`] macro have no qualifier (`None`). When you register tables with names (via `CREATE TABLE`, `register_table`, or file readers) and query them, fields carry their source table as a qualifier. This is essential for joins where both tables have columns with the same name.
 :::
 
----
-
-## Validating Column Existence
-
-**Check column presence before accessing — use `has_column_*` methods as guard clauses to branch safely.**
-
-These methods return `bool` and never error. Use them when the column might legitimately be absent (optional fields, schema evolution) and your code needs to branch:
-
-- `.has_column_with_unqualified_name(name)` — check by name only (most common)
-- `.has_column_with_qualified_name(qualifier, name)` — check by table-qualified name (after joins)
-- `.has_column(&column)` — check using a [`Column`] struct (qualifier-aware)
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "id" => [1_i64, 2_i64],
-        "amount" => [100.0, 200.0]
-    )?;
-
-    let schema = df.schema();
-
-    // Guard clause: validate required columns before processing
-    let required = ["id", "amount", "timestamp"];
-    let missing: Vec<_> = required.iter()
-        .filter(|name| !schema.has_column_with_unqualified_name(name))
-        .collect();
-
-    if !missing.is_empty() {
-        // "timestamp" is missing — handle gracefully
-        assert_eq!(missing, vec![&"timestamp"]);
-    }
-
-    Ok(())
-}
-```
-
 ### Index-Based Lookup
 
 **Use index lookups when you need a column's position — choose between fail-fast (`Result`) and optional (`Option`) semantics.**
 
-Three methods, each with different failure semantics:
+Index-based lookups return a column's ordinal position in the schema — the `usize` you need when accessing columns from a `RecordBatch` via `batch.column(idx)` or when building custom operators that reference columns by position. Three methods offer different failure semantics:
 
 | Method                                                                                  | Returns         | Use When                                           |
 | --------------------------------------------------------------------------------------- | --------------- | -------------------------------------------------- |
@@ -398,21 +419,27 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Validate schemas against expected contracts — before your pipeline runs into runtime surprises.**
 
-Schema comparison sits between inspection and transformation. After you inspect what you have, validation answers: "Is this what I expected?" Use schema-level comparisons to enforce contracts between pipeline stages, type-level comparisons for custom plan nodes, and Arrow validation for ecosystem integration.
+Schema comparison sits between inspection and transformation. After you inspect what you have, validation answers: "Is this what I expected?" The subsections below cover progressively narrower scopes: whole-schema equivalence checks for enforcing contracts between pipeline stages, individual type comparisons for custom plan nodes or UDFs, name-uniqueness validation for schema integrity after construction, and name-alignment checks for `DFSchema`-to-Arrow interop.
 
 ### Schema Equivalence
 
-**Two comparison methods with different semantics: qualifier-aware (logical) vs positional (semantic).**
+**Two comparison methods that differ on two independent axes: how they match fields (qualifier-aware vs positional) and how strictly they compare types (tolerant vs strict).**
 
-| Method                                                                     | Qualifier-Aware?          | Type Comparison                 | Returns    |
-| -------------------------------------------------------------------------- | ------------------------- | ------------------------------- | ---------- |
-| [`.logically_equivalent_names_and_types()`]                                | Yes (uses `.iter()`)      | `datatype_is_logically_equal`   | `bool`     |
-| [`.has_equivalent_names_and_types()`]                                      | No (positional `.fields()`) | `datatype_is_semantically_equal` | `Result<()>` |
+Both methods ignore nullability and metadata — they focus purely on field names and data types. Where they differ is on two independent axes:
 
-Both methods ignore nullability and metadata. The real distinction:
+- **Field matching:** [`.logically_equivalent_names_and_types()`] pairs fields using [`.iter()`], which includes qualifiers — so `users.id` and `orders.id` are distinct fields. [`.has_equivalent_names_and_types()`] pairs fields using [`.fields()`] by position only, ignoring qualifiers entirely.
+- **Type strictness:** `logically_equivalent` treats encoding variants as equal (`Dict<K, Utf8>` = `Utf8`, `Utf8View` = `Utf8`) — tolerant of how data is stored. `has_equivalent` requires the same encoding representation — `Dict<Int32, Utf8>` != `Utf8`.
 
-- **`logically_equivalent`** compares fields **with qualifiers** (via `.iter()`), and treats encoding variants as equal (`Dict<Utf8>` = `Utf8`, `Utf8View` = `Utf8`). Returns `bool` — use for gating checks and tolerant compatibility.
-- **`has_equivalent`** compares fields **by position** (via `.fields()`), requires the same encoding representation, and returns a descriptive error on mismatch pinpointing which field differs. Use for enforcing invariants and debugging.
+| Method                                                                     | Field Matching              | Type Strictness                 | Returns      |
+| -------------------------------------------------------------------------- | --------------------------- | ------------------------------- | ------------ |
+| [`.logically_equivalent_names_and_types()`]                                | Qualifier-aware (`.iter()`) | Tolerant (`datatype_is_logically_equal`)   | `bool`       |
+| [`.has_equivalent_names_and_types()`]                                      | Positional (`.fields()`)    | Strict (`datatype_is_semantically_equal`)  | `Result<()>` |
+
+:::{admonition} In practice
+:class: tip
+
+Use `logically_equivalent` for compatibility gates where encoding differences are acceptable. Use `has_equivalent` for strict contract enforcement — its `Result` return pinpoints exactly which field mismatches, making it the better choice for tests and pipeline entry points.
+:::
 
 ```rust
 use datafusion::common::DFSchema;
@@ -439,11 +466,13 @@ fn main() -> datafusion::error::Result<()> {
         Field::new("name", DataType::Utf8, true),
     ]))?;
 
-    // Both fail on type mismatch
+    // logically_equivalent returns bool
     assert!(!expected.logically_equivalent_names_and_types(&wrong_type));
 
-    // has_equivalent returns a descriptive error
+    // has_equivalent returns a descriptive error pinpointing the mismatch
     let err = expected.has_equivalent_names_and_types(&wrong_type).unwrap_err();
+    println!("{}", err);
+    // Output: "Schema mismatch: Expected field 'id' with type Int64, but got 'id' with type Utf8."
     assert!(err.to_string().contains("Schema mismatch"));
 
     Ok(())
@@ -459,29 +488,69 @@ Use [`.has_equivalent_names_and_types()`] in tests and pipeline entry points —
 
 **For comparing individual data types — useful in custom plan nodes, UDFs, or when building dynamic expressions.**
 
+The schema equivalence methods above use these functions internally. When you need to compare individual types — for example, validating a UDF's input type matches the column, or building a dynamic expression that depends on the column's encoding — call them directly. These are **associated functions** on [`DFSchema`], not instance methods:
+
 | Function                                          | Treats as Equal                                   | Use Case                          |
 | ------------------------------------------------- | ------------------------------------------------- | --------------------------------- |
 | `DFSchema::datatype_is_logically_equal(dt1, dt2)` | `Dict<K, Utf8>` = `Utf8`, `Utf8View` = `Utf8`    | Tolerant (ignores encoding)       |
 | `DFSchema::datatype_is_semantically_equal(dt1, dt2)` | Same representation required                   | Strict (encoding matters)         |
 
-These are **associated functions** on [`DFSchema`], not instance methods — call them as `DFSchema::datatype_is_logically_equal(dt1, dt2)`.
+```rust
+use datafusion::common::DFSchema;
+use datafusion::arrow::datatypes::DataType;
+
+fn main() {
+    // Logical equality: Utf8View and Utf8 are logically the same data
+    assert!(DFSchema::datatype_is_logically_equal(
+        &DataType::Utf8View, &DataType::Utf8
+    ));
+
+    // Semantic equality: different representations are NOT semantically equal
+    assert!(!DFSchema::datatype_is_semantically_equal(
+        &DataType::Utf8View, &DataType::Utf8
+    ));
+
+    // Both agree when representations match
+    assert!(DFSchema::datatype_is_logically_equal(
+        &DataType::Int64, &DataType::Int64
+    ));
+    assert!(DFSchema::datatype_is_semantically_equal(
+        &DataType::Int64, &DataType::Int64
+    ));
+}
+```
 
 ### Validating Schema Integrity
 
-**[`.check_names()`] detects duplicate field names — useful after programmatic schema construction or joins.**
+**Duplicate field names cause ambiguous column resolution — [`.check_names()`] detects them before they surface as runtime errors.**
 
-[`.check_names()`] validates that a [`DFSchema`] has no duplicate field names, considering both qualified and unqualified names. Duplicate names can arise from programmatic schema construction or plan manipulation:
+Duplicates can appear in a `DFSchema` because `DFSchema::try_from()` skips this check by design (internal operations like partial aggregates can produce duplicate state fields). When you construct or manipulate schemas programmatically, call [`.check_names()`] explicitly to catch conflicts. The method performs three independent checks:
+
+| Check                        | Detects                                        | Example                                      |
+| ---------------------------- | ---------------------------------------------- | -------------------------------------------- |
+| Duplicate qualified names    | Two fields with the same qualifier + name      | Two `users.id` fields                        |
+| Duplicate unqualified names  | Two bare fields with the same name             | Two `id` fields without qualifiers           |
+| Ambiguous references         | A qualified name collides with an unqualified   | `users.id` exists alongside a bare `id`      |
 
 ```rust
 use datafusion::common::DFSchema;
 use datafusion::arrow::datatypes::{Field, DataType, Schema};
 
 fn main() -> datafusion::error::Result<()> {
+    // Valid schema — unique field names
     let valid = DFSchema::try_from(Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("name", DataType::Utf8, true),
     ]))?;
     assert!(valid.check_names().is_ok());
+
+    // Duplicate unqualified names — check_names catches the conflict
+    let duplicate = DFSchema::try_from(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("id", DataType::Utf8, true),
+    ]))?;
+    let err = duplicate.check_names().unwrap_err();
+    assert!(err.to_string().contains("id"), "Expected duplicate field error");
 
     Ok(())
 }
@@ -489,9 +558,9 @@ fn main() -> datafusion::error::Result<()> {
 
 ### Validating Against Arrow Schemas
 
-**[`.matches_arrow_schema()`] checks field-by-field name alignment between a [`DFSchema`] and an Arrow [`Schema`].**
+**Verify that a `DFSchema` and an Arrow [`Schema`] share the same field names at each position — a lightweight check for cross-ecosystem handoffs.**
 
-This method compares field names only — ignoring types, nullability, and metadata. Use it when verifying that the logical plan's schema aligns with physical data before execution:
+[`.matches_arrow_schema()`] pairs field names by position — the first field in the `DFSchema` against the first in the Arrow [`Schema`], the second against the second, and so on (using Rust's [`Iterator::zip()`], which works like Python's `zip()`). Only names are compared; types, nullability, and metadata are ignored. If the schemas have different lengths, only the overlapping positions are checked — extra fields in the longer schema are silently skipped.
 
 ```rust
 use datafusion::common::DFSchema;
@@ -517,9 +586,25 @@ fn main() -> datafusion::error::Result<()> {
     ]);
     assert!(!df_schema.matches_arrow_schema(&wrong_names));
 
+    // Different lengths — only overlapping positions are compared,
+    // extra fields in the longer schema are silently skipped
+    let longer_arrow = Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("extra_col", DataType::Boolean, false),
+    ]);
+    assert!(df_schema.matches_arrow_schema(&longer_arrow));
+
     Ok(())
 }
 ```
+
+:::{admonition} Field count is not checked
+:class: warning
+When field count matters, compare `.fields().len()` explicitly before calling [`.matches_arrow_schema()`] — the method only validates that overlapping positions have matching names.
+:::
+
+[`Iterator::zip()`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.zip
 
 ---
 
@@ -527,7 +612,7 @@ fn main() -> datafusion::error::Result<()> {
 
 **Use Arrow interop methods when you need to pass the schema to Arrow ecosystem functions — compute kernels, IPC writers, `RecordBatch` creation.**
 
-[`DFSchema`] wraps an Arrow [`Schema`] with additional query-planning context (qualifiers, functional dependencies). When you cross into the Arrow ecosystem, you extract the inner Arrow schema:
+After inspecting and validating your schema within the DataFusion planning layer, you often need to hand it to Arrow ecosystem code — compute kernels that operate on `RecordBatch` columns, IPC writers that serialize data, or third-party libraries that expect an Arrow [`Schema`]. [`DFSchema`] wraps an Arrow [`Schema`] with query-planning context (qualifiers, functional dependencies), so extraction is a cheap reference operation rather than a copy. Two methods provide different ownership semantics: [`.inner()`] returns `&SchemaRef` (`&Arc<Schema>`) for cheap cloning, [`.as_arrow()`] returns `&Schema` for direct field access. The trade-off: table qualifiers and functional dependencies do not survive the conversion — if you need qualified names for join disambiguation, stay with [`DFSchema`].
 
 | Method                                    | Returns                       | Use Case                          |
 | ----------------------------------------- | ----------------------------- | --------------------------------- |
@@ -592,20 +677,19 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 
 ## Conclusion & Further Reading
 
+**Schema inspection and validation form the defensive layer between data sources and pipeline logic — catching structural mismatches at plan time before they become runtime failures.**
+
+[`.schema()`] gives you the full structural contract: [`.tree_string()`] and [`.to_string()`] for human-readable display, [`.fields()`] and [`.iter()`] for programmatic access, `has_column_*` and `field_with_*` for existence checks, and equivalence methods for contract enforcement. When you cross into the Arrow ecosystem, [`.inner()`] and [`.as_arrow()`] extract the inner Arrow [`Schema`] — but table qualifiers and functional dependencies are lost in the conversion. Validate what you expect before passing schemas downstream.
+
 :::{admonition} Related documents
 :class: seealso
 
 - [Schema Concepts](schema-concepts.md) — ownership flow, schema types, `DFSchema` vs Arrow `Schema`
-- [Anatomy of a Schema](anatomy-schema.md) — per-column field properties (name, data type, nullable, metadata)
+- [Anatomy of a Schema](schema-anatomy.md) — per-column field properties (name, data type, nullable, metadata)
 - [Type Coercion](type-coercion.md) — automatic type alignment and explicit casting
 - [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, nullability handling
-- [DataFrame Methods](dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
+- [DataFrame Methods](schema-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
 :::
-
-Further reading:
-
-- [Parquet schema evolution][parquet-evolution]
-- [Designing Data-Intensive Applications][kleppmann]
 
 ---
 
@@ -644,6 +728,7 @@ Further reading:
 [`.index_of_column_by_name()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.index_of_column_by_name
 [`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.logically_equivalent_names_and_types
 [`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.has_equivalent_names_and_types
+[`DFSchema::datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.datatype_is_logically_equal
 [`.check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.check_names
 [`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.matches_arrow_schema
 [`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.inner
@@ -653,5 +738,9 @@ Further reading:
 [`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
 [`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
 
-[parquet-evolution]: https://parquet.apache.org/docs/file-format/metadata/#schema-evolution
-[kleppmann]: https://dataintensive.net/
+[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+[`.explain(false, false)`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`printSchema()`]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.printSchema.html
+

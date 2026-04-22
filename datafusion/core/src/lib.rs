@@ -1345,14 +1345,14 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/anatomy-schema.md",
-    dataframe_api_schema_management_anatomy_schema
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-anatomy.md",
+    dataframe_api_schema_management_schema_anatomy
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/creating-schemas.md",
-    dataframe_api_schema_management_creating_schemas
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-creation.md",
+    dataframe_api_schema_management_schema_creation
 );
 
 #[cfg(doctest)]
@@ -1369,14 +1369,14 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/applying-schemas-modeling-data.md",
-    dataframe_api_schema_management_applying_schemas_modeling_data
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-application.md",
+    dataframe_api_schema_management_schema_application
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/inspecting-and-validating.md",
-    dataframe_api_schema_management_inspecting_and_validating
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-inspection.md",
+    dataframe_api_schema_management_schema_inspection
 );
 
 #[cfg(doctest)]
@@ -1387,8 +1387,8 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/dataframe-methods.md",
-    dataframe_api_schema_management_dataframe_methods
+    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-methods.md",
+    dataframe_api_schema_management_schema_methods
 );
 
 #[cfg(doctest)]

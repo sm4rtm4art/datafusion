@@ -92,7 +92,7 @@ Inference by sampling rows cannot guarantee nullability — all inferred columns
 
 :::{admonition} Deep dive
 :class: seealso
-For the full structure of Arrow fields — name, data type, nullability, and metadata — see [Anatomy of a Schema — Arrow Field Properties](../Schema-Management/anatomy-schema.md#arrow-field-the-four-properties).
+For the full structure of Arrow fields — name, data type, nullability, and metadata — see [Anatomy of a Schema — Arrow Field Properties](../Schema-Management/schema-anatomy.md#arrow-field-the-four-properties).
 :::
 
 ---
@@ -572,7 +572,7 @@ The key patterns to remember:
 :::{admonition} Next steps
 :class: seealso
 
-- [Anatomy of a Schema — Nullability](../Schema-Management/anatomy-schema.md#schema-field-nullability) — how nullability is declared in Arrow fields
+- [Anatomy of a Schema — Nullability](../Schema-Management/schema-anatomy.md#schema-field-nullability) — how nullability is declared in Arrow fields
 - [Schema Inference](../Schema-Management/schema-inference.md) — why inferred schemas default to `nullable = true`
 - [Type Coercion](../Schema-Management/type-coercion.md) — how type mismatches interact with nullability during expression planning
 - [Expressions](expressions.md) — how `Expr` trees propagate nullability through the plan

@@ -57,14 +57,14 @@ In this document, code elements follow a consistent pattern:
 :numbered:
 :caption: Schema Management
 schema-concepts
-anatomy-schema
+schema-anatomy
 type-coercion
+schema-inspection
+schema-creation
 schema-inference
-creating-schemas
-applying-schemas-modeling-data
-inspecting-and-validating
+schema-application
 schema-transformation
-dataframe-methods
+schema-methods
 ```
 
 ## Schema Management Overview
@@ -80,14 +80,14 @@ sequentially, but you can jump directly to the topic you need:
 | Document                                                           |             Focus              | Description                                                                                    |
 | :----------------------------------------------------------------- | :----------------------------: | :--------------------------------------------------------------------------------------------- |
 | **[Schema Concepts](schema-concepts.md)**                          |      Structural contract       | Ownership flow, schema types, `DFSchema` vs Arrow `Schema` — what schemas are and where they live. |
-| **[Anatomy of a Schema](anatomy-schema.md)**                       |      Field-level anatomy       | `DFSchema` internals: fields, data types, nullability, metadata, and qualifiers.               |
+| **[Anatomy of a Schema](schema-anatomy.md)**                       |      Field-level anatomy       | `DFSchema` internals: fields, data types, nullability, metadata, and qualifiers.               |
 | **[Type Coercion](type-coercion.md)**                              |   Automatic type alignment     | Coercion hierarchy, implicit vs. explicit casting, and how the optimizer reconciles types.      |
+| **[Inspecting & Validating](schema-inspection.md)**                | Display, access, and checks    | Human-readable display, programmatic field access, existence checks, and schema comparison.     |
+| **[Creating Schemas](schema-creation.md)**                         |     Building in code           | Constructing `DFSchema` and Arrow `Schema` programmatically with field types and constraints.   |
 | **[Schema Inference](schema-inference.md)**                        |    Inferred vs. explicit       | How DataFusion infers schemas from data, and when to provide them explicitly.                   |
-| **[Creating Schemas](creating-schemas.md)**                        |     Building in code           | Constructing `DFSchema` and Arrow `Schema` programmatically with field types and constraints.   |
-| **[Applying Schemas](applying-schemas-modeling-data.md)**          |   Format-specific strategies   | Applying schemas to CSV, Parquet, partitioned, and nested data sources.                        |
-| **[Inspecting & Validating](inspecting-and-validating.md)**        | Display, access, and checks    | Human-readable display, programmatic field access, existence checks, and schema comparison.     |
+| **[Applying Schemas](schema-application.md)**                      |   Format-specific strategies   | Applying schemas to CSV, Parquet, partitioned, and nested data sources.                        |
 | **[Schema Transformation](schema-transformation.md)**              |   Evolving schema structure    | Qualifiers, combining schemas, nullability handling, and schema evolution patterns.             |
-| **[DataFrame Methods](dataframe-methods.md)**                      | Methods that change the schema | DataFrame-specific methods (`.with_column()`, `.with_column_renamed()`, `.unnest_columns()`).  |
+| **[Schema Methods](schema-methods.md)**                            | Methods that change the schema | DataFrame-specific methods (`.with_column()`, `.with_column_renamed()`, `.unnest_columns()`).  |
 
 ---
 

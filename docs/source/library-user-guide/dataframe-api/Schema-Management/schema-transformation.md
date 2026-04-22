@@ -22,10 +22,18 @@
 <!--TODO
 
 1. ABSTRACT
-2. Fix cross-references to anatomy-schema.md and creating-schemas.md (anchors moved across files)
+2. Fix cross-references to schema-anatomy.md and schema-creation.md (anchors moved across files)
 3. Add cross-ref to schema-concepts.md "Schema Propagation Through Transformations" for the conceptual overview
-4. Add .union_by_name() operational content (moved from anatomy-schema.md): NULL filling for missing columns, type mismatch handling with TypeCoercion analyzer, positional .union() vs name-based .union_by_name() comparison
+4. Add .union_by_name() operational content (moved from schema-anatomy.md): NULL filling for missing columns, type mismatch handling with TypeCoercion analyzer, positional .union() vs name-based .union_by_name() comparison
 5. Add .with_functional_dependencies() method documentation to the DFSchema Transform Methods table
+6. Add deeper Arrow interop section (DFSchema ↔ Arrow Schema conversion patterns,
+   qualifier/functional-dependency loss, round-trip considerations). The basic overview
+   lives in schema-inspection.md "Arrow Interop" — this file should cover
+   transformation-specific patterns (e.g., rebuilding qualifiers after Arrow round-trip).
+7. Cross-reference the DFSchema *construction* constructors (try_from_qualified_schema,
+   from_field_specific_qualified_schema) that live in schema-creation.md
+   "When You Need a DFSchema Directly". This file should cover transformation of an
+   existing DFSchema, not construction from scratch — link rather than duplicate.
 
 -->
 
