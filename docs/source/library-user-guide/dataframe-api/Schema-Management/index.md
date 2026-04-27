@@ -59,8 +59,8 @@ In this document, code elements follow a consistent pattern:
 schema-concepts
 schema-anatomy
 type-coercion
-schema-inspection
 schema-creation
+schema-inspection
 schema-inference
 schema-application
 schema-transformation

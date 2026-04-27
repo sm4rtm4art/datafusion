@@ -157,7 +157,9 @@ Schema {
 
 For comprehensive inspection patterns — human-readable display, programmatic field access, existence checks, and schema comparison — see [Inspecting and Validating Schemas](schema-inspection.md).
 
-### DFSchema Components
+---
+
+## DFSchema Components
 
 **[`DFSchema`] translates the Arrow [`Schema`] into a query-planning resource — adding `field_qualifiers` and `functional_dependencies` on top of the physical data contract.**
 
