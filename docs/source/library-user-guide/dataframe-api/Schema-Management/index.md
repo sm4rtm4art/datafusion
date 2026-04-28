@@ -60,9 +60,9 @@ schema-concepts
 schema-anatomy
 type-coercion
 schema-creation
+schema-application
 schema-inspection
 schema-inference
-schema-application
 schema-transformation
 schema-methods
 ```
@@ -85,7 +85,7 @@ sequentially, but you can jump directly to the topic you need:
 | **[Inspecting & Validating](schema-inspection.md)**                | Display, access, and checks    | Human-readable display, programmatic field access, existence checks, and schema comparison.     |
 | **[Creating Schemas](schema-creation.md)**                         |     Building in code           | Constructing `DFSchema` and Arrow `Schema` programmatically with field types and constraints.   |
 | **[Schema Inference](schema-inference.md)**                        |    Inferred vs. explicit       | How DataFusion infers schemas from data, and when to provide them explicitly.                   |
-| **[Applying Schemas](schema-application.md)**                      |   Format-specific strategies   | Applying schemas to CSV, Parquet, partitioned, and nested data sources.                        |
+| **[Applying Schemas](schema-application.md)**                      |   Format-specific strategies   | Wiring schemas into CSV, NDJSON, Parquet readers, and partitioned datasets.                    |
 | **[Schema Transformation](schema-transformation.md)**              |   Evolving schema structure    | Qualifiers, combining schemas, nullability handling, and schema evolution patterns.             |
 | **[Schema Methods](schema-methods.md)**                            | Methods that change the schema | DataFrame-specific methods (`.with_column()`, `.with_column_renamed()`, `.unnest_columns()`).  |
 

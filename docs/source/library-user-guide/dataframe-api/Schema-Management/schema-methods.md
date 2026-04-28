@@ -17,7 +17,6 @@
   under the License.
 -->
 
-# Schema Management with DataFrame methods
 
 <!--TODO
 
@@ -26,6 +25,9 @@
 3. Expand unnest_columns section
 
 -->
+
+# Schema Management with DataFrame methods
+
 
 :::{admonition} Style Note
 :class: note

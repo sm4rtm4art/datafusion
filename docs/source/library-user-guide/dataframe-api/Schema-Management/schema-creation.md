@@ -19,13 +19,9 @@
 
 # Creating Schemas
 
-**Explicit schema creation gives you full control over column types, precision, metadata, and the [`DFSchema`] contract — replacing inference guesswork with a declared structure.**
+**Defining schemas explicitly makes data pipelines reliable, testable, and predictable — replacing inference guesswork with a declared contract.**
 
-<!-- TODO: Write the abstract last. Needle-tip scope: this page covers (a) the three
-Arrow primitives used to define a schema, (b) the three `DataType` families that need
-extra parameters or composition (decimal, timestamp, nested), (c) attaching metadata,
-and (d) when to reach for `DFSchema` construction. Keep it tighter than the
-schema-management abstract in `index.md` — this is a leaf, not the hub. -->
+Schemas give information its meaning — converting raw values into typed, structured data. Creating schemas is a foundational practice in data engineering, reliable production systems, and reproducible analysis. DataFusion handles schema creation automatically in most cases, but the best practice for predictable results is defining schemas explicitly. This document walks the construction end to end: Arrow primitives ([`Field`], [`Schema`], [`SchemaRef`]), parameterized and composite data types (decimal, timestamp, nested), field and schema metadata, and the [`DFSchema`] wrapper that connects the schema to the query engine's [`LogicalPlan`].
 
 :::{admonition} Style Note
 :class: note
@@ -53,81 +49,113 @@ In this document, code elements follow a consistent pattern:
 
 **Most schemas arrive automatically — but the automatic path has limits that explicit schema definition resolves.**
 
-Every [`DataFrame`] carries a [`DFSchema`] inside its [`LogicalPlan`] — the structural contract that the query engine validates at every plan node. The [`DFSchema`] connects the Arrow [`Schema`] underneath to the plan, adding the relational context that column resolution, type coercion, and optimization depend on.
+Every [`DataFrame`] carries a [`DFSchema`] inside its [`LogicalPlan`] — the structural contract that the query engine validates at every plan node. The [`DFSchema`] wraps an Arrow [`SchemaRef`] (the physical column definitions) and adds table qualifiers plus functional dependencies for query planning:
+
+```text
+┌───────────────────────────────────────────────────────┐
+│ DataFrame                                             │
+│   └── LogicalPlan                                     │
+│        └── DFSchema                                   │
+│             ├── inner: Arc<Schema>    (Arrow Schema)  │
+│             │        └── Field[]      (Arrow Fields)  │
+│             │             ├── name                    │
+│             │             ├── data_type               │
+│             │             ├── nullable                │
+│             │             └── metadata                │
+│             ├── field_qualifiers (TableReference)     │
+│             └── functional_dependencies               │
+└───────────────────────────────────────────────────────┘
+```
+
+The Arrow [`Schema`] defines the physical column contract — names, types, nullability, metadata. The [`DFSchema`] wraps that contract and connects it to the [`LogicalPlan`], adding table qualifiers and functional dependencies that column resolution, type coercion, and optimization rely on. For the full structural breakdown, see [Anatomy of a Schema](schema-anatomy.md).
 
 | Layer            | Role                     | Contents                                                      |
 | :--------------- | :----------------------- | :------------------------------------------------------------ |
 | Arrow [`Schema`] | Physical column contract | Column name, [`DataType`], nullability, metadata              |
 | [`DFSchema`]     | Query-planning wrapper   | Arrow [`Schema`] + table qualifiers + functional dependencies |
 
-The Arrow [`Schema`] defines how each column is stored and processed. The [`DFSchema`] extends it with table qualifiers for cross-table column disambiguation and functional dependencies for optimizer reductions. For the full structural breakdown, see [Anatomy of a Schema](schema-anatomy.md).
+How that [`DFSchema`] reaches the [`DataFrame`] depends on the source — file metadata, row-sample inference, a [`TableProvider`] implementation, or explicit construction in code. The next subsection traces these paths before the document concentrates on the explicit one.
 
 ### Automatic and Explicit Creation Paths
 
-**Schema creation has two entry points: reader methods can derive a schema for you, or your code can define the schema before reading begins.**
+**Schema creation is automatic in most cases — DataFusion derives the schema from the source without explicit definition.**
 
-Most of the time, schema creation is handled automatically when loading data into the query engine. Self-describing formats — Parquet, Avro, Arrow IPC — carry their schema in file metadata, which gets read directly as an Arrow [`Schema`] and wrapped into a [`DFSchema`]. For line-delimited formats — CSV, NDJSON — [schema inference](schema-inference.md) scans the first N rows (N = 1,000 by default) to derive column types. Either way, reader methods like [`ctx.read_csv()`] and [`ctx.read_parquet()`] handle schema creation and wrapping transparently.
+Schema creation happens inside the reader or table registration. The path DataFusion takes depends on the source:
+
+- **Self-describing formats** — Parquet, Avro, Arrow IPC — carry the schema in file metadata, which the engine reads directly.
+- **Line-delimited formats** — CSV, NDJSON — have no embedded schema, so the engine infers one by scanning the first 1,000 rows by default (configurable via [`schema_infer_max_records`]).
+- **Table registration** — [`TableProvider`] implementations and [`MemTable`] supply a [`SchemaRef`] at construction; the engine reads it as-is, but the schema itself was declared in code at the source.
+
+All three paths converge at an Arrow [`Schema`], which DataFusion wraps into a [`DFSchema`] and attaches to the [`LogicalPlan`]:
 
 ```text
-        ┌──────────────────────┐
-        │ Data source / reader │
-        └──────────┬───────────┘
-                   │
-        ┌─────────────────────┐
-        ▼                     ▼
-┌───────────────────┐ ┌────────────────┐
-│ Automatic schema  │ │ Explicit schema│
-│ creation          │ │ definition     │
-├───────────────────┤ ├────────────────┤
-│ Parquet / Avro /  │ │ Field          │
-│ Arrow IPC metadata│ │ Schema         │
-│ CSV / NDJSON      │ │ SchemaRef      │
-│ inference         │ │ reader options │
-└─────────┬─────────┘ └─────────┬──────┘
-          └─────────┬───────────┘
-                    ▼
-             ┌──────────────┐
-             │ Arrow Schema │
-             └──────┬───────┘
-                    ▼
-             ┌──────────────┐
-             │   DFSchema   │
-             └──────┬───────┘
-                    ▼
-             ┌──────────────┐
-             │ LogicalPlan  │
-             └──────┬───────┘
-                    ▼
-             ┌──────────────┐
-             │  DataFrame   │
-             └──────────────┘
+  AUTOMATIC PATH        TABLE PROVIDER         EXPLICIT PATH
+┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
+│ Parquet / Avro /  │ │ TableProvider /   │ │ Code construction │
+│ Arrow IPC file    │ │ MemTable          │ │ Field::new(..)    │
+│ (read metadata)   │ │ (declared at the  │ │ Schema::new(..)   │
+│ CSV / NDJSON file │ │  source, read     │ │ Arc::new(..)      │
+│ (sample N=1k)     │ │  automatically)   │ │                   │
+└────────┬──────────┘ └────────┬──────────┘ └─────────┬─────────┘
+         │ read / infer        │ register             │ construct
+         └─────────────────────┼──────────────────────┘
+                               ▼
+                      ┌───────────────┐
+                      │  Arrow Schema │
+                      └───────┬───────┘
+                              ▼ DataFusion wraps
+                      ┌───────────────┐
+                      │    DFSchema   │
+                      └───────┬───────┘
+                              ▼ embedded in
+                      ┌───────────────┐
+                      │  LogicalPlan  │
+                      └───────┬───────┘
+                              ▼ exposed via
+                      ┌───────────────┐
+                      │   DataFrame   │
+                      └───────────────┘
 ```
 
-The explicit path is the focus of this document. Once you define the Arrow [`Schema`] yourself, DataFusion can use the same declared contract for file readers, in-memory tables, custom [`TableProvider`] implementations, and plan-level tests.
+Automatic creation covers the common case — but it falls short under predictable conditions that the next subsection maps out.
 
-### When Explicit Schemas Are Worth Defining
+### The Case for Explicit Definition
 
-**The automatic path breaks in predictable ways — recognizing these patterns tells you when an explicit schema is required.**
+**Explicit schemas add trust, robustness, and validation to the data flow — capabilities that the automatic path cannot guarantee.**
 
-| Failure mode          | What happens                                                  | Affected formats                |
-| :-------------------- | :------------------------------------------------------------ | :------------------------------ |
-| Type guessing         | Currency → `Float64` instead of `Decimal128`, dates → `Utf8` | CSV, NDJSON                     |
-| Sparse columns        | Fields appearing after the sample window are missed entirely  | CSV, NDJSON                     |
-| Sample budget sharing | Later files never contribute to the inferred schema           | Multi-file CSV / NDJSON         |
-| Schema divergence     | Conflicting types for the same field trigger merge failures   | Multi-file Parquet              |
-| Custom sources        | No embedded schema or inference path exists                   | `TableProvider` implementations |
+File reading is the most visible failure surface, but not the only one. [`TableProvider`] implementations that bridge external systems (PostgreSQL, MySQL, REST APIs) must translate source-native types into Arrow types — a mapping that can lose precision or fail on unsupported types. In-memory data and write targets carry their own variants. Explicit definition fixes the contract before execution begins, regardless of the source.
 
-For the full catalog of inference failure modes, see [Schema Inference — Risks and Failure Modes](schema-inference.md#inference-risks-and-failure-modes). To validate a defined schema before execution and catch mismatches early, see [Inspecting and Validating Schemas](schema-inspection.md).
+| Failure mode          | What happens                                                  | Affected sources                                                |
+| :-------------------- | :------------------------------------------------------------ | :-------------------------------------------------------------- |
+| Type guessing         | Currency → `Float64` instead of `Decimal128`, dates → `Utf8` | CSV, NDJSON                                                     |
+| Sparse columns        | Fields appearing after the sample window are missed entirely  | CSV, NDJSON                                                     |
+| Sample budget sharing | Later files never contribute to the inferred schema           | Multi-file CSV / NDJSON                                         |
+| Schema divergence     | Conflicting types for the same field trigger merge failures   | Multi-file Parquet                                              |
+| Damaged metadata      | Read fails outright — no row-sample fallback exists           | Parquet, Avro, Arrow IPC                                        |
+| Type translation      | Source-native types map incorrectly or incompletely to Arrow  | [`TableProvider`] bridging external databases (PostgreSQL, etc.) |
+| Code-only sources     | No file, no metadata — the schema must be authored from scratch | `MemTable`, `RecordBatch` registration, plan-level test fixtures |
 
-Once an explicit schema is the right choice, the usual entry point is the Arrow layer: [`Field`], [`Schema`], and [`SchemaRef`]. DataFusion wraps the Arrow [`Schema`] in [`DFSchema`] automatically when it is passed to a reader or registered as a table. Direct [`DFSchema`] construction is reserved for custom [`TableProvider`]s, [`LogicalPlan`] node authoring, and test fixtures (covered in [Defining a `DFSchema` Directly](#defining-a-dfschema-directly)). The sections below start with the minimal Arrow [`Schema`] recipe and progress through parameterized types, metadata, [`DFSchema`] construction, and applying schemas to readers.
+:::{admonition} Beyond file errors
+:class: caution
+
+Failure modes are not the only motivators. Several workflows require explicit schemas by construction:
+
+- **Production contract enforcement.** A declared schema rejects upstream type drift at plan time rather than at execution. Pipelines that promise stable output benefit even when the source is technically inferable.
+- **Pre-write output control.** Writers honor the schema they are given — explicit construction is how you pin Parquet logical types, dictionary encodings, or timezone tags on the output.
+- **Type precision beyond inference.** [`Decimal128`] precision and scale, timezone-tagged [`DataType::Timestamp`] variants, and per-field nullability inside [`DataType::Struct`], [`DataType::List`], and [`DataType::Map`] are not reliably inferred — they have to be declared.
+:::
+
+For the inference path's full failure catalog, see [Schema Inference — Risks and Failure Modes](schema-inference.md#inference-risks-and-failure-modes). To validate a schema against execution-time data and catch mismatches early, see [Inspecting and Validating Schemas](schema-inspection.md).
+
+The remainder of this document walks explicit creation end to end — from Arrow primitives ([`Field`], [`Schema`], [`SchemaRef`]) through parameterized types, metadata, [`DFSchema`] construction, and wiring a defined schema into format-specific readers.
 
 ---
 
 ## Building an Arrow Schema
 
-**The entry-level recipe is three lines: list fields, wrap in `Schema::new`, share via `Arc`.**
+**The entry-level recipe is three primitives: define each column as a [`Field`], collect them in a [`Schema`], and share the result as a [`SchemaRef`].**
 
-A DataFusion-ready schema is built from three Arrow primitives. The table below summarizes them; [Anatomy of a Schema](schema-anatomy.md) covers each property in depth.
+The previous section showed where the schema lives and how it reaches the [`DataFrame`]. This section moves from understanding to construction — the fine-grained Arrow layer where every column name, type, and nullability flag is declared. Three Arrow primitives compose every schema; [Anatomy of a Schema](schema-anatomy.md) covers each property in depth.
 
 | Primitive        | Role                                                       | Key properties                                                            |
 | :--------------- | :--------------------------------------------------------- | :------------------------------------------------------------------------ |
@@ -137,13 +165,17 @@ A DataFusion-ready schema is built from three Arrow primitives. The table below 
 
 ### Composing the Minimal Schema
 
-Build an Arrow [`Schema`] by listing its [`Field`]s in order. Each field declares a name, a [`DataType`], and a nullable flag. [`Schema::new`] accepts any `impl Into<Fields>`, so a plain `Vec<Field>` works:
+**A minimal working example is the fastest path from concept to hands-on — three lines of code produce a complete, shareable schema.**
+
+The three primitives from the table above map directly to code. Each [`Field`] declares a column name, a [`DataType`], and a nullable flag. [`Schema::new`] collects the fields into an ordered list, and wrapping the result in `Arc` produces the [`SchemaRef`] that DataFusion's readers and plan nodes expect:
 
 ```rust
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::error::Result;
 use std::sync::Arc;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Define once, share via Arc — cloning the Arc is O(1).
     let schema: SchemaRef = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int64, false),     // primary key, not nullable
@@ -154,6 +186,8 @@ fn main() {
     assert_eq!(schema.fields().len(), 3);
     assert_eq!(schema.field(0).data_type(), &DataType::Int64);
     assert!(!schema.field(0).is_nullable());
+
+    Ok(())
 }
 ```
 
@@ -161,7 +195,9 @@ The example covers the common case: scalar types, explicit nullability, no metad
 
 ### Sharing Schemas with `Arc`
 
-Readers, plan nodes, and custom [`TableProvider`]s all accept [`SchemaRef`] — the idiomatic type for a shared Arrow schema. Wrapping the schema in [`Arc`] once means every downstream consumer holds a reference, not a copy. Passing `Arc::clone(&schema)` is `O(1)` regardless of field count and metadata size.
+**[`SchemaRef`] (`Arc<Schema>`) is the currency of schema sharing — construct once, pass everywhere at zero copy cost.**
+
+Readers, plan nodes, and custom [`TableProvider`]s all accept [`SchemaRef`] — the idiomatic type for a shared Arrow schema. Wrapping the schema in [`Arc`] once means every downstream consumer holds a reference, not a copy. Passing `Arc::clone(&schema)` is `O(1)` regardless of field count and metadata size. Sharing a schema eliminates the cost of rebuilding it for every new reader or plan node.
 
 :::{admonition} Avoid rebuilding schemas inside loops
 :class: tip
@@ -173,15 +209,19 @@ Construct the schema once at pipeline setup and pass [`SchemaRef`] clones. Rebui
 To wire a defined [`Schema`] into [`ctx.read_csv()`], [`ctx.read_json()`], or a [`ListingTable`], see [Applying Schemas](schema-application.md).
 :::
 
-## Parameterized and Composite Types
+---
 
-**Three [`DataType`] families need more than a bare variant: decimals and timestamps take parameters that change semantics; structs, lists, and maps compose other types.**
+## Parameterized and Composite Data Types
 
-The common scalar variants ([`Int64`], [`Utf8`], [`Boolean`], [`Float64`]) are self-describing — pass the variant and move on. The three families below are where schema definitions quietly go wrong. Decimal precision silently truncates; timestamp timezone presence breaks comparisons; nested types require explicit field composition.
+**Decimals, timestamps, and nested types require parameters or composition that scalar variants do not — getting these wrong silently breaks precision, comparisons, or data relationships.**
+
+Scalar types — [`Int64`], [`Utf8`], [`Boolean`], [`Float64`] — are self-describing: pass the variant to `Field::new` and the definition is complete. Parameterized and composite types build on top of scalars with additional constraints that shape how values are stored and compared: a [`Decimal128(19, 2)`] pins the number of digits, a [`Timestamp(Microsecond, Some("UTC"))`] pins the timezone interpretation, a `Struct` composes child fields into a nested column. These additions make the types more expressive — and more error-prone when declared incorrectly. Each of the three families below carries its own failure mode.
 
 ### Decimals: Precision and Scale
 
-Floating-point types (`Float32`, `Float64`) accumulate rounding error that compounds in financial and scientific calculations. [`Decimal128`] and [`Decimal256`] provide exact base-10 arithmetic at the cost of two parameters:
+**Decimal types provide exact base-10 arithmetic — but precision and scale must be declared correctly, or values silently truncate or overflow at runtime.**
+
+Financial calculations — currency totals, tax computations, ledger balances — require exact decimal arithmetic. Floating-point types (`Float32`, `Float64`) accumulate rounding error that compounds across operations: `0.1 + 0.2` evaluates to `0.30000000000000004`, not `0.3`. [`Decimal128`] and [`Decimal256`] avoid this by storing values as scaled integers with two declared parameters:
 
 - **Precision** — total number of decimal digits stored. [`Decimal128`] supports `1..=38`; [`Decimal256`] supports `1..=76`.
 - **Scale** — number of digits to the right of the decimal point. Must satisfy `0 <= scale <= precision`.
@@ -190,8 +230,10 @@ Floating-point types (`Float32`, `Float64`) accumulate rounding error that compo
 
 ```rust
 use datafusion::arrow::datatypes::{DataType, Field};
+use datafusion::error::Result;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Currency: 2 decimal places, room for trillion-dollar values.
     let _price = Field::new("price", DataType::Decimal128(19, 2), false);
 
@@ -200,17 +242,21 @@ fn main() {
 
     // Scientific values needing more than 38 digits: Decimal256.
     let _ledger_balance = Field::new("ledger_balance", DataType::Decimal256(76, 10), false);
+
+    Ok(())
 }
 ```
 
 :::{admonition} Narrowing a decimal can fail at runtime
 :class: warning
-Casting `Decimal128(10, 2)` to `Decimal128(8, 2)` fails for any value with more than 6 integer digits. Reduce precision only when the value range bounds it.
+Casting `Decimal128(10, 2)` to `Decimal128(8, 2)` fails for any value with more than 6 integer digits. Reduce precision only when the value range bounds it. For how DataFusion widens and narrows decimal types in expressions, see [The Coercion Hierarchy](type-coercion.md#the-coercion-hierarchy).
 :::
 
 ### Timestamps and Time Zones
 
-A [`DataType::Timestamp`] represents either an **absolute instant** (with a non-empty timezone) or a **local wall-clock value** (without a timezone). The two are incompatible in arithmetic and comparisons — mixing them silently produces wrong answers or errors at execution time.
+**A timestamp with a timezone is an absolute instant; without one, it is a wall-clock reading — mixing the two silently produces wrong results.**
+
+Server logs, transactions, and event streams record *when* something happened — an absolute instant, independent of the observer's location. Scheduled events, business hours, and calendar entries record *what time the clock shows* — a local reading tied to a specific timezone. Arrow's [`DataType::Timestamp`] encodes this distinction through a timezone parameter: a non-empty timezone makes the value an absolute UTC instant; `None` makes it a wall-clock value. The two are incompatible in arithmetic and comparisons — mixing them silently produces wrong answers or errors at execution time.
 
 | Type                 | Example                               | Semantics                                                    | Use for                                   |
 | :------------------- | :-----------------------------------: | :----------------------------------------------------------- | :---------------------------------------- |
@@ -221,18 +267,24 @@ At the Arrow level, any timestamp with a non-empty timezone is stored as a UTC i
 
 ```rust
 use std::sync::Arc;
+use datafusion::arrow::array::TimestampMicrosecondArray;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::error::Result;
 
-fn main() {
-    // Absolute instant — stored as UTC regardless of the displayed timezone.
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Same integer value — different semantic interpretation.
+    let micros: i64 = 1_700_000_000_000_000; // 2023-11-14T22:13:20 as µs since epoch
+
+    // Absolute instant — the timezone makes this a UTC point in time.
     let event_time = Field::new(
         "event_time",
         DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
         false,
     );
 
-    // Local wall-clock — no absolute reference, cannot compare to `event_time`
-    // without an explicit cast.
+    // Local wall-clock — same digits, but no absolute reference.
     let scheduled_at = Field::new(
         "scheduled_at",
         DataType::Timestamp(TimeUnit::Microsecond, None),
@@ -241,25 +293,41 @@ fn main() {
 
     let schema = Arc::new(Schema::new(vec![event_time, scheduled_at]));
 
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(
+                TimestampMicrosecondArray::from(vec![micros])
+                    .with_timezone("UTC".to_string()),
+            ),
+            Arc::new(TimestampMicrosecondArray::from(vec![Some(micros)])),
+        ],
+    )?;
+
+    assert_eq!(batch.num_rows(), 1);
     assert_eq!(
-        schema.field(0).data_type(),
+        batch.schema().field(0).data_type(),
         &DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
     );
     assert_eq!(
-        schema.field(1).data_type(),
+        batch.schema().field(1).data_type(),
         &DataType::Timestamp(TimeUnit::Microsecond, None)
     );
+
+    Ok(())
 }
 ```
 
 :::{admonition} Pick one strategy per pipeline
 :class: tip
-Most systems standardize on UTC timestamps end-to-end. When joining columns with different timezone settings, cast both to the same [`DataType::Timestamp`] variant first — type coercion does not reconcile timezone presence implicitly.
+Most systems standardize on UTC timestamps end-to-end. When joining columns with different timezone settings, cast both to the same [`DataType::Timestamp`] variant first — type coercion does not reconcile timezone presence implicitly. For how DataFusion coerces temporal types, see [The Coercion Hierarchy](type-coercion.md#the-coercion-hierarchy). For the SQL-side temporal type mapping, see [SQL Data Types](../../../user-guide/sql/data_types.md).
 :::
 
 ### Nested Types: Struct, List, Map
 
-Hierarchical data — nested JSON, Parquet groups, event payloads — is preserved losslessly by Arrow's [`Struct`][`DataType::Struct`], [`List`][`DataType::List`], and [`Map`][`DataType::Map`] types. Flattening into parallel scalar columns drops the relationship between fields; nested types keep it intact. For the high-level placement of nested types inside a schema, see [Nested Types in Anatomy of a Schema](schema-anatomy.md#nested-types).
+**Struct, List, and Map preserve hierarchical relationships that flattening into parallel scalar columns would destroy.**
+
+Event payloads, nested JSON, and Parquet groups carry fields that belong together — a user's address is a single object with street, city, and postal code, not three unrelated columns. Flattening those into top-level scalars discards the grouping and makes schema evolution fragile. Arrow's [`Struct`][`DataType::Struct`], [`List`][`DataType::List`], and [`Map`][`DataType::Map`] types encode the hierarchy directly in the schema, keeping the relationship between fields intact and queryable. For the high-level placement of nested types inside a schema, see [Nested Types in Anatomy of a Schema](schema-anatomy.md#nested-types).
 
 | Type       | Shape                                 | Arrow variant                | Use for                                |
 | :--------- | :------------------------------------ | :--------------------------- | :------------------------------------- |
@@ -270,8 +338,10 @@ Hierarchical data — nested JSON, Parquet groups, event payloads — is preserv
 ```rust
 use std::sync::Arc;
 use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema};
+use datafusion::error::Result;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Struct: a nested object with its own field list.
     let metadata_type = DataType::Struct(Fields::from(vec![
         Field::new("source", DataType::Utf8, true),
@@ -301,12 +371,14 @@ fn main() {
     ]);
 
     assert_eq!(schema.fields().len(), 3);
+
+    Ok(())
 }
 ```
 
 :::{admonition} Querying nested fields
 :class: seealso
-For extracting values from nested columns (`get_field()` on struct, `array_element()` on list), see [Applying Schemas and Modeling Data — Strategy 4: Nested Data](schema-application.md#strategy-nested-data).
+For extracting values from nested columns (`get_field()` on struct, `array_element()` on list), see the NDJSON section in [Applying Schemas](schema-application.md#ndjson-name-based-alignment), which demonstrates nested type support in JSON sources.
 :::
 
 :::{admonition} Use `Large*` variants only when needed
@@ -314,21 +386,27 @@ For extracting values from nested columns (`get_field()` on struct, `array_eleme
 [`LargeUtf8`], [`LargeBinary`], and [`LargeList`] use 64-bit offsets and cost more memory per array. Use them only when a single value might exceed 2 GB. DataFusion does not enforce key uniqueness in [`DataType::Map`] — duplicate keys must be resolved in query logic if the source format permits them.
 :::
 
-Types and nullability define the structural contract. The next layer — metadata — adds semantic context that the optimizer ignores but humans and governance systems depend on.
+With types fully defined — scalar, parameterized, and composite — the structural contract is in place. The next layer adds *semantic* context: schema and field metadata that the optimizer ignores but humans and governance systems depend on.
+
+---
 
 ## Attaching Metadata
 
-**Field- and schema-level metadata embed context (descriptions, lineage, PII classification) as key-value strings; DataFusion preserves them end-to-end but the optimizer never reads them.**
+**Metadata — units, lineage, PII classifications, descriptions — adds interpretive value that schema fields alone cannot express; DataFusion preserves it end-to-end as key-value strings on fields and schemas.**
 
-Attach metadata with [`Field::with_metadata()`] on individual fields and with [`Schema::new_with_metadata()`] at the schema level. Both accept `HashMap<String, String>`:
+Schema fields — column name, data type, nullability — serve the query engine: the optimizer reads them, type coercion depends on them, plan validation enforces them. But they say nothing about **what the data means** to human or businesslogic. Without a standard place to record units, source-system lineage, or PII status, that knowledge lives in wikis, Slack threads, or tribal memory — disconnected from the data it describes. Arrow's metadata layer keeps that context attached to the data itself as `HashMap<String, String>` on both individual fields and the schema as a whole. DataFusion preserves metadata through the plan but does not interpret it, so creation and editing follow their own pattern.
+
+Attach metadata with [`Field::with_metadata()`] on individual fields and with [`Schema::new_with_metadata()`] at the schema level:
 
 ```rust
 use std::collections::HashMap;
 use std::sync::Arc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::error::Result;
 
-fn main() {
-    // Field-level: lineage and classification.
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Field-level: track which upstream system produced this field.
     let id_field = Field::new("user_id", DataType::Int64, false)
         .with_metadata(HashMap::from([
             ("source_system".to_string(), "crm".to_string()),
@@ -357,10 +435,12 @@ fn main() {
         schema.metadata().get("schema_version"),
         Some(&"v2.1".to_string())
     );
+
+    Ok(())
 }
 ```
 
-Not all formats preserve metadata equally. Arrow IPC round-trips it losslessly. Parquet can embed it, but DataFusion skips file-level schema metadata by default — set `.skip_metadata(false)` on [`ParquetReadOptions`] if your pipeline relies on it. CSV and NDJSON carry no metadata at all.
+Metadata survives only if the output format supports it — writing to the wrong format silently drops every annotation you attached. Arrow IPC round-trips metadata losslessly. Parquet can embed it, but DataFusion skips file-level schema metadata by default; set `.skip_metadata(false)` on [`ParquetReadOptions`] if your pipeline relies on it. CSV and NDJSON carry no metadata at all — any annotations (PII flags, lineage, units) must be stored out-of-band if the data passes through these formats.
 
 :::{admonition} Metadata is not a constraint system
 :class: warning
@@ -372,17 +452,27 @@ Setting `primary_key=true` or `unique=true` in field metadata is documentation o
 For how metadata is classified as "secondary" schema information and how it propagates through the plan, see [Schema Concepts — What the Contract Contains](schema-concepts.md#what-the-contract-contains) and [Metadata in Anatomy of a Schema](schema-anatomy.md#metadata).
 :::
 
+With fields, types, and metadata in place, the Arrow-level schema definition is complete. The next section wraps that Arrow [`Schema`] into a [`DFSchema`] — the query-planning layer that adds table qualifiers and functional dependencies.
+
+---
+
 ## Defining a `DFSchema` Directly
 
-**[`DFSchema`] adds table qualifiers and functional dependencies to an Arrow [`Schema`] — defining one by hand is reserved for custom [`TableProvider`]s, [`LogicalPlan`] node authoring, and test fixtures.**
+**[`DFSchema`] bridges the Arrow [`Schema`] to the [`LogicalPlan`] — wrapping the physical column definitions with table qualifiers and functional dependencies that column resolution, type coercion, and optimization depend on.**
 
-For ordinary DataFrame work (reading files, running transformations, writing output), DataFusion builds [`DFSchema`] for you. You reach for these constructors in three scenarios:
+The previous sections built the Arrow-level definition: fields, data types, nullability, metadata. That definition describes *what the columns are*, but the query engine also needs to know *which table each column belongs to* and *which columns uniquely determine others*. [`DFSchema`] adds that relational context. Table qualifiers (via [`TableReference`]) disambiguate columns when multiple tables are involved — `orders.id` vs. `users.id` after a join. Functional dependencies express constraints like primary keys, enabling optimizer transformations such as join elimination and distinct pushdown.
+
+For ordinary DataFrame work — reading files, running transformations, writing output — DataFusion builds [`DFSchema`] automatically. You construct one by hand in three scenarios:
 
 1. **Implementing a custom [`TableProvider`]** — `schema()` returns a [`SchemaRef`], but plan-facing helpers may need a qualified [`DFSchema`].
 2. **Authoring a [`LogicalPlan`] node** — each plan node derives its own output [`DFSchema`] from input schemas and projected expressions.
 3. **Building test fixtures** — simulating query context for unit tests of schema-dependent code.
 
 ### Constructor Reference
+
+**The right constructor depends on two decisions: whether fields need table qualifiers and whether duplicate field names should be rejected at construction time.**
+
+Six constructors cover the combinations. Qualifier strategy determines how fields are scoped — no qualifier (bare column names), a single shared qualifier (all fields belong to one table), or per-field qualifiers (join results with columns from different tables). The `check_names()` column shows which constructors validate uniqueness and return an error on duplicates.
 
 | Constructor                                                                                                                | Input                                                | Qualifiers         | `check_names()` | Purpose                                    |
 | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------ | :-------------: | ------------------------------------------ |
@@ -402,8 +492,10 @@ For ordinary DataFrame work (reading files, running transformations, writing out
 use std::sync::Arc;
 use datafusion::common::{DFSchema, TableReference};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::error::Result;
 
-fn main() -> datafusion::error::Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let arrow_schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("amount", DataType::Decimal128(19, 2), true),
@@ -441,21 +533,25 @@ fn main() -> datafusion::error::Result<()> {
 To re-qualify, strip qualifiers, merge, or join [`DFSchema`] values after construction, see [Transforming Schemas](schema-transformation.md).
 :::
 
-## Conclusion & Further Reading
+With both the Arrow [`Schema`] and its [`DFSchema`] wrapper defined, the schema definition is complete.
+
+---
+
+## Conclusion
 
 **An explicit schema replaces inference guesswork with a contract — column types, nullability, and metadata are locked before the first byte of data is read.**
 
-The automatic path covered in the opening section works for exploration and uniform data. When it falls short — precision-sensitive types, multi-file consistency, custom sources — the primitives in this document give you full control: [`Field`], [`Schema`], and [`SchemaRef`] for the Arrow layer; parameterized types and metadata for semantic precision; [`DFSchema`] constructors for plan-level work. With the schema defined, the next step is wiring it into concrete readers or validating it against inferred results.
+The automatic path covered in the opening section works for exploration and uniform data. When it falls short — precision-sensitive types, multi-file consistency, custom sources — the primitives in this document give you full control: [`Field`], [`Schema`], and [`SchemaRef`] for the Arrow layer; parameterized types and metadata for semantic precision; [`DFSchema`] constructors for plan-level work.
 
-:::{admonition} Related documents
-:class: seealso
+The natural next step is [Applying Schemas](schema-application.md) — wiring the defined schema into CSV, NDJSON, and Parquet readers via format-specific read options. To verify a schema against inferred results before execution, see [Inspecting and Validating Schemas](schema-inspection.md).
 
-- [Schema Inference](schema-inference.md) — the inference path and its failure modes
+### Further Reading
+
 - [Applying Schemas](schema-application.md) — format-specific wiring (CSV, NDJSON, Parquet, partitions)
+- [Schema Inference](schema-inference.md) — the inference path and its failure modes
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking a defined schema before execution
 - [Transforming Schemas](schema-transformation.md) — qualifiers, combining, nullability on existing schemas
 - [Anatomy of a Schema](schema-anatomy.md) — field-level reference for [`DataType`], nullability, metadata
-:::
 
 <!-- Link references -->
 
@@ -482,6 +578,7 @@ The automatic path covered in the opening section works for exploration and unif
 [`LargeList`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeList
 [`Arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
 [`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
+[`DFSchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/type.DFSchemaRef.html
 [`DFSchema::try_from`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#impl-TryFrom%3CSchema%3E-for-DFSchema
 [`DFSchema::empty()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.empty
 [`DFSchema::from_unqualified_fields`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.from_unqualified_fields
@@ -491,6 +588,7 @@ The automatic path covered in the opening section works for exploration and unif
 [`check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.check_names
 [`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
 [`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/provider/trait.TableProvider.html
+[`MemTable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.MemTable.html
 [`ListingTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
 [`ParquetReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
 [`Constraints`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Constraints.html
@@ -498,3 +596,4 @@ The automatic path covered in the opening section works for exploration and unif
 [`ctx.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
 [`ctx.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
 [`ctx.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records

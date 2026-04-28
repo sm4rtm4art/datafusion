@@ -17,7 +17,6 @@
   under the License.
 -->
 
-# Transforming Schemas
 
 <!--TODO
 
@@ -36,6 +35,10 @@
    existing DFSchema, not construction from scratch — link rather than duplicate.
 
 -->
+
+
+# Transforming Schemas
+
 
 :::{admonition} Style Note
 :class: note

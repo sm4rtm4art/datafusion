@@ -17,14 +17,10 @@
   under the License.
 -->
 
-# Applying Schemas and Modeling Data
+<!-- TODO: Write the abstract last (Stage 5). -->
 
-<!--TODO
+# Applying Schemas
 
-1. ABSTRACT
-2. Fix monolith cross-references (concepts.md, creating-dataframes.md no longer exist here)
-
--->
 :::{admonition} Style Note
 :class: note
 :collapsible: closed
@@ -42,42 +38,31 @@ In this document, code elements follow a consistent pattern:
 
 :::
 
-```{contents} Applying Schemas and Modeling Data
+```{contents} Table of Contents for Applying Schemas
 :local:
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## Introduction 
 
-## Applying Schemas and Modeling Data
+**Applying a schema is the bridge between definition and execution — the mechanism differs by format, but the pattern is consistent: pass the schema to the read options and let DataFusion enforce it.**
 
-A schema defines the structure of your data—column names, types, nullability, and nested structures. Applying schemas when reading files enables planning-time validation, improves query performance, and ensures data quality. This section covers schema strategies for different file formats, handling schema evolution, partition pruning, and modeling nested data. <br> **See also:**
+Text formats (CSV, NDJSON) benefit most from explicit schemas because they carry no type information. Self-describing formats (Parquet, Avro, Arrow IPC) embed their own schemas but require normalization when files evolve independently. Partitioned datasets add a structural dimension where partition columns live outside the file schema. For building the schemas themselves — fields, parameterized types, metadata, `DFSchema` — see [Creating Schemas](schema-creation.md).
 
-- [Data Model & Schema](./concepts.md#data-model--schema) for fundamentals and
-- [Creating DataFrames](./creating-dataframes.md) for file reading basics.
 
-**Jump to:**
 
-- [CSV](#strategy-text-formats)
-- [NDJSON](#strategy-text-formats)
-- [Parquet](#strategy-self-describing-formats)
-- [Partitions](#strategy-partitioned-datasets)
-- [Nested Data](#strategy-nested-data)
+## Text Formats: CSV and NDJSON
 
-(strategy-text-formats)=
+**Text formats carry no type information — provide an explicit schema for production workloads to prevent inference drift.**
 
-### Strategy 1: Text Formats (CSV & NDJSON) — Enforce Schemas
-
-**Text formats don't embed type information—provide an explicit schema for production workloads to prevent inference drift.**
-
-Without a schema, DataFusion infers types from a sample of rows ([`schema_infer_max_records`], default 1,000). Providing a schema enforces a contract on the raw data.
+Without a schema, DataFusion infers types from a sample of rows ([`schema_infer_max_records`], default 1,000). Providing a schema via the read options enforces a declared contract on the raw data, overriding inference entirely. For why inference falls short and when explicit schemas are worth defining, see [The Case for Explicit Definition](schema-creation.md#the-case-for-explicit-definition).
 
 | Format     |   Alignment    | Key Behaviors                                                                                  |
 | :--------- | :------------: | :--------------------------------------------------------------------------------------------- |
 | **CSV**    | **Positional** | Fields map to schema columns by order. Header names are read but position determines mapping   |
 | **NDJSON** | **Name-based** | JSON keys match schema field names. Order doesn't matter. Missing keys → NULL, extra → ignored |
 
-#### CSV — Positional Alignment
+### CSV — Positional Alignment
 
 CSV uses **positional** mapping: the first column maps to the first field in your schema, the second to the second, and so on. Header names (if present with [`has_header(true)`][`has_header`]) are read but field order determines the mapping.
 
@@ -136,10 +121,12 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-> **Warning:** <br>
-> Schema inference samples only the first 1,000 rows by default ([`schema_infer_max_records`]). Common pitfalls: IDs inferred as `Int32` then overflow, currency inferred as `Float64` (rounding errors), sparse columns inferred as `Utf8`. Always provide explicit schemas for CSV in production.
+:::{admonition} Inference pitfalls in CSV
+:class: warning
+Schema inference samples only the first 1,000 rows by default ([`schema_infer_max_records`]). Common pitfalls: IDs inferred as `Int32` then overflow, currency inferred as `Float64` (rounding errors), sparse columns inferred as `Utf8`. Always provide explicit schemas for CSV in production. For the full inference mechanism and its failure modes, see [Schema Inference](schema-inference.md).
+:::
 
-#### NDJSON — Name-Based Alignment with Flexible Structure
+### NDJSON — Name-Based Alignment
 
 NDJSON uses **name-based** mapping: JSON keys match schema field names, so field order does not matter. Missing keys become NULL; extra keys are silently ignored.
 
@@ -148,7 +135,7 @@ Key behaviors:
 - **Missing keys**: with an explicit schema, missing fields become NULL.
 - **Extra keys**: keys not in the schema are ignored (no error, no column).
 - **Types**: JSON values are cast to declared Arrow types; invalid casts raise errors.
-- **Nested data**: supports `Struct`, `List`, `Map` (CSV cannot express nested types).
+- **Nested data**: supports `Struct`, `List`, `Map` (CSV cannot express nested types). For defining nested types in a schema, see [Nested Types: Struct, List, Map](schema-creation.md#nested-types-struct-list-map).
 
 ```rust
 use datafusion::prelude::*;
@@ -196,11 +183,13 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-(strategy-self-describing-formats)=
+Text formats are the most common case for explicit schemas. Self-describing formats carry their own schema, but evolution across files introduces a different challenge.
 
-### Strategy 2: Self-Describing Formats (Parquet/Avro/Arrow) — Merge & Normalize
+---
 
-**Self-describing formats embed schemas, but schemas evolve—DataFusion auto-merges them and you should normalize to canonical types.**
+## Self-Describing Formats: Parquet, Avro, Arrow IPC
+
+**Self-describing formats embed schemas in file metadata — but schemas evolve across files, and DataFusion auto-merges them.**
 
 When reading multiple files with evolved schemas, DataFusion merges them automatically:
 
@@ -213,11 +202,11 @@ Merged result:     id (Int64),  amount (Decimal128(38,9)),  region (Utf8, nullab
 
 - Types are **widened**: `Int32` + `Int64` → `Int64`
 - Columns are **added**: missing columns appear as nullable
-- Use [`.read_parquet()`] with multiple file paths to trigger auto-merge
+- Use [`ctx.read_parquet()`] with multiple file paths to trigger auto-merge
 
-#### Defensive pattern: enforce a canonical schema
+### Normalizing to a Canonical Schema
 
-**After reading, normalize to your canonical schema using [`.select()`] and [`.cast_to()`]—decouple your pipeline from upstream schema changes.**
+**After reading, normalize to your canonical schema using [`.select()`] and [`.cast_to()`] — decouple your pipeline from upstream schema changes.**
 
 ```rust
 use datafusion::prelude::*;
@@ -264,13 +253,20 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-(strategy-partitioned-datasets)=
+:::{admonition} Parquet metadata and schema skipping
+:class: tip
+DataFusion skips file-level schema metadata by default when reading Parquet. If your pipeline relies on metadata (PII flags, lineage annotations), set `.skip_metadata(false)` on [`ParquetReadOptions`]. For how metadata is attached during schema creation, see [Attaching Metadata](schema-creation.md#attaching-metadata).
+:::
 
-### Strategy 3: Partitioned Datasets — Pruning with ListingTable
+Auto-merge handles schema evolution across files. For partitioned datasets, schema application involves an additional dimension: partition columns that live outside the file schema.
 
-**Hive-style partitioning lets DataFusion skip entire directories based on query filters.**
+---
 
-[`ListingTable`] reads directories like `/data/events/year=2024/month=01/...` and uses query filters to skip non-matching partitions entirely. Use [`.explain()`] to verify pruning in your plan. (See also: [Reading Explain Plans](../../user-guide/explain-usage.md))
+## Partitioned Datasets with ListingTable
+
+**Hive-style partitioning lets DataFusion skip entire directories based on query filters — but partition columns must be declared separately from the file schema.**
+
+[`ListingTable`] reads directories like `/data/events/year=2024/month=01/...` and uses query filters to skip non-matching partitions entirely. The file schema describes the columns *inside* each file; partition columns are declared via [`with_table_partition_cols()`] and must match the directory nesting order.
 
 ```rust,no_run
 // no_run: requires a filesystem with Hive-style partition layout
@@ -318,62 +314,33 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-(strategy-nested-data)=
-
-### Strategy 4: Nested Data — Struct/List/Map Modeling
-
-**Use Arrow's `Struct`, `List`, and `Map` types to model hierarchical data—avoid lossy flattening of JSON or Parquet sources.**
-
-Define the schema with nested types and query nested fields using `get_field()` (structs) or `array_element()` (lists):
-
-```rust
-use std::sync::Arc;
-use datafusion::prelude::*;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, Fields};
-
-fn main() {
-    // Struct: a nested object
-    let metadata_type = DataType::Struct(Fields::from(vec![
-        Field::new("source", DataType::Utf8, true),
-        Field::new("version", DataType::Int32, true),
-    ]));
-
-    // List: variable-length array
-    let tags_type = DataType::List(
-        Arc::new(Field::new("tag", DataType::Utf8, true))
-    );
-
-    // Map: key-value pairs (List<Struct<key, value>> internally)
-    let attributes_type = DataType::Map(
-        Arc::new(Field::new("entries",
-            DataType::Struct(Fields::from(vec![
-                Field::new("key", DataType::Utf8, false),
-                Field::new("value", DataType::Int64, true),
-            ])),
-            false
-        )),
-        false,
-    );
-
-    let schema = Schema::new(vec![
-        Field::new("metadata", metadata_type, true),
-        Field::new("tags", tags_type, true),
-        Field::new("attributes", attributes_type, true),
-    ]);
-    assert_eq!(schema.fields().len(), 3);
-
-    // Querying nested fields:
-    let _source = get_field(col("metadata"), "source");          // Struct access
-    let _filter = get_field(col("metadata"), "version").gt_eq(lit(2));
-    let _first  = array_element(col("tags"), lit(1));            // List: 1-based
-}
-```
-
-> **Tip:** <br>
-> Use `LargeUtf8` or `LargeList` only when a single value might exceed 2 GB. DataFusion does not enforce key uniqueness in maps—handle duplicate keys in query logic if needed.
+:::{admonition} Verify partition pruning
+:class: tip
+Use [`.explain()`] to confirm that partition filters appear in the plan. If they don't, check that the filter column matches a declared partition column name and type exactly.
+:::
 
 ---
 
-```
+## Conclusion
 
-```
+**Applying a schema is the bridge between definition and execution — the mechanism differs by format, but the pattern is consistent: pass the schema to the read options and let DataFusion enforce it.**
+
+Text formats (CSV, NDJSON) benefit most from explicit schemas because they carry no type information. Self-describing formats (Parquet, Avro, Arrow IPC) embed their own schemas but require normalization when files evolve independently. Partitioned datasets add a structural dimension where partition columns live outside the file schema. For building the schemas themselves — fields, parameterized types, metadata, `DFSchema` — see [Creating Schemas](schema-creation.md).
+
+### Further Reading
+
+- [Creating Schemas](schema-creation.md) — constructing Arrow schemas from primitives through `DFSchema`
+- [Schema Inference](schema-inference.md) — the inference path and its failure modes
+- [Inspecting and Validating Schemas](schema-inspection.md) — checking a schema before execution
+- [Schema Concepts](schema-concepts.md) — the schema contract, primary vs. secondary metadata
+- [Anatomy of a Schema](schema-anatomy.md) — field-level reference for [`DataType`], nullability, metadata
+
+<!-- Link references -->
+
+[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`has_header`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.has_header
+[`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
+[`ctx.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`ParquetReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
+[`ListingTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`DataType`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html
