@@ -17,7 +17,16 @@
   under the License.
 -->
 
-<!--  TODO: Restructure `hybrid_sql.md`
+<!--  TODO: 
+
+<!--TODO
+
+1. ABSTRACT
+2. INTRODUCTION
+3. merge the 2 bridging sections into one
+
+
+Restructure `hybrid_sql.md`
 
 **1. Consolidate the "Bridging" Logic**
 *   **Delete** the entire section titled `## Bridging to SQL` (and its code example).
@@ -48,12 +57,7 @@ Ensure the final document flows in this order:
 
 # Mixing SQL and DataFrames
 
-<!--TODO
 
-1. ABSTRACT
-2. INTRODUCTION
-3. merge the 2 bridging sections into one
--->
 
 :::{admonition} Style Note
 :class: note

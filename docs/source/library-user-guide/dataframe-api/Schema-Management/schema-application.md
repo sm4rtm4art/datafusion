@@ -47,11 +47,11 @@ In this document, code elements follow a consistent pattern:
 
 **Applying a schema is the bridge between definition and execution — the mechanism differs by format, but the pattern is consistent: pass the schema to the read options and let DataFusion enforce it.**
 
-Text formats (CSV, NDJSON) benefit most from explicit schemas because they carry no type information. Self-describing formats (Parquet, Avro, Arrow IPC) embed their own schemas but require normalization when files evolve independently. Partitioned datasets add a structural dimension where partition columns live outside the file schema. For building the schemas themselves — fields, parameterized types, metadata, `DFSchema` — see [Creating Schemas](schema-creation.md).
+Text formats (CSV, JSON) benefit most from explicit schemas because they carry no type information. Self-describing formats (Parquet, Avro, Arrow IPC) embed their own schemas but require normalization when files evolve independently. Partitioned datasets add a structural dimension where partition columns live outside the file schema. For building the schemas themselves — fields, parameterized types, metadata, `DFSchema` — see [Creating Schemas](schema-creation.md).
 
 
 
-## Text Formats: CSV and NDJSON
+## Text Formats: CSV and JSON
 
 **Text formats carry no type information — provide an explicit schema for production workloads to prevent inference drift.**
 
@@ -60,7 +60,7 @@ Without a schema, DataFusion infers types from a sample of rows ([`schema_infer_
 | Format     |   Alignment    | Key Behaviors                                                                                  |
 | :--------- | :------------: | :--------------------------------------------------------------------------------------------- |
 | **CSV**    | **Positional** | Fields map to schema columns by order. Header names are read but position determines mapping   |
-| **NDJSON** | **Name-based** | JSON keys match schema field names. Order doesn't matter. Missing keys → NULL, extra → ignored |
+| **JSON** | **Name-based** | JSON keys match schema field names. Order doesn't matter. Missing keys → NULL, extra → ignored |
 
 ### CSV — Positional Alignment
 
@@ -126,9 +126,9 @@ async fn main() -> datafusion::error::Result<()> {
 Schema inference samples only the first 1,000 rows by default ([`schema_infer_max_records`]). Common pitfalls: IDs inferred as `Int32` then overflow, currency inferred as `Float64` (rounding errors), sparse columns inferred as `Utf8`. Always provide explicit schemas for CSV in production. For the full inference mechanism and its failure modes, see [Schema Inference](schema-inference.md).
 :::
 
-### NDJSON — Name-Based Alignment
+### JSON — Name-Based Alignment
 
-NDJSON uses **name-based** mapping: JSON keys match schema field names, so field order does not matter. Missing keys become NULL; extra keys are silently ignored.
+JSON uses **name-based** mapping: JSON keys match schema field names, so field order does not matter. Missing keys become NULL; extra keys are silently ignored.
 
 Key behaviors:
 
@@ -162,7 +162,7 @@ async fn main() -> datafusion::error::Result<()> {
 
     let path = "data.json";
     # let path = json_path.to_str().unwrap();
-    let df = ctx.read_json(path, NdJsonReadOptions::default()
+    let df = ctx.read_json(path, JSONReadOptions::default()
         .schema(&schema)
     ).await?;
 
@@ -325,7 +325,7 @@ Use [`.explain()`] to confirm that partition filters appear in the plan. If they
 
 **Applying a schema is the bridge between definition and execution — the mechanism differs by format, but the pattern is consistent: pass the schema to the read options and let DataFusion enforce it.**
 
-Text formats (CSV, NDJSON) benefit most from explicit schemas because they carry no type information. Self-describing formats (Parquet, Avro, Arrow IPC) embed their own schemas but require normalization when files evolve independently. Partitioned datasets add a structural dimension where partition columns live outside the file schema. For building the schemas themselves — fields, parameterized types, metadata, `DFSchema` — see [Creating Schemas](schema-creation.md).
+Text formats (CSV, JSON) benefit most from explicit schemas because they carry no type information. Self-describing formats (Parquet, Avro, Arrow IPC) embed their own schemas but require normalization when files evolve independently. Partitioned datasets add a structural dimension where partition columns live outside the file schema. For building the schemas themselves — fields, parameterized types, metadata, `DFSchema` — see [Creating Schemas](schema-creation.md).
 
 ### Further Reading
 

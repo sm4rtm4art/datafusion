@@ -83,7 +83,7 @@ How that [`DFSchema`] reaches the [`DataFrame`] depends on the source — file m
 Schema creation happens inside the reader or table registration. The path DataFusion takes depends on the source:
 
 - **Self-describing formats** — Parquet, Avro, Arrow IPC — carry the schema in file metadata, which the engine reads directly.
-- **Line-delimited formats** — CSV, NDJSON — have no embedded schema, so the engine infers one by scanning the first 1,000 rows by default (configurable via [`schema_infer_max_records`]).
+- **Line-delimited formats** — CSV, NDJSON — have no embedded schema, so the engine infers one by scanning the first 1,000 rows by default (configurable via [`CsvReadOptions::schema_infer_max_records()`] or [`NdJsonReadOptions::schema_infer_max_records()`]).
 - **Table registration** — [`TableProvider`] implementations and [`MemTable`] supply a [`SchemaRef`] at construction; the engine reads it as-is, but the schema itself was declared in code at the source.
 
 All three paths converge at an Arrow [`Schema`], which DataFusion wraps into a [`DFSchema`] and attaches to the [`LogicalPlan`]:
@@ -125,14 +125,14 @@ Automatic creation covers the common case — but it falls short under predictab
 
 File reading is the most visible failure surface, but not the only one. [`TableProvider`] implementations that bridge external systems (PostgreSQL, MySQL, REST APIs) must translate source-native types into Arrow types — a mapping that can lose precision or fail on unsupported types. In-memory data and write targets carry their own variants. Explicit definition fixes the contract before execution begins, regardless of the source.
 
-| Failure mode          | What happens                                                  | Affected sources                                                |
-| :-------------------- | :------------------------------------------------------------ | :-------------------------------------------------------------- |
-| Type guessing         | Currency → `Float64` instead of `Decimal128`, dates → `Utf8` | CSV, NDJSON                                                     |
-| Sparse columns        | Fields appearing after the sample window are missed entirely  | CSV, NDJSON                                                     |
-| Sample budget sharing | Later files never contribute to the inferred schema           | Multi-file CSV / NDJSON                                         |
-| Schema divergence     | Conflicting types for the same field trigger merge failures   | Multi-file Parquet                                              |
-| Damaged metadata      | Read fails outright — no row-sample fallback exists           | Parquet, Avro, Arrow IPC                                        |
-| Type translation      | Source-native types map incorrectly or incompletely to Arrow  | [`TableProvider`] bridging external databases (PostgreSQL, etc.) |
+| Failure mode          | What happens                                                    | Affected sources                                                 |
+| :-------------------- | :-------------------------------------------------------------- | :--------------------------------------------------------------- |
+| Type guessing         | Currency → `Float64` instead of `Decimal128`, dates → `Utf8`    | CSV, NDJSON                                                      |
+| Sparse columns        | Fields appearing after the sample window are missed entirely    | CSV, NDJSON                                                      |
+| Sample budget sharing | Later files contribute only if earlier files leave budget       | Multi-file CSV / NDJSON                                          |
+| Schema divergence     | Conflicting types for the same field trigger merge failures     | Multi-file Parquet                                               |
+| Damaged metadata      | Read fails outright — no row-sample fallback exists             | Parquet, Avro, Arrow IPC                                         |
+| Type translation      | Source-native types map incorrectly or incompletely to Arrow    | [`TableProvider`] bridging external databases (PostgreSQL, etc.) |
 | Code-only sources     | No file, no metadata — the schema must be authored from scratch | `MemTable`, `RecordBatch` registration, plan-level test fixtures |
 
 :::{admonition} Beyond file errors
@@ -143,7 +143,7 @@ Failure modes are not the only motivators. Several workflows require explicit sc
 - **Production contract enforcement.** A declared schema rejects upstream type drift at plan time rather than at execution. Pipelines that promise stable output benefit even when the source is technically inferable.
 - **Pre-write output control.** Writers honor the schema they are given — explicit construction is how you pin Parquet logical types, dictionary encodings, or timezone tags on the output.
 - **Type precision beyond inference.** [`Decimal128`] precision and scale, timezone-tagged [`DataType::Timestamp`] variants, and per-field nullability inside [`DataType::Struct`], [`DataType::List`], and [`DataType::Map`] are not reliably inferred — they have to be declared.
-:::
+  :::
 
 For the inference path's full failure catalog, see [Schema Inference — Risks and Failure Modes](schema-inference.md#inference-risks-and-failure-modes). To validate a schema against execution-time data and catch mismatches early, see [Inspecting and Validating Schemas](schema-inspection.md).
 
@@ -157,11 +157,11 @@ The remainder of this document walks explicit creation end to end — from Arrow
 
 The previous section showed where the schema lives and how it reaches the [`DataFrame`]. This section moves from understanding to construction — the fine-grained Arrow layer where every column name, type, and nullability flag is declared. Three Arrow primitives compose every schema; [Anatomy of a Schema](schema-anatomy.md) covers each property in depth.
 
-| Primitive        | Role                                                       | Key properties                                                            |
-| :--------------- | :--------------------------------------------------------- | :------------------------------------------------------------------------ |
-| [`Field`]        | One column                                                 | [name](schema-anatomy.md#name), [data type](schema-anatomy.md#data-type), [nullability](schema-anatomy.md#nullability), [metadata](schema-anatomy.md#metadata) |
-| [`Schema`]       | Ordered list of [`Field`]s plus schema-level metadata      | [Field order](schema-anatomy.md#field-order), [field count](schema-anatomy.md#field-count) |
-| [`SchemaRef`]    | `Arc<Schema>` for cheap sharing                            | `O(1)` clone, thread-safe                                                 |
+| Primitive     | Role                                                  | Key properties                                                                                                                                                 |
+| :------------ | :---------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`Field`]     | One column                                            | [name](schema-anatomy.md#name), [data type](schema-anatomy.md#data-type), [nullability](schema-anatomy.md#nullability), [metadata](schema-anatomy.md#metadata) |
+| [`Schema`]    | Ordered list of [`Field`]s plus schema-level metadata | [Field order](schema-anatomy.md#field-order), [field count](schema-anatomy.md#field-count)                                                                     |
+| [`SchemaRef`] | `Arc<Schema>` for cheap sharing                       | `O(1)` clone, thread-safe                                                                                                                                      |
 
 ### Composing the Minimal Schema
 
@@ -174,8 +174,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::error::Result;
 use std::sync::Arc;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Define once, share via Arc — cloning the Arc is O(1).
     let schema: SchemaRef = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int64, false),     // primary key, not nullable
@@ -232,8 +231,7 @@ Financial calculations — currency totals, tax computations, ledger balances �
 use datafusion::arrow::datatypes::{DataType, Field};
 use datafusion::error::Result;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Currency: 2 decimal places, room for trillion-dollar values.
     let _price = Field::new("price", DataType::Decimal128(19, 2), false);
 
@@ -256,12 +254,12 @@ Casting `Decimal128(10, 2)` to `Decimal128(8, 2)` fails for any value with more 
 
 **A timestamp with a timezone is an absolute instant; without one, it is a wall-clock reading — mixing the two silently produces wrong results.**
 
-Server logs, transactions, and event streams record *when* something happened — an absolute instant, independent of the observer's location. Scheduled events, business hours, and calendar entries record *what time the clock shows* — a local reading tied to a specific timezone. Arrow's [`DataType::Timestamp`] encodes this distinction through a timezone parameter: a non-empty timezone makes the value an absolute UTC instant; `None` makes it a wall-clock value. The two are incompatible in arithmetic and comparisons — mixing them silently produces wrong answers or errors at execution time.
+Server logs, transactions, and event streams record _when_ something happened — an absolute instant, independent of the observer's location. Scheduled events, business hours, and calendar entries record _what time the clock shows_ — a local reading tied to a specific timezone. Arrow's [`DataType::Timestamp`] encodes this distinction through a timezone parameter: a non-empty timezone makes the value an absolute UTC instant; `None` makes it a wall-clock value. The two are incompatible in arithmetic and comparisons — mixing them silently produces wrong answers or errors at execution time.
 
-| Type                 | Example                               | Semantics                                                    | Use for                                   |
-| :------------------- | :-----------------------------------: | :----------------------------------------------------------- | :---------------------------------------- |
-| **With timezone**    | `Timestamp(Microsecond, Some("UTC"))` | Absolute UTC instant; the timezone string is display metadata | Server logs, transactions, event streams  |
-| **Without timezone** | `Timestamp(Microsecond, None)`        | Wall-clock value relative to the producer's local time        | Scheduled events, opening hours, calendar |
+| Type                 |                Example                | Semantics                                                     | Use for                                   |
+| :------------------- | :-----------------------------------: | :------------------------------------------------------------ | :---------------------------------------- |
+| **With timezone**    | [`Timestamp(Microsecond, Some("UTC"))`] | Absolute UTC instant; the timezone string is display metadata | Server logs, transactions, event streams  |
+| **Without timezone** |    [`Timestamp(Microsecond, None)`]     | Wall-clock value relative to the producer's local time        | Scheduled events, opening hours, calendar |
 
 At the Arrow level, any timestamp with a non-empty timezone is stored as a UTC instant — the timezone string is metadata for display and interpretation. Changing between two non-empty timezones (for example `"UTC"` → `"America/New_York"`) is a metadata-only operation. Timestamps without a timezone cannot be compared to timestamped instants without an explicit cast.
 
@@ -272,8 +270,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Same integer value — different semantic interpretation.
     let micros: i64 = 1_700_000_000_000_000; // 2023-11-14T22:13:20 as µs since epoch
 
@@ -329,19 +326,18 @@ Most systems standardize on UTC timestamps end-to-end. When joining columns with
 
 Event payloads, nested JSON, and Parquet groups carry fields that belong together — a user's address is a single object with street, city, and postal code, not three unrelated columns. Flattening those into top-level scalars discards the grouping and makes schema evolution fragile. Arrow's [`Struct`][`DataType::Struct`], [`List`][`DataType::List`], and [`Map`][`DataType::Map`] types encode the hierarchy directly in the schema, keeping the relationship between fields intact and queryable. For the high-level placement of nested types inside a schema, see [Nested Types in Anatomy of a Schema](schema-anatomy.md#nested-types).
 
-| Type       | Shape                                 | Arrow variant                | Use for                                |
-| :--------- | :------------------------------------ | :--------------------------- | :------------------------------------- |
-| **Struct** | Fixed set of named fields             | [`DataType::Struct`]         | Heterogeneous record inside a column   |
-| **List**   | Variable-length homogeneous sequence  | [`DataType::List`]           | Tags, multi-value attributes           |
-| **Map**    | Key-value pairs                       | [`DataType::Map`]            | Labels, sparse attribute bags          |
+| Type       | Shape                                | Arrow variant        | Use for                              |
+| :--------- | :----------------------------------- | :------------------- | :----------------------------------- |
+| **Struct** | Fixed set of named fields            | [`DataType::Struct`] | Heterogeneous record inside a column |
+| **List**   | Variable-length homogeneous sequence | [`DataType::List`]   | Tags, multi-value attributes         |
+| **Map**    | Key-value pairs                      | [`DataType::Map`]    | Labels, sparse attribute bags        |
 
 ```rust
 use std::sync::Arc;
 use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema};
 use datafusion::error::Result;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Struct: a nested object with its own field list.
     let metadata_type = DataType::Struct(Fields::from(vec![
         Field::new("source", DataType::Utf8, true),
@@ -386,7 +382,7 @@ For extracting values from nested columns (`get_field()` on struct, `array_eleme
 [`LargeUtf8`], [`LargeBinary`], and [`LargeList`] use 64-bit offsets and cost more memory per array. Use them only when a single value might exceed 2 GB. DataFusion does not enforce key uniqueness in [`DataType::Map`] — duplicate keys must be resolved in query logic if the source format permits them.
 :::
 
-With types fully defined — scalar, parameterized, and composite — the structural contract is in place. The next layer adds *semantic* context: schema and field metadata that the optimizer ignores but humans and governance systems depend on.
+With types fully defined — scalar, parameterized, and composite — the structural contract is in place. The next layer adds _semantic_ context: schema and field metadata that the optimizer ignores but humans and governance systems depend on.
 
 ---
 
@@ -404,8 +400,7 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::error::Result;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Field-level: track which upstream system produced this field.
     let id_field = Field::new("user_id", DataType::Int64, false)
         .with_metadata(HashMap::from([
@@ -460,7 +455,7 @@ With fields, types, and metadata in place, the Arrow-level schema definition is 
 
 **[`DFSchema`] bridges the Arrow [`Schema`] to the [`LogicalPlan`] — wrapping the physical column definitions with table qualifiers and functional dependencies that column resolution, type coercion, and optimization depend on.**
 
-The previous sections built the Arrow-level definition: fields, data types, nullability, metadata. That definition describes *what the columns are*, but the query engine also needs to know *which table each column belongs to* and *which columns uniquely determine others*. [`DFSchema`] adds that relational context. Table qualifiers (via [`TableReference`]) disambiguate columns when multiple tables are involved — `orders.id` vs. `users.id` after a join. Functional dependencies express constraints like primary keys, enabling optimizer transformations such as join elimination and distinct pushdown.
+The previous sections built the Arrow-level definition: fields, data types, nullability, metadata. That definition describes _what the columns are_, but the query engine also needs to know _which table each column belongs to_ and _which columns uniquely determine others_. [`DFSchema`] adds that relational context. Table qualifiers (via [`TableReference`]) disambiguate columns when multiple tables are involved — `orders.id` vs. `users.id` after a join. Functional dependencies express constraints like primary keys, enabling optimizer transformations such as join elimination and distinct pushdown.
 
 For ordinary DataFrame work — reading files, running transformations, writing output — DataFusion builds [`DFSchema`] automatically. You construct one by hand in three scenarios:
 
@@ -474,14 +469,14 @@ For ordinary DataFrame work — reading files, running transformations, writing 
 
 Six constructors cover the combinations. Qualifier strategy determines how fields are scoped — no qualifier (bare column names), a single shared qualifier (all fields belong to one table), or per-field qualifiers (join results with columns from different tables). The `check_names()` column shows which constructors validate uniqueness and return an error on duplicates.
 
-| Constructor                                                                                                                | Input                                                | Qualifiers         | `check_names()` | Purpose                                    |
-| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------ | :-------------: | ------------------------------------------ |
-| [`DFSchema::try_from(schema)`][`DFSchema::try_from`]                                                                        | [`Schema`] or [`SchemaRef`]                          | all `None`         | —               | Wrap an Arrow schema without qualifiers    |
-| [`DFSchema::empty()`]                                                                                                       | —                                                    | —                  | —               | Zero-field schema                          |
-| [`DFSchema::from_unqualified_fields(fields, metadata)`][`DFSchema::from_unqualified_fields`]                                | [`Fields`] + `HashMap<String, String>`               | all `None`         | ✓               | Arrow fields with schema-level metadata    |
-| [`DFSchema::new_with_metadata(qualified_fields, metadata)`][`DFSchema::new_with_metadata`]                                  | `Vec<(Option<TableReference>, Arc<Field>)>` + meta   | per-field          | ✓               | Full control over qualifier per field      |
-| [`DFSchema::try_from_qualified_schema(qualifier, &schema)`][`DFSchema::try_from_qualified_schema`]                          | `impl Into<TableReference>` + `&Schema`              | same for all       | ✓               | Qualify every field with one table name    |
-| [`DFSchema::from_field_specific_qualified_schema(qualifiers, &schema)`][`DFSchema::from_field_specific_qualified_schema`]   | `Vec<Option<TableReference>>` + `&SchemaRef`         | per-field          | ✓               | Different qualifier per field              |
+| Constructor                                                                                                               | Input                                              | Qualifiers   | `check_names()` | Purpose                                 |
+| ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------ | :-------------: | --------------------------------------- |
+| [`DFSchema::try_from(schema)`][`DFSchema::try_from`]                                                                      | [`Schema`] or [`SchemaRef`]                        | all `None`   |        —        | Wrap an Arrow schema without qualifiers |
+| [`DFSchema::empty()`]                                                                                                     | —                                                  | —            |        —        | Zero-field schema                       |
+| [`DFSchema::from_unqualified_fields(fields, metadata)`][`DFSchema::from_unqualified_fields`]                              | [`Fields`] + `HashMap<String, String>`             | all `None`   |        ✓        | Arrow fields with schema-level metadata |
+| [`DFSchema::new_with_metadata(qualified_fields, metadata)`][`DFSchema::new_with_metadata`]                                | `Vec<(Option<TableReference>, Arc<Field>)>` + meta | per-field    |        ✓        | Full control over qualifier per field   |
+| [`DFSchema::try_from_qualified_schema(qualifier, &schema)`][`DFSchema::try_from_qualified_schema`]                        | `impl Into<TableReference>` + `&Schema`            | same for all |        ✓        | Qualify every field with one table name |
+| [`DFSchema::from_field_specific_qualified_schema(qualifiers, &schema)`][`DFSchema::from_field_specific_qualified_schema`] | `Vec<Option<TableReference>>` + `&SchemaRef`       | per-field    |        ✓        | Different qualifier per field           |
 
 :::{admonition} `try_from` allows duplicate field names
 :class: caution
@@ -494,8 +489,7 @@ use datafusion::common::{DFSchema, TableReference};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::error::Result;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let arrow_schema = Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("amount", DataType::Decimal128(19, 2), true),
@@ -577,15 +571,15 @@ The natural next step is [Applying Schemas](schema-application.md) — wiring th
 [`LargeBinary`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeBinary
 [`LargeList`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeList
 [`Arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
-[`DFSchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/type.DFSchemaRef.html
-[`DFSchema::try_from`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#impl-TryFrom%3CSchema%3E-for-DFSchema
-[`DFSchema::empty()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.empty
-[`DFSchema::from_unqualified_fields`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.from_unqualified_fields
-[`DFSchema::new_with_metadata`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.new_with_metadata
-[`DFSchema::try_from_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.try_from_qualified_schema
-[`DFSchema::from_field_specific_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.from_field_specific_qualified_schema
-[`check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.check_names
+[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`DFSchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/type.DFSchemaRef.html
+[`DFSchema::try_from`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#impl-TryFrom%3CSchema%3E-for-DFSchema
+[`DFSchema::empty()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.empty
+[`DFSchema::from_unqualified_fields`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_unqualified_fields
+[`DFSchema::new_with_metadata`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.new_with_metadata
+[`DFSchema::try_from_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
+[`DFSchema::from_field_specific_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
+[`check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
 [`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
 [`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/provider/trait.TableProvider.html
 [`MemTable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.MemTable.html
@@ -596,4 +590,5 @@ The natural next step is [Applying Schemas](schema-application.md) — wiring th
 [`ctx.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
 [`ctx.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
 [`ctx.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`CsvReadOptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`NdJsonReadOptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema_infer_max_records

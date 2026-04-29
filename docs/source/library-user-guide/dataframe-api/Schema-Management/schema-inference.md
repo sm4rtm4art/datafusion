@@ -74,20 +74,20 @@ For cases where inference is appropriate, the following sections explain how it 
 
 **Schema inference determines column names and types automatically — but the result is only as reliable as the data sample it examined.**
 
-Inference triggers automatically when you read CSV or JSON files without providing a schema via [`CsvReadOptions::schema()`] or [`NdJsonReadOptions::schema()`]. DataFusion reads up to [`schema_infer_max_records`] records (default: 1,000), examines the values it finds, and assigns Arrow data types. CSV inference is **positional** — column index determines mapping. JSON inference is **name-based** — JSON keys map to field names by name, regardless of order. Fields that do not appear within the sampling window are excluded from the resulting schema entirely.
+Inference triggers automatically when you read CSV or JSON files without providing a schema via [`CsvReadOptions::schema()`] or [`NdJsonReadOptions::schema()`]. DataFusion reads up to the configured sample size ([`CsvReadOptions::schema_infer_max_records()`] or [`NdJsonReadOptions::schema_infer_max_records()`], default: 1,000), examines the values it finds, and assigns Arrow data types. CSV inference is **positional** — column index determines mapping. JSON inference is **name-based** — JSON keys map to field names by name, regardless of order. Fields that do not appear within the sampling window are excluded from the resulting schema entirely.
 
-| Aspect                  | CSV                                                                          | JSON                                                         |
-| :---------------------- | :--------------------------------------------------------------------------- | :----------------------------------------------------------- |
-| **Field alignment**     | Positional (column index)                                                    | Name-based (JSON key)                                        |
-| **Missing fields**      | Row-length mismatch errors by default                                        | `NULL` if field exists in schema                             |
-| **Short rows**          | Error; use [`.truncated_rows(true)`][`truncated_rows`] to fill with `NULL`s  | N/A (each line is a self-contained object)                   |
-| **Sampling window**     | First N records ([`schema_infer_max_records`])                               | First N records ([`schema_infer_max_records`])               |
-| **Default sample size** | 1,000                                                                        | 1,000                                                        |
-| **Type fallback order** | `Boolean` → `Int64` → `Float64` → `Utf8` (implementation-driven, may change) | Infers from JSON value types (`number`, `string`, `boolean`) |
+| Aspect                  | CSV                                                                                 | JSON                                                                |
+| :---------------------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------------ |
+| **Field alignment**     | Positional (column index)                                                           | Name-based (JSON key)                                               |
+| **Missing fields**      | Row-length mismatch errors by default                                               | `NULL` if field exists in schema                                    |
+| **Short rows**          | Error; use [`.truncated_rows(true)`][`truncated_rows`] to fill with `NULL`s         | N/A (each line is a self-contained object)                          |
+| **Sampling window**     | First N records ([`CsvReadOptions::schema_infer_max_records()`])                    | First N records ([`NdJsonReadOptions::schema_infer_max_records()`]) |
+| **Default sample size** | 1,000                                                                               | 1,000                                                               |
+| **Type fallback order** | Booleans, numbers, temporal regexes, then `Utf8` for conflicts or unmatched strings | Infers from JSON value types (`number`, `string`, `boolean`)        |
 
-:::{admonition} Date and timestamp columns are not inferred
+:::{admonition} Temporal inference is format-specific
 :class: caution
-Neither CSV nor JSON inference recognizes date or timestamp values. In CSV, temporal columns fall through the type fallback and land in `Utf8`. In JSON, dates are typically encoded as ISO-8601 strings (staying `Utf8`) or epoch integers (staying `Int64`). To get proper `Date32`, `Date64`, or `Timestamp` types, provide an explicit schema via [`CsvReadOptions::schema()`] or [`NdJsonReadOptions::schema()`], or cast the columns after reading.
+CSV inference recognizes ISO-like date and timestamp strings and can infer `Date32` or `Timestamp` types for matching values. JSON inference does not parse string contents as temporal values: ISO-8601 strings stay `Utf8`, and epoch values stay numeric. When temporal semantics matter, provide an explicit schema via [`CsvReadOptions::schema()`] or [`NdJsonReadOptions::schema()`], or cast the columns after reading.
 :::
 
 :::{admonition} Format-specific details
@@ -190,7 +190,7 @@ fn main() {
 :class: caution
 
 1. **Inference cannot see beyond the sample.** Values that appear only after the sampling window — different types, new columns, overflow ranges — remain invisible regardless of sample size.
-2. **Setting the sample to zero disables type detection.** When `.schema_infer_max_records(0)` is set, all fields are inferred as `Utf8`. Useful for loading raw text data, but requires explicit casting for non-string operations.
+2. **Setting the sample to zero is format-specific.** CSV keeps the header fields and assigns `Utf8` because type detection is disabled. NDJSON samples no objects, so the inferred schema can be empty.
 3. **Startup cost scales linearly.** Larger samples delay `DataFrame` creation because DataFusion must read and parse more records before the plan is built.
 4. **The budget is shared across files.** In multi-file reads, increasing the budget benefits only the files that are sampled — see [Multi-File Inference](#multi-file-inference-and-schema-merging).
    :::
@@ -209,7 +209,7 @@ After sampling, DataFusion merges the per-file schemas using Arrow's [`Schema::t
 :::{admonition} Self-describing formats
 :class: note
 
-Parquet, Avro, and Arrow IPC also go through the [`FileFormat::infer_schema()`] trait method, but they extract schemas from embedded metadata rather than sampling data rows. No [`schema_infer_max_records`] budget applies. However, the multi-file **merge** step still runs — [`Schema::try_merge()`] reconciles schemas across all files. If different Parquet files have different schemas (common during schema evolution), the merge must reconcile them or it will fail on type conflicts.
+Parquet, Avro, and Arrow IPC also go through the [`FileFormat::infer_schema()`] trait method, but they extract schemas from embedded metadata rather than sampling data rows. No row-sampling budget applies. However, the multi-file **merge** step still runs — [`Schema::try_merge()`] reconciles schemas across all files. If different Parquet files have different schemas (common during schema evolution), the merge must reconcile them or it will fail on type conflicts.
 
 Parquet's implementation sorts files by path before merging to ensure **deterministic** field ordering, regardless of the storage backend's file listing order.
 :::
@@ -303,15 +303,16 @@ Schema inference provides a fast on-ramp for exploration, but the guess is based
 
 [`Schema`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
 [`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
+[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
 [`CsvReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
 [`CsvReadOptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema
 [`NdJsonReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
 [`NdJsonReadOptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema
-[`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`CsvReadOptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`NdJsonReadOptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema_infer_max_records
 [`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
 [`ListingTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
 [`Schema::try_merge()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.try_merge
 [`FileFormat::infer_schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/trait.FileFormat.html#tymethod.infer_schema
-[`has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.has_equivalent_names_and_types
+[`has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types

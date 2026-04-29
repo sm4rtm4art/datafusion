@@ -17,13 +17,15 @@
   under the License.
 -->
 
-# When DataFrames Collide: Join Patterns
-
 <!--TODO
 
 1. ABSTRACT
 2. INTRODUCTION
 -->
+
+# When DataFrames Collide: Join Patterns
+
+
 
 :::{admonition} Style Note
 :class: note

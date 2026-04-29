@@ -17,13 +17,16 @@
   under the License.
 -->
 
-# Aggregation Patterns
-
 <!--TODO
 
 1. ABSTRACT
 2. INTRODUCTION
 -->
+
+
+
+# Aggregation Patterns
+
 
 
 :::{admonition} Style Note

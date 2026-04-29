@@ -15,8 +15,6 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-# Transformations with DataFrame API
-
 <!-- TODO: Diskuss Mayor refractoring!
 
 Way to much content!
@@ -32,6 +30,11 @@ Way to much content!
 - Add encoding https://docs.rs/datafusion/latest/datafusion/functions/encoding/index.html
 - nested functions https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html ,
 -  maybe even datetime (https://docs.rs/datafusion/latest/datafusion/functions/datetime/index.html)  -->
+
+
+# Transformations with DataFrame API
+
+
 
 ```{toctree}
 :maxdepth: 1

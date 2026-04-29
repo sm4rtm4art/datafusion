@@ -17,13 +17,15 @@
   under the License.
 -->
 
-# Filtering Excellence
-
 <!--TODO
 
 1. ABSTRACT
 2. INTRODUCTION
 -->
+
+# Filtering Excellence
+
+
 
 :::{admonition} Style Note
 :class: note

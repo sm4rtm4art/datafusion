@@ -37,6 +37,29 @@ TODO(Docs): executing-dataframes.md - Materializing Results to RAM
 
 ## DataFrame Execution
 
+
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
+```{contents} Table of Contents
+:local:
+:depth: 2
+```
+
+## Placeholder Introduction
+
 **Execution actions consume the DataFrame and execute the plan, producing results as `RecordBatch`es (either buffered in memory or streamed batch-by-batch).**
 
 This section covers methods that keep results in memory—as `RecordBatch` objects (Arrow's columnar data unit). The differences are briefly summarized in the following table.

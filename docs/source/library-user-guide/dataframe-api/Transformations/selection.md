@@ -17,13 +17,15 @@
   under the License.
 -->
 
-# Selection and Projection Mastery
-
 <!--TODO
 
 1. ABSTRACT
 2. INTRODUCTION
 -->
+
+# Selection and Projection Mastery
+
+
 
 :::{admonition} Style Note
 :class: note

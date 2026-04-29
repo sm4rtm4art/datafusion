@@ -32,6 +32,33 @@ In this document, code elements follow a consistent pattern:
 
 :::-->
 
+
+
+# Data Validation & Quality
+
+
+
+:::{admonition} Style Note
+:class: note
+:collapsible: closed
+
+In this document, code elements follow a consistent pattern:
+
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+
+:::
+
+```{contents} Table of Content
+:local:
+:depth: 2
+```
+
+
 # Data Validation & Quality
 
 **Validation protects your pipeline at multiple levels: schema validation ensures structure, constraint validation ensures values, and quality inspection tracks how transformations affect your data.**

@@ -43,13 +43,13 @@ TODO(Docs): writing-dataframes.md - Persisting Data to Storage
    - [ ] Document that Zstd(3) is the default Parquet write compression (`datafusion.execution.parquet.compression = "zstd(3)"`).
 -->
 
-# Writing Concepts
-
 <!--TODO
 
 1. ABSTRACT
 2. INTRODUCTION
 -->
+
+# Writing Concepts
 
 
 :::{admonition} Style Note
