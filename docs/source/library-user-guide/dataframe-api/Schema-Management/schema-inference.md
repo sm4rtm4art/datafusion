@@ -63,7 +63,7 @@ Schema inference derives column names and types from a data sample automatically
 :class: seealso
 
 - [Creating Schemas](schema-creation.md) for constructing Arrow `Schema` and `DFSchema` programmatically.
-- [Applying Schemas and Modeling Data](schema-application.md) for passing schemas to [`CsvReadOptions`], [`NdJsonReadOptions`], and other format-specific readers.
+- [Applying Explicit Schemas at Read Time](schema-application.md) for passing schemas to [`CsvReadOptions`], [`NdJsonReadOptions`], and other format-specific readers.
   :::
 
 For cases where inference is appropriate, the following sections explain how it works, how to configure it, and what can go wrong.
@@ -295,7 +295,7 @@ Schema inference provides a fast on-ramp for exploration, but the guess is based
 :class: seealso
 
 - [Creating Schemas](schema-creation.md) — constructing explicit schemas programmatically
-- [Applying Schemas and Modeling Data](schema-application.md) — format-specific schema strategies
+- [Applying Explicit Schemas at Read Time](schema-application.md) — format-specific schema strategies
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking inferred schemas before use
   :::
 

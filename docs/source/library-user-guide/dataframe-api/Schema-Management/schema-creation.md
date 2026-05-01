@@ -83,7 +83,7 @@ How that [`DFSchema`] reaches the [`DataFrame`] depends on the source — file m
 Schema creation happens inside the reader or table registration. The path DataFusion takes depends on the source:
 
 - **Self-describing formats** — Parquet, Avro, Arrow IPC — carry the schema in file metadata, which the engine reads directly.
-- **Line-delimited formats** — CSV, NDJSON — have no embedded schema, so the engine infers one by scanning the first 1,000 rows by default (configurable via [`CsvReadOptions::schema_infer_max_records()`] or [`NdJsonReadOptions::schema_infer_max_records()`]).
+- **Line-delimited formats** — CSV, JSON — have no embedded schema, so the engine infers one by scanning the first 1,000 rows by default (configurable via [`CsvReadOptions::schema_infer_max_records()`] or [`NdJsonReadOptions::schema_infer_max_records()`]).
 - **Table registration** — [`TableProvider`] implementations and [`MemTable`] supply a [`SchemaRef`] at construction; the engine reads it as-is, but the schema itself was declared in code at the source.
 
 All three paths converge at an Arrow [`Schema`], which DataFusion wraps into a [`DFSchema`] and attaches to the [`LogicalPlan`]:
@@ -94,7 +94,7 @@ All three paths converge at an Arrow [`Schema`], which DataFusion wraps into a [
 │ Parquet / Avro /  │ │ TableProvider /   │ │ Code construction │
 │ Arrow IPC file    │ │ MemTable          │ │ Field::new(..)    │
 │ (read metadata)   │ │ (declared at the  │ │ Schema::new(..)   │
-│ CSV / NDJSON file │ │  source, read     │ │ Arc::new(..)      │
+│ CSV / JSON file │ │  source, read     │ │ Arc::new(..)      │
 │ (sample N=1k)     │ │  automatically)   │ │                   │
 └────────┬──────────┘ └────────┬──────────┘ └─────────┬─────────┘
          │ read / infer        │ register             │ construct
@@ -127,9 +127,9 @@ File reading is the most visible failure surface, but not the only one. [`TableP
 
 | Failure mode          | What happens                                                    | Affected sources                                                 |
 | :-------------------- | :-------------------------------------------------------------- | :--------------------------------------------------------------- |
-| Type guessing         | Currency → `Float64` instead of `Decimal128`, dates → `Utf8`    | CSV, NDJSON                                                      |
-| Sparse columns        | Fields appearing after the sample window are missed entirely    | CSV, NDJSON                                                      |
-| Sample budget sharing | Later files contribute only if earlier files leave budget       | Multi-file CSV / NDJSON                                          |
+| Type guessing         | Currency → `Float64` instead of `Decimal128`, dates → `Utf8`    | CSV, JSON                                                        |
+| Sparse columns        | Fields appearing after the sample window are missed entirely    | CSV, JSON                                                        |
+| Sample budget sharing | Later files contribute only if earlier files leave budget       | Multi-file CSV / JSON                                            |
 | Schema divergence     | Conflicting types for the same field trigger merge failures     | Multi-file Parquet                                               |
 | Damaged metadata      | Read fails outright — no row-sample fallback exists             | Parquet, Avro, Arrow IPC                                         |
 | Type translation      | Source-native types map incorrectly or incompletely to Arrow    | [`TableProvider`] bridging external databases (PostgreSQL, etc.) |
@@ -256,8 +256,8 @@ Casting `Decimal128(10, 2)` to `Decimal128(8, 2)` fails for any value with more 
 
 Server logs, transactions, and event streams record _when_ something happened — an absolute instant, independent of the observer's location. Scheduled events, business hours, and calendar entries record _what time the clock shows_ — a local reading tied to a specific timezone. Arrow's [`DataType::Timestamp`] encodes this distinction through a timezone parameter: a non-empty timezone makes the value an absolute UTC instant; `None` makes it a wall-clock value. The two are incompatible in arithmetic and comparisons — mixing them silently produces wrong answers or errors at execution time.
 
-| Type                 |                Example                | Semantics                                                     | Use for                                   |
-| :------------------- | :-----------------------------------: | :------------------------------------------------------------ | :---------------------------------------- |
+| Type                 |                 Example                 | Semantics                                                     | Use for                                   |
+| :------------------- | :-------------------------------------: | :------------------------------------------------------------ | :---------------------------------------- |
 | **With timezone**    | [`Timestamp(Microsecond, Some("UTC"))`] | Absolute UTC instant; the timezone string is display metadata | Server logs, transactions, event streams  |
 | **Without timezone** |    [`Timestamp(Microsecond, None)`]     | Wall-clock value relative to the producer's local time        | Scheduled events, opening hours, calendar |
 
@@ -374,7 +374,7 @@ fn main() -> Result<()> {
 
 :::{admonition} Querying nested fields
 :class: seealso
-For extracting values from nested columns (`get_field()` on struct, `array_element()` on list), see the NDJSON section in [Applying Schemas](schema-application.md#ndjson-name-based-alignment), which demonstrates nested type support in JSON sources.
+For extracting values from nested columns (`get_field()` on struct, `array_element()` on list), see the JSON section in [Applying Schemas](schema-application.md#json-name-based-alignment), which demonstrates nested type support in JSON sources.
 :::
 
 :::{admonition} Use `Large*` variants only when needed
@@ -435,7 +435,7 @@ fn main() -> Result<()> {
 }
 ```
 
-Metadata survives only if the output format supports it — writing to the wrong format silently drops every annotation you attached. Arrow IPC round-trips metadata losslessly. Parquet can embed it, but DataFusion skips file-level schema metadata by default; set `.skip_metadata(false)` on [`ParquetReadOptions`] if your pipeline relies on it. CSV and NDJSON carry no metadata at all — any annotations (PII flags, lineage, units) must be stored out-of-band if the data passes through these formats.
+Metadata survives only if the output format supports it — writing to the wrong format silently drops every annotation you attached. Arrow IPC round-trips metadata losslessly. Parquet can embed it, but DataFusion skips file-level schema metadata by default; set `.skip_metadata(false)` on [`ParquetReadOptions`] if your pipeline relies on it. CSV and JSON carry no metadata at all — any annotations (PII flags, lineage, units) must be stored out-of-band if the data passes through these formats.
 
 :::{admonition} Metadata is not a constraint system
 :class: warning
@@ -537,11 +537,11 @@ With both the Arrow [`Schema`] and its [`DFSchema`] wrapper defined, the schema 
 
 The automatic path covered in the opening section works for exploration and uniform data. When it falls short — precision-sensitive types, multi-file consistency, custom sources — the primitives in this document give you full control: [`Field`], [`Schema`], and [`SchemaRef`] for the Arrow layer; parameterized types and metadata for semantic precision; [`DFSchema`] constructors for plan-level work.
 
-The natural next step is [Applying Schemas](schema-application.md) — wiring the defined schema into CSV, NDJSON, and Parquet readers via format-specific read options. To verify a schema against inferred results before execution, see [Inspecting and Validating Schemas](schema-inspection.md).
+The natural next step is [Applying Schemas](schema-application.md) — wiring the defined schema into CSV, JSON, and Parquet readers via format-specific read options. To verify a schema against inferred results before execution, see [Inspecting and Validating Schemas](schema-inspection.md).
 
 ### Further Reading
 
-- [Applying Schemas](schema-application.md) — format-specific wiring (CSV, NDJSON, Parquet, partitions)
+- [Applying Schemas](schema-application.md) — format-specific wiring (CSV, JSON, Parquet, partitions)
 - [Schema Inference](schema-inference.md) — the inference path and its failure modes
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking a defined schema before execution
 - [Transforming Schemas](schema-transformation.md) — qualifiers, combining, nullability on existing schemas
