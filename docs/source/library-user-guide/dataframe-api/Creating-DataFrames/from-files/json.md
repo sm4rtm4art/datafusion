@@ -45,7 +45,6 @@ In this document, code elements follow a consistent pattern:
 
 :::
 
-
 ```{contents} Table of Contents
 :local:
 :depth: 2
@@ -133,14 +132,12 @@ cannot split the file into byte ranges for parallel scanning
 (`repartition_file_scans`). For large datasets, NDJSON remains the
 performant choice.
 
-**This is a recent feature!** [Support JSON arrays reader/parse for datafusion #19920
-](https://github.com/apache/datafusion/issues/19920)
 :::
 
 :::{admonition} Schema inference is limited
 :class: warning
 
-NDJSON files carry no file-level schema — DataFusion infers types from
+JSON files carry no file-level schema — DataFusion infers types from
 the first 1,000 objects (configurable via `.schema_infer_max_records()`).
 Deeply nested, sparse, or late-appearing fields may not be detected.
 **Always provide an explicit schema in production.** See
@@ -259,6 +256,8 @@ async fn main() -> datafusion::error::Result<()> {
 
 :::
 
+---
+
 ## When to Use JSON
 
 **Use JSON for ingestion and interchange of semi-structured data. For analytical workloads or anything queried repeatedly, convert to Parquet.**
@@ -318,6 +317,11 @@ DataFusion handles some coercion (Int64 + Float64 widens to Float64), but
 once the schema is locked, it is fixed — the same mechanics as
 [CSV schema inference](csv.md#production-best-practices).
 
+JSON null handling follows the explicit Arrow schema. Missing keys and
+explicit JSON `null` values become NULL when the corresponding `Field` is
+nullable. If a required field is missing or null, DataFusion returns an
+error instead of silently widening the schema contract.
+
 To guarantee safety, use [`NdJsonReadOptions::schema()`] to provide an
 explicit schema:
 
@@ -336,7 +340,8 @@ async fn main() -> datafusion::error::Result<()> {
     # let json_path = dir.path().join("events.json");
     # let mut file = File::create(&json_path)?;
     # writeln!(file, r#"{{"id":1,"event":"login","value":42.5}}"#)?;
-    # writeln!(file, r#"{{"id":2,"event":"click","value":10.0}}"#)?;
+    # writeln!(file, r#"{{"id":2,"event":"click"}}"#)?;
+    # writeln!(file, r#"{{"id":3,"event":null,"value":10.0}}"#)?;
 
     // Define the explicit schema
     let schema = Schema::new(vec![
@@ -358,7 +363,8 @@ async fn main() -> datafusion::error::Result<()> {
             "| id | event | value |",
             "+----+-------+-------+",
             "| 1  | login | 42.5  |",
-            "| 2  | click | 10.0  |",
+            "| 2  | click |       |",
+            "| 3  |       | 10.0  |",
             "+----+-------+-------+",
         ],
         &results

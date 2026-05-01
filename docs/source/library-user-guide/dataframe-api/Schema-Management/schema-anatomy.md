@@ -21,7 +21,6 @@
 
 **[`DFSchema`] is the structural contract at every [`LogicalPlan`] node — bridging Arrow's physical data definition with DataFusion's query-planning context.**
 
-
 Every [`DataFrame`] in DataFusion carries a [`DFSchema`] — the structural contract that the query engine validates at every [`LogicalPlan`] node. This document dissects [`DFSchema`] from the outside in: its query-planning extensions (table qualifiers and functional dependencies), the Arrow [`Schema`] underneath (field order, field count), and the four per-column properties (`name`, `data_type`, `nullable`, `metadata`) that define how each column is stored, processed, and interpreted.
 
 :::{admonition} Style Note
@@ -40,7 +39,6 @@ In this document, code elements follow a consistent pattern:
 - **Actions:** (`.collect()`, `.show()`) trigger execution
 
 :::
-
 
 ```{contents} Table of Contents for the Anatomy of a Schema
 :local:
@@ -81,7 +79,6 @@ Every [`DataFrame`] carries a [`DFSchema`] at the core of its [`LogicalPlan`], a
 :class: seealso
 For a broader conceptual overview — ownership chain, immutability guarantees, and schema propagation — see [Schema Concepts](schema-concepts.md).
 :::
-
 
 ### Schema in Practice
 
@@ -134,6 +131,7 @@ The DFSchema output shows the field names without qualifiers (no table registrat
 ```text
 DFSchema:  fields:[user_id, email, created_at, active], metadata:{}
 ```
+
 :::
 
 :::{admonition} Arrow Schema output
@@ -152,8 +150,8 @@ Schema {
     metadata: {},
 }
 ```
-:::
 
+:::
 
 For comprehensive inspection patterns — human-readable display, programmatic field access, existence checks, and schema comparison — see [Inspecting and Validating Schemas](schema-inspection.md).
 
@@ -165,11 +163,11 @@ For comprehensive inspection patterns — human-readable display, programmatic f
 
 [`DFSchema`] carries three components: the `inner` Arrow [`Schema`] defining the physical column contract (names, types, nullability, metadata), `field_qualifiers` mapping each field to its source table, and `functional_dependencies` encoding key constraints for optimizer reductions. Together, these form the complete schema at every [`LogicalPlan`] node.
 
-| Component                 | Purpose                                                            |
-| :------------------------ | :----------------------------------------------------------------- |
-| `inner` (Arrow Schema)    | Field definitions (name, type, nullable, metadata)                 |
+| Component                 | Purpose                                                               |
+| :------------------------ | :-------------------------------------------------------------------- |
+| `inner` (Arrow Schema)    | Field definitions (name, type, nullable, metadata)                    |
 | `field_qualifiers`        | Maps each field to its source table (e.g., `users.id` vs `orders.id`) |
-| `functional_dependencies` | Captures key relationships within a table for optimizer reductions |
+| `functional_dependencies` | Captures key relationships within a table for optimizer reductions    |
 
 :::{admonition} Accessing and inspecting schemas
 :class: seealso
@@ -192,7 +190,7 @@ For qualifier manipulation methods (`.strip_qualifiers()`, `.replace_qualifier()
 
 **Functional dependencies describe key relationships within a table — fusing the data with its origin constraints for reliable and performant optimization and data processing.**
 
-Functional dependencies encode a "determines" relationship: when `order_id` is a primary key, it uniquely determines `region` and `amount` — expressed as `{order_id} → {region, amount}`. Unlike table qualifiers (cross-table), functional dependencies describe relationships *within* a single table. [`DFSchema`] stores them as [`FunctionalDependencies`], derived automatically from primary key and unique constraints on the [`TableProvider`] when the `TableScan` node is built, and propagated through each plan node. For a table `sales(order_id PK, region, amount)`, the functional dependencies record that column 0 determines columns 1 and 2:
+Functional dependencies encode a "determines" relationship: when `order_id` is a primary key, it uniquely determines `region` and `amount` — expressed as `{order_id} → {region, amount}`. Unlike table qualifiers (cross-table), functional dependencies describe relationships _within_ a single table. [`DFSchema`] stores them as [`FunctionalDependencies`], derived automatically from primary key and unique constraints on the [`TableProvider`] when the `TableScan` node is built, and propagated through each plan node. For a table `sales(order_id PK, region, amount)`, the functional dependencies record that column 0 determines columns 1 and 2:
 
 ```text
 FunctionalDependencies { deps: [
@@ -246,7 +244,7 @@ Before examining individual field properties, two characteristics of the schema 
 
 The Arrow [`Schema`] stores fields in an ordered list, and `RecordBatch` columns follow that order. However, the DataFrame API uses column names — not positions — for resolution. Operations like [`.select()`], [`.filter()`], and [`.join()`] reference columns by name via `col("...")`, so reordering fields in the source schema does not break downstream transformations.
 
-Where column order *does* matter: positional operations like [`.union()`] match columns by index, not name. If the source schema reorders, a positional union produces silently wrong results. Name-based [`.union_by_name()`] eliminates this risk.
+Where column order _does_ matter: positional operations like [`.union()`] match columns by index, not name. If the source schema reorders, a positional union produces silently wrong results. Name-based [`.union_by_name()`] eliminates this risk.
 
 :::{admonition} Best practice
 :class: tip
@@ -289,6 +287,7 @@ Count differences are handled automatically, but type mismatches are not. When t
 | **Secondary**                | _Essential for giving data meaning_      | _Human understanding & tuning_                   |
 | [`field.metadata`][`field`]  | Semantic context                         | descriptions, units, lineage, PII classification |
 
+These properties describe the schema DataFusion sees; attaching them to a read does not necessarily persist them back into the source data. For CSV and JSON, an explicit schema sets the `DataFrame` contract for that read only. Use a self-describing format such as Parquet or Arrow IPC, or keep the contract in code or a schema registry, when names, types, nullability, or metadata must travel with the data.
 
 :::{admonition} Implementation detail
 :class: note
@@ -398,10 +397,11 @@ The Arrow [`Schema`] and its individual [`Field`] properties (`name`, `data_type
 
 :::{admonition} Next steps
 :class: seealso
+
 - **[Schema Concepts](schema-concepts.md):** Ownership chains, memory management, and the big-picture schema lifecycle.
 - **[Inspecting and Validating Schemas](schema-inspection.md):** Hands-on patterns for programmatic field access and schema comparison.
 - **[Transforming Schemas](schema-transformation.md):** Qualifier manipulation, schema combining, and functional dependency methods.
 - **[Type Coercion](type-coercion.md):** How DataFusion automatically reconciles types when they do not match.
-:::
+  :::
 
 <!-- Literature references -->
