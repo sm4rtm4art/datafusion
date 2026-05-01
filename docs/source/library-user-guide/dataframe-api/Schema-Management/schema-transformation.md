@@ -18,8 +18,7 @@
 -->
 
 
-<!--TODO
-
+<--TODO 
 1. ABSTRACT
 2. Fix cross-references to schema-anatomy.md and schema-creation.md (anchors moved across files)
 3. Add cross-ref to schema-concepts.md "Schema Propagation Through Transformations" for the conceptual overview
@@ -33,11 +32,27 @@
    from_field_specific_qualified_schema) that live in schema-creation.md
    "When You Need a DFSchema Directly". This file should cover transformation of an
    existing DFSchema, not construction from scratch — link rather than duplicate.
-
--->
+--> 
 
 
 # Transforming Schemas
+
+**Schema transformation adapts an existing [`DFSchema`] or DataFrame schema contract without pretending the original schema was mutable.**
+
+[TODO: Abstract is written last]
+
+**Key operations:**
+
+| Operation                                                     | API Level     | Schema Effect                                             | Section                                                                   |
+| ------------------------------------------------------------- | ------------- | --------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [`.strip_qualifiers()`]                                       | [`DFSchema`]  | Remove all table qualifiers                               | [Requalifying Existing Schemas](#requalifying-existing-schemas)           |
+| [`.replace_qualifier()`]                                      | [`DFSchema`]  | Replace every qualifier with one value                    | [Requalifying Existing Schemas](#requalifying-existing-schemas)           |
+| [`.with_field_specific_qualified_schema()`]                   | [`DFSchema`]  | Rebuild per-field qualifiers on an existing schema        | [Requalifying Existing Schemas](#requalifying-existing-schemas)           |
+| [`.join()`]                                                   | [`DFSchema`]  | Strictly concatenate two schemas                          | [Combining `DFSchema` Values](#combining-dfschema-values)                 |
+| [`.merge()`]                                                  | [`DFSchema`]  | Permissively append non-duplicate fields                  | [Combining `DFSchema` Values](#combining-dfschema-values)                 |
+| [`.union_by_name()`]                                          | [`DataFrame`] | Combine rows by column name, filling missing columns NULL | [Combining DataFrames by Name](#combining-dataframes-by-name)             |
+| [`.with_functional_dependencies()`]                           | [`DFSchema`]  | Attach optimizer key relationships                        | [Preserving Planning Metadata](#preserving-planning-metadata)             |
+| [`.inner()`] / [`.as_arrow()`] plus [`DFSchema`] constructors | Interop bridge | Round-trip through Arrow while rebuilding lost context    | [Arrow Round Trips and Lost Context](#arrow-round-trips-and-lost-context) |
 
 
 :::{admonition} Style Note
@@ -63,352 +78,413 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## Where Schema Transformations Fit
 
-**Modify existing schemas by changing qualifiers, combining schemas, or handling nullability.**
+**Schema transformation sits between inspection and ordinary DataFrame methods: inspect the current contract, then adapt the contract at the layer that actually owns the change.**
 
-While DataFusion schemas are conceptually immutable (each operation creates a new schema), [`DFSchema`] provides methods to transform schemas in common ways. These transformations are essential for aligning data from different sources and evolving pipelines.
+Every [`DataFrame`] exposes a [`DFSchema`] through [`.schema()`], but the [`DataFrame`] does not own a mutable schema object. The schema belongs to the current [`LogicalPlan`] node. When a lazy DataFrame method runs, DataFusion builds a new plan node and derives a new output schema from the input schema. For the conceptual overview of that propagation model, see [Schema Concepts — Schema Propagation Through Transformations](schema-concepts.md#schema-propagation-through-transformations).
 
-### DFSchema Transform Methods
+The practical rule is simple: use DataFrame methods when you are transforming data, and use [`DFSchema`] transformation methods when you are implementing or testing planning behavior. The table below keeps the two layers separate:
 
-| Category     | Method                                                  | Ownership           | Purpose                                               |
-| ------------ | ------------------------------------------------------- | ------------------- | ----------------------------------------------------- |
-| **Create**   | `DFSchema::try_from_qualified_schema(q, s)`             | Associated fn       | Create a qualified [`DFSchema`] from an Arrow schema  |
-| **Create**   | `DFSchema::from_field_specific_qualified_schema(qs, s)` | Associated fn       | Create a [`DFSchema`] with per-field qualifiers       |
-| **Align**    | `.strip_qualifiers()`                                   | Consumes self       | Remove all table qualifiers from fields               |
-| **Align**    | `.replace_qualifier(qualifier)`                         | Consumes self       | Replace all qualifiers with a new table name          |
-| **Align**    | `.with_field_specific_qualified_schema(qs)`             | Borrows `&self`     | Replace qualifiers with per-field values              |
-| **Combine**  | `.join(&other)`                                         | Borrows `&self`     | Combine two schemas (errors on duplicate field names) |
-| **Combine**  | `.merge(&other)`                                        | Mutates `&mut self` | Append fields, silently skipping duplicates           |
-| **Annotate** | `.with_functional_dependencies(deps)`                   | Consumes self       | Set functional dependencies for optimization          |
+| Need                                                                  | Use                                      | Why                                                              |
+| --------------------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------- |
+| Add, rename, project, or unnest columns in an application pipeline    | DataFrame methods                        | The new [`LogicalPlan`] derives the new schema automatically     |
+| Combine rows from independently evolving DataFrames                   | [`.union_by_name()`]                     | Missing columns are filled with NULL and aligned by column name  |
+| Rebuild qualifiers or functional dependencies in planning code        | [`DFSchema`] methods                     | These fields live only in the DataFusion query-planning layer    |
+| Construct a [`DFSchema`] from scratch                                 | Constructors in [Creating Schemas]       | Construction is separate from transforming existing state        |
+| Hand schema data to Arrow libraries, then bring it back to DataFusion | Arrow interop plus explicit reconstruction | Arrow schemas do not carry qualifiers or functional dependencies |
 
-> **Note:** <br>
-> Methods that **consume self** (`.strip_qualifiers()`, `.replace_qualifier()`) cannot be called directly on `df.schema()`, which returns `&DFSchema`. Clone first: `df.schema().clone().strip_qualifiers()`. For per-field qualifier control, see [`with_field_specific_qualified_schema()`].
+:::{admonition} Constructors live in Creating Schemas
+:class: seealso
+Use [`DFSchema::try_from_qualified_schema()`] and [`DFSchema::from_field_specific_qualified_schema()`] when you are building a [`DFSchema`] from an Arrow [`Schema`] or [`SchemaRef`]. This page uses those constructors in examples, but the constructor reference belongs in [Creating Schemas — Defining a `DFSchema` Directly](schema-creation.md#defining-a-dfschema-directly).
+:::
 
 ---
 
-### Aligning Qualifiers
+## Requalifying Existing Schemas
 
-**Table qualifiers disambiguate columns from different sources—essential after joins where multiple tables share column names.**
+**Qualifier transformations change how columns are resolved, not what values the columns contain.**
 
-When DataFusion joins tables, each field retains its source qualifier (e.g., `users.id`, `orders.id`). The qualifier methods let you normalize these for downstream processing: strip them for simplicity, or replace them with a uniform name.
+Table qualifiers distinguish same-named fields from different relations: `orders.order_id` and `payments.order_id` can coexist because their qualifiers differ. Requalification is useful in custom logical plan code, subquery aliasing, and tests that need to simulate relation context. The three transformation methods differ mainly in ownership and granularity:
 
-#### try_from_qualified_schema
-
-Create a [`DFSchema`] where every field carries the same table qualifier. This is the primary way to build a qualified schema from an Arrow [`Schema`]:
-
-```rust
-use datafusion::common::{DFSchema, TableReference};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-
-fn main() -> datafusion::error::Result<()> {
-    let arrow_schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true),
-    ]);
-
-    // Qualify all fields with "users"
-    let qualified = DFSchema::try_from_qualified_schema("users", &arrow_schema)?;
-
-    // Verify: each field now carries the "users" qualifier
-    for (qualifier, field) in qualified.iter() {
-        assert_eq!(qualifier, Some(&TableReference::bare("users")));
-        assert!(field.name() == "id" || field.name() == "name");
-    }
-
-    Ok(())
-}
-```
-
-#### strip_qualifiers
-
-Remove all table qualifiers, reducing `users.id` to just `id`. Consumes `self` and returns a new [`DFSchema`]:
+| Method                                      | Receiver        | Qualifier Result                   | Main Risk                                          |
+| ------------------------------------------- | --------------- | ---------------------------------- | -------------------------------------------------- |
+| [`.strip_qualifiers()`]                     | consumes `self` | all qualifiers become `None`       | Can create duplicate unqualified names             |
+| [`.replace_qualifier()`]                    | consumes `self` | every field gets the same qualifier | Can create duplicate qualified names               |
+| [`.with_field_specific_qualified_schema()`] | borrows `&self` | one qualifier per field            | Errors if qualifier count differs from field count |
 
 ```rust
-use datafusion::common::{DFSchema, TableReference};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::common::{DFSchema, TableReference};
 
 fn main() -> datafusion::error::Result<()> {
-    let arrow_schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true),
-    ]);
-    let qualified = DFSchema::try_from_qualified_schema("users", &arrow_schema)?;
+    let orders_arrow = Schema::new(vec![Field::new("order_id", DataType::Int64, false)]);
+    let payments_arrow = Schema::new(vec![Field::new("order_id", DataType::Int64, false)]);
 
-    // Strip all qualifiers
-    let stripped = qualified.strip_qualifiers();
+    let orders_schema =
+        DFSchema::try_from_qualified_schema("orders", &orders_arrow)?;
+    let payments_schema =
+        DFSchema::try_from_qualified_schema("payments", &payments_arrow)?;
 
-    // Verify: no qualifiers remain
-    for (qualifier, _field) in stripped.iter() {
-        assert_eq!(qualifier, None);
-    }
+    let joined_schema = orders_schema.join(&payments_schema)?;
+    assert_eq!(
+        joined_schema.field_names(),
+        vec!["orders.order_id", "payments.order_id"]
+    );
 
-    Ok(())
-}
-```
+    // Stripping qualifiers keeps both field names but removes the disambiguation.
+    let stripped = joined_schema.clone().strip_qualifiers();
+    assert!(stripped.check_names().is_err());
 
-> **Warning:** <br>
-> Stripping qualifiers after a join can create duplicate unqualified names (e.g., two `id` columns). Use `.replace_qualifier()` or rename columns first if ambiguity is possible.
-
-#### replace_qualifier
-
-Replace all qualifiers with a new table name. Useful for normalizing a schema after a join to a single logical name:
-
-```rust
-use datafusion::common::{DFSchema, TableReference};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-
-fn main() -> datafusion::error::Result<()> {
-    let arrow_schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true),
-    ]);
-    let qualified = DFSchema::try_from_qualified_schema("users", &arrow_schema)?;
-
-    // Replace "users" qualifier with "result"
-    let renamed = qualified.replace_qualifier("result");
-
-    // Verify: all fields now have "result" qualifier
-    for (qualifier, _field) in renamed.iter() {
-        assert_eq!(qualifier, Some(&TableReference::bare("result")));
-    }
-
-    Ok(())
-}
-```
-
-#### from_field_specific_qualified_schema
-
-Create a [`DFSchema`] from an Arrow [`SchemaRef`] with a **different qualifier per field**. Unlike `try_from_qualified_schema` (which applies one qualifier to all fields), this lets you assign qualifiers individually—useful when constructing schemas that represent joined results:
-
-```rust
-use std::sync::Arc;
-use datafusion::common::{DFSchema, TableReference};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-
-fn main() -> datafusion::error::Result<()> {
-    let arrow_schema = Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("order_id", DataType::Int64, false),
-    ]));
-
-    // First field from "users", second from "orders"
-    let qualifiers = vec![
-        Some(TableReference::bare("users")),
-        Some(TableReference::bare("orders")),
-    ];
-
-    let schema = DFSchema::from_field_specific_qualified_schema(qualifiers, &arrow_schema)?;
-
-    // Verify: each field has its own qualifier
-    let (q0, f0) = schema.qualified_field(0);
-    assert_eq!(q0, Some(&TableReference::bare("users")));
-    assert_eq!(f0.name(), "id");
-
-    let (q1, f1) = schema.qualified_field(1);
-    assert_eq!(q1, Some(&TableReference::bare("orders")));
-    assert_eq!(f1.name(), "order_id");
-
-    Ok(())
-}
-```
-
-#### Re-qualify Fields with .with_field_specific_qualified_schema()
-
-Re-qualify an **existing** [`DFSchema`] with per-field qualifiers. Borrows `&self` and returns a new [`DFSchema`] with the same fields but different qualifiers. Errors if the number of qualifiers does not match the number of fields:
-
-```rust
-use datafusion::common::{DFSchema, TableReference};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-
-fn main() -> datafusion::error::Result<()> {
-    let arrow_schema = Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("amount", DataType::Float64, true),
-    ]);
-
-    // Start with a uniformly qualified schema
-    let original = DFSchema::try_from_qualified_schema("source", &arrow_schema)?;
-
-    // Re-qualify: move "id" to "users", "amount" to "transactions"
-    let requalified = original.with_field_specific_qualified_schema(vec![
-        Some(TableReference::bare("users")),
-        Some(TableReference::bare("transactions")),
+    // Per-field requalification preserves disambiguation.
+    let requalified = joined_schema.with_field_specific_qualified_schema(vec![
+        Some(TableReference::bare("left_orders")),
+        Some(TableReference::bare("right_payments")),
     ])?;
 
-    let (q0, _) = requalified.qualified_field(0);
-    assert_eq!(q0, Some(&TableReference::bare("users")));
-
-    let (q1, _) = requalified.qualified_field(1);
-    assert_eq!(q1, Some(&TableReference::bare("transactions")));
-
-    // Mismatched qualifier count returns an error
-    let result = original.with_field_specific_qualified_schema(vec![None]);
-    assert!(result.is_err());
+    assert_eq!(
+        requalified.field_names(),
+        vec!["left_orders.order_id", "right_payments.order_id"]
+    );
 
     Ok(())
 }
 ```
 
-> **Note:** <br>
-> Unlike `.strip_qualifiers()` and `.replace_qualifier()` which consume `self`, `.with_field_specific_qualified_schema()` borrows `&self`—so you can call it directly without cloning.
+:::{admonition} Validate after broad requalification
+:class: warning
+[`DFSchema::check_names()`] catches duplicate qualified fields, duplicate unqualified fields, and ambiguous references between qualified and unqualified fields. Call it after stripping or replacing qualifiers if the transformed schema will be used for column resolution. [`DFSchema::strip_qualifiers()`] and [`DFSchema::replace_qualifier()`] do not call [`DFSchema::check_names()`] for you.
+:::
+
+Two ownership details matter in ordinary Rust code. [`DataFrame::schema()`][`.schema()`] returns `&DFSchema`, so consuming methods require a clone: `df.schema().clone().strip_qualifiers()`. [`DFSchema::with_field_specific_qualified_schema()`] borrows `&self`, so it can be called directly on a borrowed schema when you only need to rebuild qualifier metadata.
 
 ---
 
-### Combining Schemas
+## Combining `DFSchema` Values
 
-**Combine fields from multiple schemas into one—either strictly (rejecting duplicates) or permissively (ignoring them).**
+**Use strict combination when duplicate names are bugs; use permissive merging only when duplicate fields should be treated as already-known structure.**
 
-Use [`users_schema.join(&contact_schema)`][dfschema::join] when schemas must have entirely distinct fields (e.g., after a SQL JOIN), and [`base_schema.merge(&overlapping_schema)`][dfschema::merge] when you want to accumulate fields while silently skipping duplicates (e.g., building a union schema from overlapping sources).
+[`DFSchema`] combination methods operate on schema objects, not rows. They are used by logical plan builders, custom plan nodes, and tests that need to construct an output schema from input schemas. They do not scan data, do not fill missing values, and do not perform type coercion.
 
-**SQL equivalent:**<br>
-`.join()` mirrors the schema produced by `SELECT * FROM a JOIN b`; `.merge()` is closer to `UNION BY NAME` schema resolution.
-
-#### Combine Strictly with .join()
-
-Combine two schemas into one, appending all fields from `other` after the fields from `self`. Borrows `&self` and returns a new [`DFSchema`].
-
-`.join()` enforces **uniqueness**: it calls [`check_names()`] on the result and returns an error if any field names collide. Duplicate detection follows qualifier scope:
-
-- **Qualified fields:** both qualifier _and_ name must match to be a duplicate (`users.id` and `orders.id` are distinct).
-- **Unqualified fields:** name alone must be unique (two bare `id` fields error).
-- **Cross-scope:** an unqualified `id` also conflicts with any qualified `*.id`, since unqualified names must be unambiguous.
-
-Metadata from both schemas is merged (keys from `other` overwrite matching keys from `self`). Functional dependencies are reset to empty.
+| Method       | Behavior                                      | Duplicate Handling                                  | Metadata Handling                                  | Functional Dependencies |
+| ------------ | --------------------------------------------- | --------------------------------------------------- | -------------------------------------------------- | ----------------------- |
+| [`.join()`]  | Returns a new schema with fields from both inputs | Calls [`DFSchema::check_names()`] and returns `Err` | `other` schema metadata overwrites matching keys   | Reset to empty          |
+| [`.merge()`] | Mutates `self`, appending fields from `other` | Silently skips duplicates                           | `other` schema metadata overwrites matching keys   | Existing value on `self` remains; `other` is not merged |
 
 ```rust
-use datafusion::common::DFSchema;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::common::DFSchema;
 
 fn main() -> datafusion::error::Result<()> {
-    let users_schema = DFSchema::try_from(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true),
+    let orders_schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("amount", DataType::Int64, true),
     ]))?;
 
-    let contact_schema = DFSchema::try_from(Schema::new(vec![
-        Field::new("email", DataType::Utf8, true),
+    let status_schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("status", DataType::Utf8, true),
     ]))?;
 
-    // join: appends fields from contact_schema, errors on duplicates
-    let combined = users_schema.join(&contact_schema)?;
+    let combined = orders_schema.join(&status_schema)?;
+    assert_eq!(
+        combined.field_names(),
+        vec!["order_id", "amount", "status"]
+    );
 
-    assert_eq!(combined.fields().len(), 3);
-    assert_eq!(combined.field_names(), vec!["id", "name", "email"]);
-
-    // Joining schemas with overlapping unqualified names would error:
-    // users_schema.join(&users_schema) -> Err(DuplicateUnqualifiedField)
+    let duplicate_result = combined.join(&combined);
+    assert!(duplicate_result.is_err());
 
     Ok(())
 }
 ```
 
-#### Combine Permissively with .merge()
-
-Append fields from another schema, silently skipping duplicates. Unlike `.join()`, `.merge()` mutates `&mut self` in place and never errors—it is a permissive accumulation operation, designed for building union-compatible schemas.
-
-**Merge precedence** (important—fields and metadata follow _opposite_ rules):
-
-| Aspect                    | Precedence                              | Rationale                                         |
-| :------------------------ | :-------------------------------------- | :------------------------------------------------ |
-| **Fields**                | `self` wins — duplicates skipped        | Preserves the original schema's field definitions |
-| **Schema-level metadata** | `other` wins — overwrites matching keys | Allows newer metadata to propagate                |
-
-Duplicate detection mirrors `.join()`:
-
-- **Qualified fields:** both qualifier and field name must match.
-- **Unqualified fields:** field name alone is sufficient.
+[`DFSchema::join()`] is strict because it models a schema derivation where duplicate or ambiguous field names would make later column resolution unsafe. [`DFSchema::merge()`] is deliberately more permissive:
 
 ```rust
-use datafusion::common::DFSchema;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::common::DFSchema;
 
 fn main() -> datafusion::error::Result<()> {
-    let mut base_schema = DFSchema::try_from(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true),
+    let mut accumulated_schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("amount", DataType::Int64, true),
     ]))?;
 
-    let overlapping_schema = DFSchema::try_from(Schema::new(vec![
-        Field::new("name", DataType::Utf8, true),   // duplicate — skipped
-        Field::new("email", DataType::Utf8, true),   // new — appended
+    let next_schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("amount", DataType::Int64, true), // duplicate: skipped
+        Field::new("status", DataType::Utf8, true),  // new: appended
     ]))?;
 
-    // merge: appends non-duplicate fields, ignores "name" (already in base)
-    base_schema.merge(&overlapping_schema);
+    accumulated_schema.merge(&next_schema);
 
-    assert_eq!(base_schema.fields().len(), 3);
-    assert_eq!(base_schema.field_names(), vec!["id", "name", "email"]);
+    assert_eq!(
+        accumulated_schema.field_names(),
+        vec!["order_id", "amount", "status"]
+    );
 
     Ok(())
 }
 ```
+
+:::{admonition} `.merge()` is not `.union_by_name()`
+:class: caution
+[`DFSchema::merge()`] only accumulates field definitions on one schema object. It does not combine rows, reorder inputs, fill missing columns, or run [`TypeCoercion`]. Use [`.union_by_name()`] when two DataFrames should produce one row stream with a schema derived by column name.
+:::
 
 ---
 
-### Handling Nullability in Transformations
+## Combining DataFrames by Name
 
-**After combining schemas via [`users_schema.join(&contact_schema)`][dfschema::join] or [`base_schema.merge(&overlapping_schema)`][dfschema::merge], nullable fields often appear—requiring strategies to fill, filter, or preserve NULL values.**
+**Use [`.union_by_name()`] when input schemas evolve independently and column identity matters more than column position.**
 
-As described in [Nullability](#schema-field-nullability), the widening rule applies: if a column is nullable in **any** input schema, it remains nullable in the combined result. The patterns below address what to do with the resulting NULLs.
+Positional [`.union()`] requires the same number of columns and aligns them by index. That is safe only when every input schema has the same column order and width. Name-based [`.union_by_name()`] derives a schema from column names, projects each input into that schema order, and inserts NULL literals for columns missing from an input.
 
 ```rust
+use datafusion::assert_batches_sorted_eq;
 use datafusion::prelude::*;
-use datafusion::functions::expr_fn::coalesce;
-use datafusion::assert_batches_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "email" => [Some("a@some.com"), None, Some("c@some.com")],
+    let historical_orders = dataframe!(
+        "order_id" => [1_i64, 2],
+        "amount" => [100_i64, 150]
+    )?;
+
+    let current_orders = dataframe!(
+        "status" => ["paid", "open"],
+        "amount" => [200_i64, 250],
+        "order_id" => [3_i64, 4]
+    )?;
+
+    let unified_orders = historical_orders.union_by_name(current_orders)?;
+    let batches = unified_orders.collect().await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+--------+--------+",
+            "| order_id | amount | status |",
+            "+----------+--------+--------+",
+            "| 1        | 100    |        |",
+            "| 2        | 150    |        |",
+            "| 3        | 200    | paid   |",
+            "| 4        | 250    | open   |",
+            "+----------+--------+--------+",
+        ],
+        &batches
+    );
+
+    Ok(())
+}
+```
+
+The output schema follows these rules:
+
+| Property                  | Rule                                                                 |
+| ------------------------- | -------------------------------------------------------------------- |
+| Column order              | First appearance across inputs wins; missing columns are appended when first seen |
+| Missing columns           | Input is wrapped in a projection that emits NULL under the missing name |
+| Nullability               | A column becomes nullable if it is nullable in any input or missing from any input |
+| Type mismatch handling    | The union schema starts from input types and the [`TypeCoercion`] analyzer inserts safe widening casts where possible |
+| Field and schema metadata | Only metadata keys present with identical values in all union branches are preserved |
+| Functional dependencies   | Not preserved after the union operation                              |
+
+:::{admonition} SQL equivalent: `UNION BY NAME`
+:class: note
+DataFusion SQL supports `UNION BY NAME` syntax. The DataFrame API is more convenient when the union is embedded in Rust pipeline logic; SQL is often more compact for ad-hoc queries or when the whole transformation is already expressed as SQL text.
+:::
+
+---
+
+## Managing NULLs Introduced by Schema Evolution
+
+**NULLs introduced by name-based schema evolution are structural placeholders; fill, filter, or preserve them according to domain meaning.**
+
+When [`.union_by_name()`] sees a column that is absent from one input, DataFusion projects a NULL literal for the missing column. That behavior keeps the row stream valid, but it does not decide what the missing value means. A missing status in historical data might mean "unknown", "not collected yet", or "not applicable"; the schema can only mark the column nullable.
+
+```rust
+use datafusion::assert_batches_eq;
+use datafusion::functions::expr_fn::coalesce;
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let orders = dataframe!(
+        "email" => [Some("a@example.com"), None, Some("c@example.com")],
         "status" => [Some("active"), None, Some("inactive")]
     )?;
 
-    // Pattern 1: Fill NULLs with a default using coalesce
-    let df = df.with_column("status",
-        coalesce(vec![col("status"), lit("pending")])
-    )?;
+    let cleaned = orders
+        .with_column("status", coalesce(vec![col("status"), lit("pending")]))?
+        .with_column(
+            "email",
+            when(col("email").is_null(), lit("unknown@example.com"))
+                .otherwise(col("email"))?,
+        )?;
 
-    // Pattern 2: Conditional fill with CASE/WHEN
-    let df = df.with_column(
-        "email",
-        when(col("email").is_null(), lit("unknown@example.com"))
-            .otherwise(col("email"))?
-    )?;
-
-    let results = df.clone().collect().await?;
+    let batches = cleaned.collect().await?;
     assert_batches_eq!(
         &[
             "+---------------------+----------+",
             "| email               | status   |",
             "+---------------------+----------+",
-            "| a@some.com          | active   |",
+            "| a@example.com       | active   |",
             "| unknown@example.com | pending  |",
-            "| c@some.com          | inactive |",
+            "| c@example.com       | inactive |",
             "+---------------------+----------+",
         ],
-        &results
+        &batches
     );
-
-    // Pattern 3: Filter out incomplete records
-    let complete_df = df.filter(col("email").is_not_null())?;
-    assert_eq!(complete_df.collect().await?.iter().map(|b| b.num_rows()).sum::<usize>(), 3);
 
     Ok(())
 }
 ```
 
-| Strategy              | When to Use                                   | Example                                 |
-| :-------------------- | :-------------------------------------------- | :-------------------------------------- |
-| **Fill with default** | Reasonable default exists, row still valuable | Missing status → "pending"              |
-| **Fill with logic**   | Value derivable from other columns            | Missing full_name → concat(first, last) |
-| **Drop row**          | Required field missing or would skew analysis | Missing primary key                     |
-| **Keep NULL**         | NULL is meaningful (unknown ≠ default)        | Missing survey response                 |
+| Strategy            | Use When                                         | Example                                |
+| ------------------- | ------------------------------------------------ | -------------------------------------- |
+| Fill with a default | A domain default is honest and useful            | Missing status becomes `"pending"`     |
+| Fill with logic     | A value can be derived from other fields         | Missing display name from first/last   |
+| Drop rows           | Missing value invalidates the record             | Missing primary key                    |
+| Preserve NULL       | Unknown is meaningful and should remain visible  | Missing survey response                |
 
-**See also:**<br>
-
-- [Handling Null Values](../Concepts/null-handling.md) for SQL NULL semantics and three-valued logic.
-- [Nullability](#schema-field-nullability) for the widening rule when schemas are merged.
-- [Default Values](#default-values) for applying defaults during schema creation.
+For expression-level NULL behavior, see [Handling Null Values](../Concepts/null-handling.md). For schema-level nullability flags and widening, see [Anatomy of a Schema — Nullability](schema-anatomy.md#nullability).
 
 ---
+
+## Preserving Planning Metadata
+
+**Functional dependencies are optimizer metadata on [`DFSchema`]; preserve or rebuild them only when your code can prove the relationship still holds.**
+
+Functional dependencies describe determinant relationships such as "column 0 uniquely determines column 1." DataFusion derives them from table constraints and propagates them through many plan nodes. When you construct or transform a [`DFSchema`] directly, [`.with_functional_dependencies()`] lets you attach a replacement [`FunctionalDependencies`] value. The method validates that dependency indices fit the schema width.
+
+```rust
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::common::{
+    Dependency, DFSchema, FunctionalDependence, FunctionalDependencies,
+};
+
+fn main() -> datafusion::error::Result<()> {
+    let schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("customer_id", DataType::Int64, false),
+        Field::new("amount", DataType::Int64, true),
+    ]))?;
+
+    // order_id is unique, so it determines the other fields.
+    let dependencies = FunctionalDependencies::new(vec![
+        FunctionalDependence::new(vec![0], vec![1, 2], false)
+            .with_mode(Dependency::Single),
+    ]);
+
+    let schema = schema.with_functional_dependencies(dependencies)?;
+    assert_eq!(schema.functional_dependencies().len(), 1);
+
+    // Index 3 is outside a three-field schema, so validation fails.
+    let invalid = FunctionalDependencies::new(vec![
+        FunctionalDependence::new(vec![3], vec![0], false),
+    ]);
+    assert!(schema.clone().with_functional_dependencies(invalid).is_err());
+
+    Ok(())
+}
+```
+
+:::{admonition} Prefer source constraints when possible
+:class: tip
+For normal table scans, declare primary-key and unique constraints on the [`TableProvider`] instead of hand-authoring functional dependencies. DataFusion converts table constraints into [`FunctionalDependencies`] during plan construction. Use [`.with_functional_dependencies()`] mainly for custom logical plans, schema-dependent tests, or advanced optimizer work.
+:::
+
+Several transformations intentionally clear functional dependencies. [`DFSchema::join()`] and union schema derivation both produce schemas with empty functional dependencies because the original key relationships may no longer be valid after combining inputs. Reattach dependencies only after reasoning about the transformed schema, not as a mechanical copy.
+
+---
+
+## Arrow Round Trips and Lost Context
+
+**Arrow round trips preserve physical fields but drop DataFusion planning context; rebuild qualifiers and functional dependencies explicitly when returning to [`DFSchema`].**
+
+The basic interop path is covered in [Inspecting and Validating Schemas — Arrow Interop](schema-inspection.md#arrow-interop): [`.inner()`] and [`.as_arrow()`] expose the Arrow [`Schema`] inside a [`DFSchema`]. That Arrow schema is the right shape for Arrow compute kernels, IPC writers, and libraries outside DataFusion. The trade-off is context loss: Arrow knows field names, data types, nullability, and metadata, but not table qualifiers or functional dependencies.
+
+```rust
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::common::{DFSchema, TableReference};
+
+fn main() -> datafusion::error::Result<()> {
+    let arrow_schema = Schema::new(vec![
+        Field::new("order_id", DataType::Int64, false),
+        Field::new("amount", DataType::Int64, true),
+    ]);
+
+    let qualified =
+        DFSchema::try_from_qualified_schema("orders", &arrow_schema)?;
+
+    // Leaving DFSchema for Arrow drops qualifier and dependency context.
+    let exported_arrow_schema = qualified.inner().clone();
+    let unqualified = DFSchema::try_from(exported_arrow_schema.as_ref().clone())?;
+    assert!(unqualified.iter().all(|(qualifier, _)| qualifier.is_none()));
+
+    // Returning to DataFusion: rebuild qualifiers from application context.
+    let rebuilt = unqualified.with_field_specific_qualified_schema(vec![
+        Some(TableReference::bare("orders")),
+        Some(TableReference::bare("orders")),
+    ])?;
+
+    assert_eq!(
+        rebuilt.field_names(),
+        vec!["orders.order_id", "orders.amount"]
+    );
+
+    Ok(())
+}
+```
+
+Use this pattern when an Arrow-only API sits between two DataFusion planning steps. If you are constructing a fresh [`DFSchema`] from Arrow rather than transforming an existing one, start with the constructor reference in [Creating Schemas](schema-creation.md#defining-a-dfschema-directly). If you are preserving optimizer constraints, rebuild [`FunctionalDependencies`] after the Arrow round trip; they cannot be recovered from the Arrow [`Schema`].
+
+---
+
+## Conclusion & Further Reading
+
+**Transform schemas at the layer that owns the change: DataFrame methods for data-producing plans, [`DFSchema`] methods for planning context, and Arrow APIs only for physical-schema interop.**
+
+Requalification changes how DataFusion resolves columns. Schema combination methods build planning contracts without touching rows. [`.union_by_name()`] is the operational tool for evolving input schemas because it aligns rows by column name and fills missing columns with NULL. Functional dependencies and qualifiers remain DataFusion-only planning metadata, so preserve them deliberately and rebuild them after Arrow round trips.
+
+:::{admonition} Related documents
+:class: seealso
+
+- [Schema Concepts](schema-concepts.md) — conceptual propagation model and schema lifecycle
+- [Creating Schemas](schema-creation.md) — Arrow and [`DFSchema`] construction from scratch
+- [Inspecting and Validating Schemas](schema-inspection.md) — display, access, validation, and basic Arrow interop
+- [Anatomy of a Schema](schema-anatomy.md) — field-level properties, qualifiers, nullability, and metadata
+- [Schema Methods](schema-methods.md) — DataFrame methods that add, remove, rename, or reshape columns
+:::
+
+---
+
+<!-- Link references -->
+
+[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`DataFrame::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`FunctionalDependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
+[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`Schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`SchemaRef`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
+[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+[`DFSchema::check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
+[`DFSchema::from_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
+[`DFSchema::join()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
+[`DFSchema::merge()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
+[`DFSchema::replace_qualifier()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.replace_qualifier
+[`DFSchema::strip_qualifiers()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.strip_qualifiers
+[`DFSchema::try_from_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
+[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
+[`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
+[`.merge()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
+[`.replace_qualifier()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.replace_qualifier
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.strip_qualifiers()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.strip_qualifiers
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
+[`.with_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_field_specific_qualified_schema
+[`.with_functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_functional_dependencies
+[Creating Schemas]: schema-creation.md
