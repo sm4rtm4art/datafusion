@@ -61,8 +61,8 @@ schema-anatomy
 type-coercion
 schema-creation
 schema-application
-schema-inspection
 schema-inference
+schema-inspection
 schema-transformation
 schema-methods
 ```
