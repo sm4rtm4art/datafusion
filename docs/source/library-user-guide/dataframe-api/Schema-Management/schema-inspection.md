@@ -17,19 +17,11 @@
   under the License.
 -->
 
-<!--TODO
-
-1. Sibling cross-references: add links TO this file from schema-creation.md,
-   schema-application.md, schema-transformation.md, schema-methods.md
-2. Test all code examples with: cargo test --doc --package datafusion dataframe_api_schema_management_schema_inspection
-
--->
-
 # Inspecting and Validating Schemas
 
-**Display, query, compare, and extract every aspect of a DataFrame's structural contract — at plan time, before a single row of data is processed.**
+**Display, query, compare, and extract a DataFrame's structural contract from the plan before execution reads rows.**
 
-The schema attached to every [`DataFrame`] is a rich, queryable object — not just static metadata. This document shows how to work with that object across four progressively deeper levels: **displaying** schemas for quick debugging and logging, **accessing** individual field properties — names, types, nullability, qualifiers — for programmatic pipeline logic, **comparing and validating** schemas against expected contracts to catch mismatches before execution, and **extracting** the underlying Arrow `Schema` for ecosystem interop. Each section builds on the previous, moving from human-readable inspection to compile-time–safe, `Result`-based validation.
+The schema attached to every [`DataFrame`] is a rich, queryable object — not just static metadata. This document shows how to work with that object across four progressively deeper levels: **displaying** schemas for quick debugging and logging, **accessing** individual field properties — names, types, nullability, qualifiers — for programmatic pipeline logic, **comparing and validating** schemas against expected contracts, and **extracting** the underlying Arrow `Schema` for ecosystem interop. Each section builds on the previous, moving from human-readable inspection to type-safe API access and `Result`-based validation.
 
 **Key methods:**
 
@@ -73,7 +65,7 @@ In this document, code elements follow a consistent pattern:
 
 ## The Schema as a Queryable Contract
 
-**Every structural mismatch — missing columns, incompatible types, broken contracts — can be caught at plan time through schema inspection and validation, before a single row of data is processed.**
+**Schema inspection validates the `DFSchema` contract that DataFusion has planned; source-data parse errors and value-level mismatches may still appear when execution reads rows.**
 
 Data arrives from heterogeneous sources — Parquet files with evolving schemas, CSV feeds from external partners, programmatic `RecordBatch` construction — and every source carries its own structural assumptions. Schemas drift between releases, upstream changes silently add or drop fields, and type mismatches hide until they break a downstream join or aggregation. DataFusion exposes the schema as a first-class, queryable object through [`df.schema()`][`.schema()`], which returns a `&DFSchema` containing field names, Arrow data types, nullability flags, table qualifiers, and metadata — the full structural contract of the [`DataFrame`].
 
@@ -82,7 +74,7 @@ This document covers two complementary paths for working with that contract:
 - **Human-readable inspection** — displaying the schema for debugging, logging, and quick verification ([Displaying Schemas](#displaying-schemas)).
 - **Programmatic validation** — accessing field properties, checking column existence, comparing schemas against expectations, and extracting Arrow schemas for ecosystem interop ([Accessing Fields and Properties](#accessing-fields-and-properties) through [Arrow Interop](#arrow-interop)).
 
-Consider a pipeline that joins customer data from Parquet files with transaction records from a partner's CSV feed. Before the join, you need to verify that both sources share the expected key columns, that types are compatible, and that no upstream schema change has silently added or dropped fields. All of this happens through [`df.schema()`][`.schema()`] — a plan-time operation that catches mismatches before execution begins.
+Consider a pipeline that joins customer data from Parquet files with transaction records from a partner's CSV feed. Before the join, you need to verify that both sources expose the expected key columns, compatible planned types, and stable field names. These checks happen through [`df.schema()`][`.schema()`] — a plan-time operation over the `DFSchema`. Source values still need to parse into that schema when an action runs.
 
 The schema you inspect originates from the data source. How it arrives depends on how the [`DataFrame`] was created:
 
@@ -157,7 +149,7 @@ When debugging schema mismatches, use [`df.schema().tree_string()`][`.tree_strin
 
 ## Accessing Fields and Properties
 
-**Programmatic access to every field property — names, types, nullability, qualifiers — flows through a single `&DFSchema` reference, giving you compile-time type safety and `Result`-based error handling over the schema contract.**
+**Programmatic access to every field property — names, types, nullability, qualifiers — flows through a single `&DFSchema` reference, giving you type-safe API access and `Result`-based error handling over the schema contract.**
 
 All access goes through [`df.schema()`][`.schema()`], which returns a `&DFSchema`. For a detailed breakdown of what each field contains — name, data type, nullability, and metadata — see [Anatomy of a Schema](schema-anatomy.md). The methods below fall into two categories: **collection methods** that return the full set of fields or metadata, and **lookup methods** that target specific columns by name, qualifier, or index. Collection methods are useful for iteration, counting, or bulk validation. Lookup methods are useful for guard clauses, type checks, and error handling. The subsections below cover lookups by name, per-column type inspection via [`ExprSchema`], qualifier-aware access, existence checks, and index-based lookups.
 
@@ -416,28 +408,38 @@ async fn main() -> datafusion::error::Result<()> {
 
 ## Comparing and Validating Schemas
 
-**Validate schemas against expected contracts — before your pipeline runs into runtime surprises.**
+**Validate the planned schema contract before execution, then keep value-level checks for the read path.**
 
-Schema comparison sits between inspection and transformation. After you inspect what you have, validation answers: "Is this what I expected?" The subsections below cover progressively narrower scopes: whole-schema equivalence checks for enforcing contracts between pipeline stages, individual type comparisons for custom plan nodes or UDFs, name-uniqueness validation for schema integrity after construction, and name-alignment checks for `DFSchema`-to-Arrow interop.
+Schema comparison sits between inspection and transformation. After you inspect what you have, validation answers: "Is this what I expected?" The built-in equivalence helpers cover field names and data types. If your contract also depends on nullability or metadata, validate those properties explicitly with field accessors before trusting the schema downstream.
+
+| Contract property | Primary API                                       | Notes                                                                 |
+| ----------------- | ------------------------------------------------- | --------------------------------------------------------------------- |
+| Names and types   | [`.has_equivalent_names_and_types()`]             | Ignores nullability and metadata                                      |
+| Nullability       | `field.is_nullable()` or [`ExprSchema`] methods   | Compare manually when required fields must reject `NULL`              |
+| Field metadata    | `field.metadata()` or [`ExprSchema`] `metadata()` | Compare manually for semantic tags such as PII or schema version data |
+| Schema metadata   | [`.metadata()`]                                   | Compare manually for schema-level contract attributes                 |
+| Name uniqueness   | [`.check_names()`]                                | Detects duplicate and ambiguous field names                           |
+
+The subsections below cover progressively narrower scopes: whole-schema equivalence checks for enforcing contracts between pipeline stages, individual type comparisons for custom plan nodes or UDFs, name-uniqueness validation for schema integrity after construction, and name-alignment checks for `DFSchema`-to-Arrow interop.
 
 ### Schema Equivalence
 
-**Two comparison methods that differ on two independent axes: how they match fields (qualifier-aware vs positional) and how strictly they compare types (tolerant vs strict).**
+**Two comparison methods differ on field matching and type compatibility: one is qualifier-aware and more permissive, the other is positional and more specific.**
 
 Both methods ignore nullability and metadata — they focus purely on field names and data types. Where they differ is on two independent axes:
 
 - **Field matching:** [`.logically_equivalent_names_and_types()`] pairs fields using [`.iter()`], which includes qualifiers — so `users.id` and `orders.id` are distinct fields. [`.has_equivalent_names_and_types()`] pairs fields using [`.fields()`] by position only, ignoring qualifiers entirely.
-- **Type strictness:** `logically_equivalent` treats encoding variants as equal (`Dict<K, Utf8>` = `Utf8`, `Utf8View` = `Utf8`) — tolerant of how data is stored. `has_equivalent` requires the same encoding representation — `Dict<Int32, Utf8>` != `Utf8`.
+- **Type compatibility:** `logically_equivalent` treats encoding variants as equal (`Dict<K, Utf8>` = `Utf8`, `Utf8View` = `Utf8`). `has_equivalent` uses `datatype_is_semantically_equal()`, which is more specific about representation, but still ignores decimal precision/scale and timestamp unit/timezone.
 
-| Method                                      | Field Matching              | Type Strictness                           | Returns      |
-| ------------------------------------------- | --------------------------- | ----------------------------------------- | ------------ |
-| [`.logically_equivalent_names_and_types()`] | Qualifier-aware (`.iter()`) | Tolerant (`datatype_is_logically_equal`)  | `bool`       |
-| [`.has_equivalent_names_and_types()`]       | Positional (`.fields()`)    | Strict (`datatype_is_semantically_equal`) | `Result<()>` |
+| Method                                      | Field Matching              | Type Compatibility                               | Returns      |
+| ------------------------------------------- | --------------------------- | ------------------------------------------------ | ------------ |
+| [`.logically_equivalent_names_and_types()`] | Qualifier-aware (`.iter()`) | Most permissive (`datatype_is_logically_equal`)  | `bool`       |
+| [`.has_equivalent_names_and_types()`]       | Positional (`.fields()`)    | More specific (`datatype_is_semantically_equal`) | `Result<()>` |
 
 :::{admonition} In practice
 :class: tip
 
-Use `logically_equivalent` for compatibility gates where encoding differences are acceptable. Use `has_equivalent` for strict contract enforcement — its `Result` return pinpoints exactly which field mismatches, making it the better choice for tests and pipeline entry points.
+Use `logically_equivalent` for compatibility gates where encoding differences are acceptable. Use `has_equivalent` when field positions, names, and semantic type mismatches should produce a descriptive error. If precision, timezone, nullability, or metadata are part of the contract, add explicit checks for those properties.
 :::
 
 ```rust
@@ -487,12 +489,12 @@ Use [`.has_equivalent_names_and_types()`] in tests and pipeline entry points —
 
 **For comparing individual data types — useful in custom plan nodes, UDFs, or when building dynamic expressions.**
 
-The schema equivalence methods above use these functions internally. When you need to compare individual types — for example, validating a UDF's input type matches the column, or building a dynamic expression that depends on the column's encoding — call them directly. These are **associated functions** on [`DFSchema`], not instance methods:
+The schema equivalence methods above use these functions internally. When you need to compare individual types — for example, validating a UDF's input type matches the column, or building a dynamic expression that depends on the column's encoding — call them directly. These are **associated functions** on [`DFSchema`], not instance methods. Neither function compares metadata or nullability; `datatype_is_semantically_equal()` also treats decimal precision/scale and timestamp unit/timezone as equal.
 
-| Function                                             | Treats as Equal                               | Use Case                    |
-| ---------------------------------------------------- | --------------------------------------------- | --------------------------- |
-| `DFSchema::datatype_is_logically_equal(dt1, dt2)`    | `Dict<K, Utf8>` = `Utf8`, `Utf8View` = `Utf8` | Tolerant (ignores encoding) |
-| `DFSchema::datatype_is_semantically_equal(dt1, dt2)` | Same representation required                  | Strict (encoding matters)   |
+| Function                                             | Treats as Equal                                         | Use Case                                 |
+| ---------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------- |
+| `DFSchema::datatype_is_logically_equal(dt1, dt2)`    | `Dict<K, Utf8>` = `Utf8`, `Utf8View` = `Utf8`           | Broad compatibility checks               |
+| `DFSchema::datatype_is_semantically_equal(dt1, dt2)` | Same logical type family, with selected details ignored | More specific field-type contract checks |
 
 ```rust
 use datafusion::common::DFSchema;
@@ -676,19 +678,20 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 
 ## Conclusion & Further Reading
 
-**Schema inspection and validation form the defensive layer between data sources and pipeline logic — catching structural mismatches at plan time before they become runtime failures.**
+**Schema inspection and validation form the defensive layer between planned data sources and pipeline logic — checking the available contract before execution reads values.**
 
-[`.schema()`] gives you the full structural contract: [`.tree_string()`] and [`.to_string()`] for human-readable display, [`.fields()`] and [`.iter()`] for programmatic access, `has_column_*` and `field_with_*` for existence checks, and equivalence methods for contract enforcement. When you cross into the Arrow ecosystem, [`.inner()`] and [`.as_arrow()`] extract the inner Arrow [`Schema`] — but table qualifiers and functional dependencies are lost in the conversion. Validate what you expect before passing schemas downstream.
+[`.schema()`] gives you the planned structural contract: [`.tree_string()`] and [`.to_string()`] for human-readable display, [`.fields()`] and [`.iter()`] for programmatic access, `has_column_*` and `field_with_*` for existence checks, and equivalence methods for names and types. When nullability, metadata, precision, or timezone details matter, compare those fields explicitly. When you cross into the Arrow ecosystem, [`.inner()`] and [`.as_arrow()`] extract the inner Arrow [`Schema`] — but table qualifiers and functional dependencies are lost in the conversion.
 
 :::{admonition} Related documents
 :class: seealso
 
 - [Schema Concepts](schema-concepts.md) — ownership flow, schema types, `DFSchema` vs Arrow `Schema`
 - [Anatomy of a Schema](schema-anatomy.md) — per-column field properties (name, data type, nullable, metadata)
+- [Schema Inference](schema-inference.md) — why inferred schemas should be checked before production use
 - [Type Coercion](type-coercion.md) — automatic type alignment and explicit casting
 - [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, nullability handling
 - [DataFrame Methods](schema-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
-  :::
+  ::::
 
 ---
 

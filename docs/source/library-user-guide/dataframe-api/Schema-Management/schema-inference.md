@@ -19,9 +19,19 @@
 
 # Schema Inference
 
-**Inference derives column names and types from data samples — useful for exploration, but a source of silent failures in production.**
+**Inference derives column names and types from data samples — useful for exploration, but risky as a production contract.**
 
 DataFusion can derive an Arrow `Schema` — column names, data types, and nullability — automatically when reading CSV or JSON files, sampling the first N records and guessing types from the values it finds. This document covers when to prefer explicit schemas over inference, how the sampling mechanism works, how multi-file reads merge schemas, and the failure modes that make inferred schemas risky in production pipelines. For the query-planning schema (`DFSchema`) that wraps the inferred result, see [Schema Concepts](schema-concepts.md).
+
+**Key methods:**
+
+| Method                                            | Purpose                                             | Section                                                          |
+| :------------------------------------------------ | :-------------------------------------------------- | :--------------------------------------------------------------- |
+| [`CsvReadOptions::schema_infer_max_records()`]    | Configure CSV inference sample size                 | [Configuring the Sample Size](#configuring-the-sample-size)      |
+| [`NdJsonReadOptions::schema_infer_max_records()`] | Configure JSON inference sample size                | [Configuring the Sample Size](#configuring-the-sample-size)      |
+| [`FileFormat::infer_schema()`]                    | Discover schemas through the format abstraction     | [Multi-File Inference](#multi-file-inference-and-schema-merging) |
+| [`Schema::try_merge()`]                           | Merge sampled schemas across files                  | [Multi-File Inference](#multi-file-inference-and-schema-merging) |
+| [`has_equivalent_names_and_types()`]              | Compare inferred names and types against a contract | [Validating an Inferred Schema](#validating-an-inferred-schema)  |
 
 :::{admonition} Style Note
 :class: note
@@ -64,7 +74,8 @@ Schema inference derives column names and types from a data sample automatically
 
 - [Creating Schemas](schema-creation.md) for constructing Arrow `Schema` and `DFSchema` programmatically.
 - [Applying Explicit Schemas at Read Time](schema-application.md) for passing schemas to [`CsvReadOptions`], [`NdJsonReadOptions`], and other format-specific readers.
-  :::
+
+::::
 
 For cases where inference is appropriate, the following sections explain how it works, how to configure it, and what can go wrong.
 
@@ -74,16 +85,16 @@ For cases where inference is appropriate, the following sections explain how it 
 
 **Schema inference determines column names and types automatically — but the result is only as reliable as the data sample it examined.**
 
-Inference triggers automatically when you read CSV or JSON files without providing a schema via [`CsvReadOptions::schema()`] or [`NdJsonReadOptions::schema()`]. DataFusion reads up to the configured sample size ([`CsvReadOptions::schema_infer_max_records()`] or [`NdJsonReadOptions::schema_infer_max_records()`], default: 1,000), examines the values it finds, and assigns Arrow data types. CSV inference is **positional** — column index determines mapping. JSON inference is **name-based** — JSON keys map to field names by name, regardless of order. Fields that do not appear within the sampling window are excluded from the resulting schema entirely.
+Inference triggers automatically when you read CSV or JSON files without providing a schema via [`CsvReadOptions::schema()`] or [`NdJsonReadOptions::schema()`]. DataFusion reads up to the configured sample size ([`CsvReadOptions::schema_infer_max_records()`] or [`NdJsonReadOptions::schema_infer_max_records()`], default: 1,000), examines the values it finds, and assigns Arrow data types. CSV inference is **positional** — column index determines mapping. JSON inference is **name-based** — JSON keys map to field names by name, regardless of order. JSON keys that do not appear within the sampling window are excluded from the inferred schema; CSV columns are limited to the header or sampled row positions the reader can observe.
 
-| Aspect                  | CSV                                                                                 | JSON                                                                |
-| :---------------------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------------ |
-| **Field alignment**     | Positional (column index)                                                           | Name-based (JSON key)                                               |
-| **Missing fields**      | Row-length mismatch errors by default                                               | `NULL` if field exists in schema                                    |
-| **Short rows**          | Error; use [`.truncated_rows(true)`][`truncated_rows`] to fill with `NULL`s         | N/A (each line is a self-contained object)                          |
-| **Sampling window**     | First N records ([`CsvReadOptions::schema_infer_max_records()`])                    | First N records ([`NdJsonReadOptions::schema_infer_max_records()`]) |
-| **Default sample size** | 1,000                                                                               | 1,000                                                               |
-| **Type fallback order** | Booleans, numbers, temporal regexes, then `Utf8` for conflicts or unmatched strings | Infers from JSON value types (`number`, `string`, `boolean`)        |
+| Aspect                  | CSV                                                                                                     | JSON                                                                                         |
+| :---------------------- | :------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------- |
+| **Field alignment**     | Positional (column index)                                                                               | Name-based (JSON key)                                                                        |
+| **Missing fields**      | Row-length mismatch errors by default; nullable trailing fields can be filled with `NULL`s when enabled | `NULL` if the field exists in the inferred schema; absent sampled keys are not schema fields |
+| **Short rows**          | Error; use [`.truncated_rows(true)`][`truncated_rows`] to fill with `NULL`s                             | N/A (each line is a self-contained object)                                                   |
+| **Sampling window**     | First N records ([`CsvReadOptions::schema_infer_max_records()`])                                        | First N records ([`NdJsonReadOptions::schema_infer_max_records()`])                          |
+| **Default sample size** | 1,000                                                                                                   | 1,000                                                                                        |
+| **Type fallback order** | `Int64` + `Float64` becomes `Float64`; other conflicts become `Utf8`                                    | Infers from JSON value types (`number`, `string`, `boolean`)                                 |
 
 :::{admonition} Temporal inference is format-specific
 :class: caution
@@ -193,7 +204,8 @@ fn main() {
 2. **Setting the sample to zero is format-specific.** CSV keeps the header fields and assigns `Utf8` because type detection is disabled. NDJSON samples no objects, so the inferred schema can be empty.
 3. **Startup cost scales linearly.** Larger samples delay `DataFrame` creation because DataFusion must read and parse more records before the plan is built.
 4. **The budget is shared across files.** In multi-file reads, increasing the budget benefits only the files that are sampled — see [Multi-File Inference](#multi-file-inference-and-schema-merging).
-   :::
+
+::::
 
 ### Multi-File Inference and Schema Merging
 
@@ -218,19 +230,20 @@ Parquet's implementation sorts files by path before merging to ensure **determin
 
 ## Inference Risks and Failure Modes
 
-**Wrong results, runtime errors, and pipeline failures — all traceable to an inferred schema that didn't match the actual data.**
+**Wrong results, runtime errors, and pipeline failures can all start with an inferred schema that does not match the actual data.**
 
-Schema inference can fail in three distinct ways, each with different symptoms and blast radius. **Schema drift** produces wrong results silently — the inferred type is technically valid but semantically wrong. **Type mismatches across files** surface as merge errors at plan-build time. **Unchecked inferred schemas** propagate through the pipeline, turning a local guess into a systemic assumption. The subsections below cover each failure mode and how to detect it.
+Schema inference can fail in three distinct ways, each with different symptoms and blast radius. **Schema drift** can produce silent semantic errors when the inferred type is valid but too weak, or execution errors when later values cannot be parsed into the inferred type. **Type mismatches across files** surface as merge errors at plan-build time, but only for files that were sampled. **Unchecked inferred schemas** propagate through the pipeline, turning a local guess into a systemic assumption. The subsections below cover each failure mode and how to detect it.
 
 ### Schema Drift
 
-A column inferred as `Int64` from the first 1,000 rows may encounter float values, strings, or nulls further into the file. The inferred schema is fixed at inference time and does not adapt. At execution time, values that don't parse into the inferred type cause errors or are silently coerced to null (depending on the format reader's error handling). For how DataFusion reconciles types _within_ a plan, see [Type Coercion](type-coercion.md) — but coercion cannot fix a fundamentally wrong inferred type.
+A column inferred as `Int64` from the first 1,000 rows may encounter float values, strings, or nulls further into the file. The inferred schema is fixed at inference time and does not adapt. At execution time, values that cannot parse into the inferred type can fail the read, while values that fit the inferred type but not the business meaning can produce silent semantic drift. For how DataFusion reconciles types _within_ a plan, see [Type Coercion](type-coercion.md) — but coercion cannot fix a fundamentally wrong inferred source type.
 
-| Scenario                         | Inferred Type | Actual Data                  | Consequence                                            |
-| :------------------------------- | :------------ | :--------------------------- | :----------------------------------------------------- |
-| Large IDs or timestamps          | `Int64`       | Values exceeding `i64::MAX`  | Overflow errors at execution time                      |
-| Currency / financial amounts     | `Float64`     | Precision-sensitive decimals | Rounding errors; `Decimal128` needed                   |
-| Sparse or late-appearing columns | `Utf8`        | Numeric or boolean values    | Wrong type; values appear only after the sample window |
+| Scenario                     | Inferred Result                        | Actual Data                           | Consequence                                  |
+| :--------------------------- | :------------------------------------- | :------------------------------------ | :------------------------------------------- |
+| Large IDs or timestamps      | `Int64`                                | Values exceeding `i64::MAX`           | Overflow errors at execution time            |
+| Currency / financial amounts | `Float64`                              | Precision-sensitive decimals          | Rounding errors; `Decimal128` needed         |
+| Late JSON keys               | Field omitted                          | Keys appear after the sample          | Column absent from the inferred schema       |
+| Sparse CSV values            | `Null`, `Utf8`, or narrow numeric type | Numeric or boolean values appear late | Wrong type or parse failure during execution |
 
 ### Type Mismatch Across Files
 
@@ -238,7 +251,7 @@ When reading multiple files, files sampled later in the loop may have different 
 
 ### Validating an Inferred Schema
 
-Use [`has_equivalent_names_and_types()`] from [Inspecting and Validating Schemas](schema-inspection.md) to compare the inferred schema against an expected contract before executing the pipeline. The method returns `Ok(())` on match and a descriptive error on mismatch — making it a natural guard clause.
+Use [`has_equivalent_names_and_types()`] from [Inspecting and Validating Schemas](schema-inspection.md) to compare inferred field names and data types against an expected contract before executing the pipeline. The method returns `Ok(())` on match and a descriptive error on mismatch, making it a natural guard clause for names and types. It intentionally ignores nullability and metadata; use the deeper validation methods in the inspection page when those properties are part of the contract.
 
 The following example uses the same `sensor_readings.csv` data, constructs an expected schema, and validates the inferred result:
 
@@ -297,7 +310,8 @@ Schema inference provides a fast on-ramp for exploration, but the guess is based
 - [Creating Schemas](schema-creation.md) — constructing explicit schemas programmatically
 - [Applying Explicit Schemas at Read Time](schema-application.md) — format-specific schema strategies
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking inferred schemas before use
-  :::
+
+::::
 
 <!-- Link references -->
 
