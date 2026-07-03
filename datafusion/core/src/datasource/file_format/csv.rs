@@ -45,6 +45,7 @@ mod tests {
     use datafusion_datasource::file_format::FileFormat;
     use datafusion_datasource::write::BatchSerializer;
     use datafusion_expr::{col, lit};
+    use datafusion_physical_plan::statistics::StatisticsArgs;
     use datafusion_physical_plan::{ExecutionPlan, collect};
 
     use arrow::array::{
@@ -65,7 +66,8 @@ mod tests {
     use object_store::path::Path;
     use object_store::{
         Attributes, GetOptions, GetResult, GetResultPayload, ListResult, MultipartUpload,
-        ObjectMeta, ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult,
+        ObjectMeta, ObjectStore, ObjectStoreExt, PutMultipartOptions, PutOptions,
+        PutPayload, PutResult,
     };
     use regex::Regex;
     use rstest::*;
@@ -104,10 +106,6 @@ mod tests {
             unimplemented!()
         }
 
-        async fn get(&self, location: &Path) -> object_store::Result<GetResult> {
-            self.get_opts(location, GetOptions::default()).await
-        }
-
         async fn get_opts(
             &self,
             location: &Path,
@@ -117,6 +115,8 @@ mod tests {
             let len = bytes.len() as u64;
             let range = 0..len * self.max_iterations;
             let arc = self.iterations_detected.clone();
+            #[expect(clippy::result_large_err)]
+            // closure only ever returns Ok; Err type is never constructed
             let stream = futures::stream::repeat_with(move || {
                 let arc_inner = arc.clone();
                 *arc_inner.lock().unwrap() += 1;
@@ -147,14 +147,6 @@ mod tests {
             unimplemented!()
         }
 
-        async fn head(&self, _location: &Path) -> object_store::Result<ObjectMeta> {
-            unimplemented!()
-        }
-
-        async fn delete(&self, _location: &Path) -> object_store::Result<()> {
-            unimplemented!()
-        }
-
         fn list(
             &self,
             _prefix: Option<&Path>,
@@ -169,15 +161,19 @@ mod tests {
             unimplemented!()
         }
 
-        async fn copy(&self, _from: &Path, _to: &Path) -> object_store::Result<()> {
-            unimplemented!()
-        }
-
-        async fn copy_if_not_exists(
+        async fn copy_opts(
             &self,
             _from: &Path,
             _to: &Path,
+            _options: object_store::CopyOptions,
         ) -> object_store::Result<()> {
+            unimplemented!()
+        }
+
+        fn delete_stream(
+            &self,
+            _locations: BoxStream<'static, object_store::Result<Path>>,
+        ) -> BoxStream<'static, object_store::Result<Path>> {
             unimplemented!()
         }
     }
@@ -220,9 +216,13 @@ mod tests {
         assert_eq!(tt_batches, 50 /* 100/2 */);
 
         // test metadata
-        assert_eq!(exec.partition_statistics(None)?.num_rows, Precision::Absent);
         assert_eq!(
-            exec.partition_statistics(None)?.total_byte_size,
+            exec.statistics_with_args(&StatisticsArgs::new())?.num_rows,
+            Precision::Absent
+        );
+        assert_eq!(
+            exec.statistics_with_args(&StatisticsArgs::new())?
+                .total_byte_size,
             Precision::Absent
         );
 
@@ -1533,6 +1533,68 @@ mod tests {
 
         // Also ensure we read at least one row
         assert!(combined.num_rows() >= 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_csv_from_sql() -> Result<()> {
+        let ctx = SessionContext::new();
+        let tmp_dir = tempfile::TempDir::new()?;
+        let path = format!("{}/empty_sql.csv", tmp_dir.path().to_string_lossy());
+        let df = ctx.sql("SELECT CAST(1 AS BIGINT) AS id LIMIT 0").await?;
+        df.write_csv(&path, crate::dataframe::DataFrameWriteOptions::new(), None)
+            .await?;
+        assert!(std::path::Path::new(&path).exists());
+
+        let read_df = ctx
+            .read_csv(&path, CsvReadOptions::default().has_header(true))
+            .await?;
+        let stream = read_df.execute_stream().await?;
+        assert_eq!(stream.schema().fields().len(), 1);
+        assert_eq!(stream.schema().field(0).name(), "id");
+
+        let results: Vec<_> = stream.collect().await;
+        assert_eq!(results.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_csv_from_record_batch() -> Result<()> {
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let empty_batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(arrow::array::Int64Array::from(Vec::<i64>::new())),
+                Arc::new(StringArray::from(Vec::<Option<&str>>::new())),
+            ],
+        )?;
+
+        let tmp_dir = tempfile::TempDir::new()?;
+        let path = format!("{}/empty_batch.csv", tmp_dir.path().to_string_lossy());
+
+        // Write empty RecordBatch
+        let df = ctx.read_batch(empty_batch.clone())?;
+        df.write_csv(&path, crate::dataframe::DataFrameWriteOptions::new(), None)
+            .await?;
+        // Expected the file to exist
+        assert!(std::path::Path::new(&path).exists());
+
+        let read_df = ctx
+            .read_csv(&path, CsvReadOptions::default().has_header(true))
+            .await?;
+        let stream = read_df.execute_stream().await?;
+        assert_eq!(stream.schema().fields().len(), 2);
+        assert_eq!(stream.schema().field(0).name(), "id");
+        assert_eq!(stream.schema().field(1).name(), "name");
+
+        let results: Vec<_> = stream.collect().await;
+        assert_eq!(results.len(), 0);
 
         Ok(())
     }

@@ -23,7 +23,7 @@
 //! making network requests. This can be used for tasks like fetching
 //! data from an external API such as a LLM service or an external database.
 
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 
 use arrow::array::{ArrayRef, BooleanArray, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
@@ -102,8 +102,7 @@ pub async fn async_udf() -> Result<()> {
             "| physical_plan | FilterExec: __async_fn_0@2, projection=[id@0, name@1]                                                                        |",
             "|               |   RepartitionExec: partitioning=RoundRobinBatch(4), input_partitions=1                                                       |",
             "|               |     AsyncFuncExec: async_expr=[async_expr(name=__async_fn_0, expr=ask_llm(CAST(name@1 AS Utf8View), Is this animal furry?))] |",
-            "|               |       CoalesceBatchesExec: target_batch_size=8192                                                                            |",
-            "|               |         DataSourceExec: partitions=1, partition_sizes=[1]                                                                    |",
+            "|               |       DataSourceExec: partitions=1, partition_sizes=[1]                                                                      |",
             "|               |                                                                                                                              |",
             "+---------------+------------------------------------------------------------------------------------------------------------------------------+",
         ],
@@ -161,10 +160,6 @@ impl AskLLM {
 /// information for the function, such as its name, signature, and return type.
 /// [async_trait]
 impl ScalarUDFImpl for AskLLM {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "ask_llm"
     }

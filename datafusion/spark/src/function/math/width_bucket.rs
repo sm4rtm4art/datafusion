@@ -15,22 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use arrow::array::{
     Array, ArrayRef, DurationMicrosecondArray, Float64Array, IntervalMonthDayNanoArray,
     IntervalYearMonthArray,
 };
-use arrow::datatypes::DataType;
-use arrow::datatypes::DataType::{Duration, Float64, Int32, Interval};
+use arrow::datatypes::DataType::{self, Duration, Float64, Int64, Interval};
 use arrow::datatypes::IntervalUnit::{MonthDayNano, YearMonth};
 use datafusion_common::cast::{
-    as_duration_microsecond_array, as_float64_array, as_int32_array,
+    as_duration_microsecond_array, as_float64_array, as_int64_array,
     as_interval_mdn_array, as_interval_ym_array,
 };
 use datafusion_common::types::{
-    NativeType, logical_duration_microsecond, logical_float64, logical_int32,
+    NativeType, logical_duration_microsecond, logical_float64, logical_int64,
     logical_interval_mdn, logical_interval_year_month,
 };
 use datafusion_common::{Result, exec_err, internal_err};
@@ -41,7 +39,7 @@ use datafusion_expr::{
 };
 use datafusion_functions::utils::make_scalar_function;
 
-use arrow::array::{Int32Array, Int32Builder};
+use arrow::array::{Int64Array, Int64Builder};
 use arrow::datatypes::TimeUnit::Microsecond;
 use datafusion_expr::Coercion;
 use datafusion_expr::Volatility::Immutable;
@@ -75,9 +73,9 @@ impl SparkWidthBucket {
         let interval_mdn =
             Coercion::new_exact(TypeSignatureClass::Native(logical_interval_mdn()));
         let bucket = Coercion::new_implicit(
-            TypeSignatureClass::Native(logical_int32()),
+            TypeSignatureClass::Native(logical_int64()),
             vec![TypeSignatureClass::Integer],
-            NativeType::Int32,
+            NativeType::Int64,
         );
         let type_signature = Signature::one_of(
             vec![
@@ -117,10 +115,6 @@ impl SparkWidthBucket {
 }
 
 impl ScalarUDFImpl for SparkWidthBucket {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "width_bucket"
     }
@@ -130,7 +124,7 @@ impl ScalarUDFImpl for SparkWidthBucket {
     }
 
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-        Ok(Int32)
+        Ok(Int64)
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -160,28 +154,28 @@ fn width_bucket_kern(args: &[ArrayRef]) -> Result<ArrayRef> {
             let v = as_float64_array(v)?;
             let min = as_float64_array(minv)?;
             let max = as_float64_array(maxv)?;
-            let n_bucket = as_int32_array(nb)?;
+            let n_bucket = as_int64_array(nb)?;
             Ok(Arc::new(width_bucket_float64(v, min, max, n_bucket)))
         }
         Duration(Microsecond) => {
             let v = as_duration_microsecond_array(v)?;
             let min = as_duration_microsecond_array(minv)?;
             let max = as_duration_microsecond_array(maxv)?;
-            let n_bucket = as_int32_array(nb)?;
+            let n_bucket = as_int64_array(nb)?;
             Ok(Arc::new(width_bucket_i64_as_float(v, min, max, n_bucket)))
         }
         Interval(YearMonth) => {
             let v = as_interval_ym_array(v)?;
             let min = as_interval_ym_array(minv)?;
             let max = as_interval_ym_array(maxv)?;
-            let n_bucket = as_int32_array(nb)?;
+            let n_bucket = as_int64_array(nb)?;
             Ok(Arc::new(width_bucket_i32_as_float(v, min, max, n_bucket)))
         }
         Interval(MonthDayNano) => {
             let v = as_interval_mdn_array(v)?;
             let min = as_interval_mdn_array(minv)?;
             let max = as_interval_mdn_array(maxv)?;
-            let n_bucket = as_int32_array(nb)?;
+            let n_bucket = as_int64_array(nb)?;
             Ok(Arc::new(width_bucket_interval_mdn_exact(
                 v, min, max, n_bucket,
             )))
@@ -203,10 +197,10 @@ macro_rules! width_bucket_kernel_impl {
             v: &$arr_ty,
             min: &$arr_ty,
             max: &$arr_ty,
-            n_bucket: &Int32Array,
-        ) -> Int32Array {
+            n_bucket: &Int64Array,
+        ) -> Int64Array {
             let len = v.len();
-            let mut b = Int32Builder::with_capacity(len);
+            let mut b = Int64Builder::with_capacity(len);
 
             for i in 0..len {
                 if v.is_null(i) || min.is_null(i) || max.is_null(i) || n_bucket.is_null(i)
@@ -223,6 +217,7 @@ macro_rules! width_bucket_kernel_impl {
                     b.append_null();
                     continue;
                 }
+                let next_bucket = (buckets + 1) as i64;
                 if $check_nan {
                     if !x.is_finite() || !l.is_finite() || !h.is_finite() {
                         b.append_null();
@@ -237,11 +232,11 @@ macro_rules! width_bucket_kernel_impl {
                         continue;
                     }
                 };
-                if matches!(ord, std::cmp::Ordering::Equal) {
+                if ord == std::cmp::Ordering::Equal {
                     b.append_null();
                     continue;
                 }
-                let asc = matches!(ord, std::cmp::Ordering::Less);
+                let asc = ord == std::cmp::Ordering::Less;
 
                 if asc {
                     if x < l {
@@ -249,7 +244,7 @@ macro_rules! width_bucket_kernel_impl {
                         continue;
                     }
                     if x >= h {
-                        b.append_value(buckets + 1);
+                        b.append_value(next_bucket);
                         continue;
                     }
                 } else {
@@ -258,7 +253,7 @@ macro_rules! width_bucket_kernel_impl {
                         continue;
                     }
                     if x <= h {
-                        b.append_value(buckets + 1);
+                        b.append_value(next_bucket);
                         continue;
                     }
                 }
@@ -268,12 +263,12 @@ macro_rules! width_bucket_kernel_impl {
                     b.append_null();
                     continue;
                 }
-                let mut bucket = ((x - l) / width).floor() as i32 + 1;
+                let mut bucket = ((x - l) / width).floor() as i64 + 1;
                 if bucket < 1 {
                     bucket = 1;
                 }
-                if bucket > buckets + 1 {
-                    bucket = buckets + 1;
+                if bucket > next_bucket {
+                    bucket = next_bucket;
                 }
 
                 b.append_value(bucket);
@@ -309,10 +304,10 @@ pub(crate) fn width_bucket_interval_mdn_exact(
     v: &IntervalMonthDayNanoArray,
     lo: &IntervalMonthDayNanoArray,
     hi: &IntervalMonthDayNanoArray,
-    n: &Int32Array,
-) -> Int32Array {
+    n: &Int64Array,
+) -> Int64Array {
     let len = v.len();
-    let mut b = Int32Builder::with_capacity(len);
+    let mut b = Int64Builder::with_capacity(len);
 
     for i in 0..len {
         if v.is_null(i) || lo.is_null(i) || hi.is_null(i) || n.is_null(i) {
@@ -324,6 +319,7 @@ pub(crate) fn width_bucket_interval_mdn_exact(
             b.append_null();
             continue;
         }
+        let next_bucket = buckets + 1;
 
         let x = v.value(i);
         let l = lo.value(i);
@@ -349,7 +345,7 @@ pub(crate) fn width_bucket_interval_mdn_exact(
                     continue;
                 }
                 if x_m >= h_m {
-                    b.append_value(buckets + 1);
+                    b.append_value(next_bucket);
                     continue;
                 }
             } else {
@@ -358,7 +354,7 @@ pub(crate) fn width_bucket_interval_mdn_exact(
                     continue;
                 }
                 if x_m <= h_m {
-                    b.append_value(buckets + 1);
+                    b.append_value(next_bucket);
                     continue;
                 }
             }
@@ -369,12 +365,12 @@ pub(crate) fn width_bucket_interval_mdn_exact(
                 continue;
             }
 
-            let mut bucket = ((x_m - l_m) / width).floor() as i32 + 1;
+            let mut bucket = ((x_m - l_m) / width).floor() as i64 + 1;
             if bucket < 1 {
                 bucket = 1;
             }
-            if bucket > buckets + 1 {
-                bucket = buckets + 1;
+            if bucket > next_bucket {
+                bucket = next_bucket;
             }
             b.append_value(bucket);
             continue;
@@ -400,7 +396,7 @@ pub(crate) fn width_bucket_interval_mdn_exact(
                     continue;
                 }
                 if x_f >= h_f {
-                    b.append_value(buckets + 1);
+                    b.append_value(next_bucket);
                     continue;
                 }
             } else {
@@ -409,7 +405,7 @@ pub(crate) fn width_bucket_interval_mdn_exact(
                     continue;
                 }
                 if x_f <= h_f {
-                    b.append_value(buckets + 1);
+                    b.append_value(next_bucket);
                     continue;
                 }
             }
@@ -420,12 +416,12 @@ pub(crate) fn width_bucket_interval_mdn_exact(
                 continue;
             }
 
-            let mut bucket = ((x_f - l_f) / width).floor() as i32 + 1;
+            let mut bucket = ((x_f - l_f) / width).floor() as i64 + 1;
             if bucket < 1 {
                 bucket = 1;
             }
-            if bucket > buckets + 1 {
-                bucket = buckets + 1;
+            if bucket > next_bucket {
+                bucket = next_bucket;
             }
             b.append_value(bucket);
             continue;
@@ -440,18 +436,18 @@ pub(crate) fn width_bucket_interval_mdn_exact(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use arrow::datatypes::Int64Type;
 
     use arrow::array::{
-        ArrayRef, DurationMicrosecondArray, Float64Array, Int32Array,
-        IntervalYearMonthArray,
+        ArrayRef, AsArray, DurationMicrosecondArray, Float64Array, Int32Array,
+        Int64Array, IntervalYearMonthArray,
     };
     use arrow::datatypes::IntervalMonthDayNano;
 
     // --- Helpers -------------------------------------------------------------
 
-    fn i32_array_all(len: usize, val: i32) -> Arc<Int32Array> {
-        Arc::new(Int32Array::from(vec![val; len]))
+    fn i64_array_all(len: usize, val: i64) -> Arc<Int64Array> {
+        Arc::new(Int64Array::from(vec![val; len]))
     }
 
     fn f64_array(vals: &[f64]) -> Arc<Float64Array> {
@@ -470,10 +466,6 @@ mod tests {
         Arc::new(IntervalYearMonthArray::from(vals.to_vec()))
     }
 
-    fn downcast_i32(arr: &ArrayRef) -> &Int32Array {
-        arr.as_any().downcast_ref::<Int32Array>().unwrap()
-    }
-
     fn mdn_array(vals: &[(i32, i32, i64)]) -> Arc<IntervalMonthDayNanoArray> {
         let data: Vec<IntervalMonthDayNano> = vals
             .iter()
@@ -489,10 +481,10 @@ mod tests {
         let v = f64_array(&[0.5, 1.0, 9.9, -1.0, 10.0]);
         let lo = f64_array(&[0.0, 0.0, 0.0, 0.0, 0.0]);
         let hi = f64_array(&[10.0, 10.0, 10.0, 10.0, 10.0]);
-        let n = i32_array_all(5, 10);
+        let n = i64_array_all(5, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert_eq!(out.values(), &[1, 2, 10, 0, 11]);
     }
 
@@ -501,10 +493,10 @@ mod tests {
         let v = f64_array(&[9.9, 10.0, 0.0, -0.1, 10.1]);
         let lo = f64_array(&[10.0; 5]);
         let hi = f64_array(&[0.0; 5]);
-        let n = i32_array_all(5, 10);
+        let n = i64_array_all(5, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
 
         assert_eq!(out.values(), &[1, 1, 11, 11, 0]);
     }
@@ -513,10 +505,10 @@ mod tests {
         let v = f64_array(&[0.0, 9.999999999, 10.0]);
         let lo = f64_array(&[0.0; 3]);
         let hi = f64_array(&[10.0; 3]);
-        let n = i32_array_all(3, 10);
+        let n = i64_array_all(3, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert_eq!(out.values(), &[1, 10, 11]);
     }
 
@@ -525,10 +517,10 @@ mod tests {
         let v = f64_array(&[10.0, 0.0, -0.000001]);
         let lo = f64_array(&[10.0; 3]);
         let hi = f64_array(&[0.0; 3]);
-        let n = i32_array_all(3, 10);
+        let n = i64_array_all(3, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert_eq!(out.values(), &[1, 11, 11]);
     }
 
@@ -537,9 +529,9 @@ mod tests {
         let v = f64_array(&[1.0, 5.0, 9.0]);
         let lo = f64_array(&[0.0, 0.0, 0.0]);
         let hi = f64_array(&[10.0, 10.0, 10.0]);
-        let n = Arc::new(Int32Array::from(vec![0, -1, 10]));
+        let n = Arc::new(Int64Array::from(vec![0, -1, 10]));
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert!(out.is_null(0));
         assert!(out.is_null(1));
         assert_eq!(out.value(2), 10);
@@ -547,17 +539,17 @@ mod tests {
         let v = f64_array(&[1.0]);
         let lo = f64_array(&[5.0]);
         let hi = f64_array(&[5.0]);
-        let n = i32_array_all(1, 10);
+        let n = i64_array_all(1, 10);
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert!(out.is_null(0));
 
         let v = f64_array_opt(&[Some(f64::NAN)]);
         let lo = f64_array(&[0.0]);
         let hi = f64_array(&[10.0]);
-        let n = i32_array_all(1, 10);
+        let n = i64_array_all(1, 10);
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert!(out.is_null(0));
     }
 
@@ -566,10 +558,10 @@ mod tests {
         let v = f64_array_opt(&[None, Some(1.0), Some(2.0), Some(3.0)]);
         let lo = f64_array(&[0.0; 4]);
         let hi = f64_array(&[10.0; 4]);
-        let n = i32_array_all(4, 10);
+        let n = i64_array_all(4, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert!(out.is_null(0));
         assert_eq!(out.value(1), 2);
         assert_eq!(out.value(2), 3);
@@ -578,9 +570,9 @@ mod tests {
         let v = f64_array(&[1.0]);
         let lo = f64_array_opt(&[None]);
         let hi = f64_array(&[10.0]);
-        let n = i32_array_all(1, 10);
+        let n = i64_array_all(1, 10);
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert!(out.is_null(0));
     }
 
@@ -591,10 +583,10 @@ mod tests {
         let v = dur_us_array(&[1_000_000, 0, -1]);
         let lo = dur_us_array(&[0, 0, 0]);
         let hi = dur_us_array(&[2_000_000, 2_000_000, 2_000_000]);
-        let n = i32_array_all(3, 2);
+        let n = i64_array_all(3, 2);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert_eq!(out.values(), &[2, 1, 0]);
     }
 
@@ -603,9 +595,9 @@ mod tests {
         let v = dur_us_array(&[0]);
         let lo = dur_us_array(&[1]);
         let hi = dur_us_array(&[1]);
-        let n = i32_array_all(1, 10);
+        let n = i64_array_all(1, 10);
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        assert!(downcast_i32(&out).is_null(0));
+        assert!(out.as_primitive::<Int64Type>().is_null(0));
     }
 
     // --- Interval(YearMonth) ------------------------------------------------
@@ -615,10 +607,10 @@ mod tests {
         let v = ym_array(&[0, 5, 11, 12, 13]);
         let lo = ym_array(&[0; 5]);
         let hi = ym_array(&[12; 5]);
-        let n = i32_array_all(5, 12);
+        let n = i64_array_all(5, 12);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert_eq!(out.values(), &[1, 6, 12, 13, 13]);
     }
 
@@ -627,10 +619,10 @@ mod tests {
         let v = ym_array(&[11, 12, 0, -1, 13]);
         let lo = ym_array(&[12; 5]);
         let hi = ym_array(&[0; 5]);
-        let n = i32_array_all(5, 12);
+        let n = i64_array_all(5, 12);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert_eq!(out.values(), &[2, 1, 13, 13, 0]);
     }
 
@@ -641,10 +633,10 @@ mod tests {
         let v = mdn_array(&[(0, 0, 0), (5, 0, 0), (11, 0, 0), (12, 0, 0), (13, 0, 0)]);
         let lo = mdn_array(&[(0, 0, 0); 5]);
         let hi = mdn_array(&[(12, 0, 0); 5]);
-        let n = i32_array_all(5, 12);
+        let n = i64_array_all(5, 12);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert_eq!(out.values(), &[1, 6, 12, 13, 13]);
     }
 
@@ -653,10 +645,10 @@ mod tests {
         let v = mdn_array(&[(11, 0, 0), (12, 0, 0), (0, 0, 0), (-1, 0, 0), (13, 0, 0)]);
         let lo = mdn_array(&[(12, 0, 0); 5]);
         let hi = mdn_array(&[(0, 0, 0); 5]);
-        let n = i32_array_all(5, 12);
+        let n = i64_array_all(5, 12);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         // Mismo patrón que YM descendente
         assert_eq!(out.values(), &[2, 1, 13, 13, 0]);
     }
@@ -673,10 +665,10 @@ mod tests {
         ]);
         let lo = mdn_array(&[(0, 0, 0); 6]);
         let hi = mdn_array(&[(0, 10, 0); 6]);
-        let n = i32_array_all(6, 10);
+        let n = i64_array_all(6, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         // x==hi -> n+1, x<lo -> 0, x>hi -> n+1
         assert_eq!(out.values(), &[1, 6, 10, 11, 0, 11]);
     }
@@ -686,10 +678,10 @@ mod tests {
         let v = mdn_array(&[(0, 9, 0), (0, 10, 0), (0, 0, 0), (0, -1, 0), (0, 11, 0)]);
         let lo = mdn_array(&[(0, 10, 0); 5]);
         let hi = mdn_array(&[(0, 0, 0); 5]);
-        let n = i32_array_all(5, 10);
+        let n = i64_array_all(5, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
 
         assert_eq!(out.values(), &[2, 1, 11, 11, 0]);
     }
@@ -698,10 +690,10 @@ mod tests {
         let v = mdn_array(&[(0, 9, 1), (0, 10, 0), (0, 0, 0), (0, -1, 0), (0, 11, 0)]);
         let lo = mdn_array(&[(0, 10, 0); 5]);
         let hi = mdn_array(&[(0, 0, 0); 5]);
-        let n = i32_array_all(5, 10);
+        let n = i64_array_all(5, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
 
         assert_eq!(out.values(), &[1, 1, 11, 11, 0]);
     }
@@ -711,10 +703,10 @@ mod tests {
         let v = mdn_array(&[(0, 1, 0)]);
         let lo = mdn_array(&[(0, 0, 0)]);
         let hi = mdn_array(&[(1, 1, 0)]);
-        let n = i32_array_all(1, 4);
+        let n = i64_array_all(1, 4);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert!(out.is_null(0));
     }
 
@@ -723,10 +715,10 @@ mod tests {
         let v = mdn_array(&[(0, 0, 0)]);
         let lo = mdn_array(&[(1, 2, 3)]);
         let hi = mdn_array(&[(1, 2, 3)]); // lo == hi
-        let n = i32_array_all(1, 10);
+        let n = i64_array_all(1, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        assert!(downcast_i32(&out).is_null(0));
+        assert!(out.as_primitive::<Int64Type>().is_null(0));
     }
 
     #[test]
@@ -734,10 +726,10 @@ mod tests {
         let v = mdn_array(&[(0, 0, 0)]);
         let lo = mdn_array(&[(0, 0, 0)]);
         let hi = mdn_array(&[(0, 10, 0)]);
-        let n = Arc::new(Int32Array::from(vec![0])); // n <= 0
+        let n = Arc::new(Int64Array::from(vec![0])); // n <= 0
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        assert!(downcast_i32(&out).is_null(0));
+        assert!(out.as_primitive::<Int64Type>().is_null(0));
     }
 
     #[test]
@@ -748,10 +740,10 @@ mod tests {
         ]));
         let lo = mdn_array(&[(0, 0, 0), (0, 0, 0)]);
         let hi = mdn_array(&[(0, 10, 0), (0, 10, 0)]);
-        let n = i32_array_all(2, 10);
+        let n = i64_array_all(2, 10);
 
         let out = width_bucket_kern(&[v, lo, hi, n]).unwrap();
-        let out = downcast_i32(&out);
+        let out = out.as_primitive::<Int64Type>();
         assert!(out.is_null(0));
         assert_eq!(out.value(1), 6);
     }
@@ -773,7 +765,7 @@ mod tests {
         let v: ArrayRef = Arc::new(Int32Array::from(vec![1, 2, 3]));
         let lo = f64_array(&[0.0, 0.0, 0.0]);
         let hi = f64_array(&[10.0, 10.0, 10.0]);
-        let n = i32_array_all(3, 10);
+        let n = i64_array_all(3, 10);
 
         let err = width_bucket_kern(&[v, lo, hi, n]).unwrap_err();
         let msg = format!("{err}");

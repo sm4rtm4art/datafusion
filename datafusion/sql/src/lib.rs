@@ -23,7 +23,6 @@
 // Make sure fast / cheap clones on Arc are explicit:
 // https://github.com/apache/datafusion/issues/11143
 #![deny(clippy::clone_on_ref_ptr)]
-#![deny(clippy::allow_attributes)]
 #![cfg_attr(test, allow(clippy::needless_pass_by_value))]
 
 //! This crate provides:
@@ -58,9 +57,4 @@ mod statement;
 pub mod unparser;
 pub mod utils;
 mod values;
-#[deprecated(
-    since = "46.0.0",
-    note = "use datafusion_common::{ResolvedTableReference, TableReference}"
-)]
-pub use datafusion_common::{ResolvedTableReference, TableReference};
 pub use sqlparser;

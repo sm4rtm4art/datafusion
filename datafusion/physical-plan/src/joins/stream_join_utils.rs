@@ -22,17 +22,22 @@ use std::collections::{HashMap, VecDeque};
 use std::mem::size_of;
 use std::sync::Arc;
 
+use crate::joins::MapOffset;
 use crate::joins::join_hash_map::{
-    JoinHashMapOffset, get_matched_indices, get_matched_indices_with_limit_offset,
+    contain_hashes, get_matched_indices, get_matched_indices_with_limit_offset,
     update_from_iter,
 };
 use crate::joins::utils::{JoinFilter, JoinHashMapType};
-use crate::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder};
+use crate::metrics::{
+    BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricCategory,
+};
 use crate::{ExecutionPlan, metrics};
 
 use arrow::array::{
-    ArrowPrimitiveType, BooleanBufferBuilder, NativeAdapter, PrimitiveArray, RecordBatch,
+    ArrowPrimitiveType, BooleanArray, BooleanBufferBuilder, NativeAdapter,
+    PrimitiveArray, RecordBatch,
 };
+use arrow::buffer::NullBuffer;
 use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowNativeType, Schema, SchemaRef};
 use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
@@ -76,22 +81,28 @@ impl JoinHashMapType for PruningJoinHashMap {
     fn get_matched_indices_with_limit_offset(
         &self,
         hash_values: &[u64],
+        valid_keys: Option<&NullBuffer>,
         limit: usize,
-        offset: JoinHashMapOffset,
+        offset: MapOffset,
         input_indices: &mut Vec<u32>,
         match_indices: &mut Vec<u64>,
-    ) -> Option<JoinHashMapOffset> {
+    ) -> Option<MapOffset> {
         // Flatten the deque
         let next: Vec<u64> = self.next.iter().copied().collect();
         get_matched_indices_with_limit_offset::<u64>(
             &self.map,
             &next,
             hash_values,
+            valid_keys,
             limit,
             offset,
             input_indices,
             match_indices,
         )
+    }
+
+    fn contain_hashes(&self, hash_values: &[u64]) -> BooleanArray {
+        contain_hashes(&self.map, hash_values)
     }
 
     fn is_empty(&self) -> bool {
@@ -369,7 +380,7 @@ fn convert_filter_columns(
     column_map: &HashMap<Column, Column>,
 ) -> Result<Option<Arc<dyn PhysicalExpr>>> {
     // Attempt to downcast the input expression to a Column type.
-    Ok(if let Some(col) = input.as_any().downcast_ref::<Column>() {
+    Ok(if let Some(col) = input.downcast_ref::<Column>() {
         // If the downcast is successful, retrieve the corresponding filter column.
         column_map.get(col).map(|c| Arc::new(c.clone()) as _)
     } else {
@@ -694,26 +705,31 @@ pub struct StreamJoinMetrics {
 
 impl StreamJoinMetrics {
     pub fn new(partition: usize, metrics: &ExecutionPlanMetricsSet) -> Self {
-        let input_batches =
-            MetricBuilder::new(metrics).counter("left_input_batches", partition);
-        let input_rows =
-            MetricBuilder::new(metrics).counter("left_input_rows", partition);
+        let input_batches = MetricBuilder::new(metrics)
+            .with_category(MetricCategory::Rows)
+            .counter("left_input_batches", partition);
+        let input_rows = MetricBuilder::new(metrics)
+            .with_category(MetricCategory::Rows)
+            .counter("left_input_rows", partition);
         let left = StreamJoinSideMetrics {
             input_batches,
             input_rows,
         };
 
-        let input_batches =
-            MetricBuilder::new(metrics).counter("right_input_batches", partition);
-        let input_rows =
-            MetricBuilder::new(metrics).counter("right_input_rows", partition);
+        let input_batches = MetricBuilder::new(metrics)
+            .with_category(MetricCategory::Rows)
+            .counter("right_input_batches", partition);
+        let input_rows = MetricBuilder::new(metrics)
+            .with_category(MetricCategory::Rows)
+            .counter("right_input_rows", partition);
         let right = StreamJoinSideMetrics {
             input_batches,
             input_rows,
         };
 
-        let stream_memory_usage =
-            MetricBuilder::new(metrics).gauge("stream_memory_usage", partition);
+        let stream_memory_usage = MetricBuilder::new(metrics)
+            .with_category(MetricCategory::Bytes)
+            .gauge("stream_memory_usage", partition);
 
         Self {
             left,

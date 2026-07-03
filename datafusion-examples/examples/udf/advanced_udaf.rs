@@ -20,7 +20,7 @@
 use arrow::datatypes::{Field, Schema};
 use datafusion::physical_expr::NullState;
 use datafusion::{arrow::datatypes::DataType, logical_expr::Volatility};
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 
 use arrow::array::{
     ArrayRef, AsArray, Float32Array, PrimitiveArray, PrimitiveBuilder, UInt32Array,
@@ -34,7 +34,7 @@ use datafusion::logical_expr::{
     Accumulator, AggregateUDF, AggregateUDFImpl, EmitTo, GroupsAccumulator, Signature,
     expr::AggregateFunction,
     function::{AccumulatorArgs, AggregateFunctionSimplification, StateFieldsArgs},
-    simplify::SimplifyInfo,
+    simplify::SimplifyContext,
 };
 use datafusion::prelude::*;
 
@@ -64,11 +64,6 @@ impl GeoMeanUdaf {
 }
 
 impl AggregateUDFImpl for GeoMeanUdaf {
-    /// We implement as_any so that we can downcast the AggregateUDFImpl trait object
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the name of this function
     fn name(&self) -> &str {
         "geo_mean"
@@ -273,7 +268,6 @@ impl GroupsAccumulator for GeometricMeanGroupsAccumulator {
         &mut self,
         values: &[ArrayRef],
         group_indices: &[usize],
-        opt_filter: Option<&arrow::array::BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
         assert_eq!(values.len(), 2, "two arguments to merge_batch");
@@ -285,7 +279,7 @@ impl GroupsAccumulator for GeometricMeanGroupsAccumulator {
         self.null_state.accumulate(
             group_indices,
             partial_counts,
-            opt_filter,
+            None,
             total_num_groups,
             |group_index, partial_count| {
                 self.counts[group_index] += partial_count;
@@ -297,7 +291,7 @@ impl GroupsAccumulator for GeometricMeanGroupsAccumulator {
         self.null_state.accumulate(
             group_indices,
             partial_prods,
-            opt_filter,
+            None,
             total_num_groups,
             |group_index, new_value: <Float64Type as ArrowPrimitiveType>::Native| {
                 let prod = &mut self.prods[group_index];
@@ -314,12 +308,16 @@ impl GroupsAccumulator for GeometricMeanGroupsAccumulator {
         let prods = emit_to.take_needed(&mut self.prods);
         let nulls = self.null_state.build(emit_to);
 
-        assert_eq!(nulls.len(), prods.len());
+        if let Some(nulls) = &nulls {
+            assert_eq!(nulls.len(), counts.len());
+        }
         assert_eq!(counts.len(), prods.len());
 
         // don't evaluate geometric mean with null inputs to avoid errors on null values
 
-        let array: PrimitiveArray<Float64Type> = if nulls.null_count() > 0 {
+        let array: PrimitiveArray<Float64Type> = if let Some(nulls) = &nulls
+            && nulls.null_count() > 0
+        {
             let mut builder = PrimitiveBuilder::<Float64Type>::with_capacity(nulls.len());
             let iter = prods.into_iter().zip(counts).zip(nulls.iter());
 
@@ -337,7 +335,7 @@ impl GroupsAccumulator for GeometricMeanGroupsAccumulator {
                 .zip(counts)
                 .map(|(prod, count)| prod.powf(1.0 / count as f64))
                 .collect::<Vec<_>>();
-            PrimitiveArray::new(geo_mean.into(), Some(nulls)) // no copy
+            PrimitiveArray::new(geo_mean.into(), nulls) // no copy
                 .with_data_type(self.return_data_type.clone())
         };
 
@@ -347,7 +345,6 @@ impl GroupsAccumulator for GeometricMeanGroupsAccumulator {
     // return arrays for counts and prods
     fn state(&mut self, emit_to: EmitTo) -> Result<Vec<ArrayRef>> {
         let nulls = self.null_state.build(emit_to);
-        let nulls = Some(nulls);
 
         let counts = emit_to.take_needed(&mut self.counts);
         let counts = UInt32Array::new(counts.into(), nulls.clone()); // zero copy
@@ -384,10 +381,6 @@ impl SimplifiedGeoMeanUdaf {
 }
 
 impl AggregateUDFImpl for SimplifiedGeoMeanUdaf {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "simplified_geo_mean"
     }
@@ -421,7 +414,7 @@ impl AggregateUDFImpl for SimplifiedGeoMeanUdaf {
 
     /// Optionally replaces a UDAF with another expression during query optimization.
     fn simplify(&self) -> Option<AggregateFunctionSimplification> {
-        let simplify = |aggregate_function: AggregateFunction, _: &dyn SimplifyInfo| {
+        let simplify = |aggregate_function: AggregateFunction, _: &SimplifyContext| {
             // Replaces the UDAF with `GeoMeanUdaf` as a placeholder example to demonstrate the `simplify` method.
             // In real-world scenarios, you might create UDFs from built-in expressions.
             Ok(Expr::AggregateFunction(AggregateFunction::new_udf(

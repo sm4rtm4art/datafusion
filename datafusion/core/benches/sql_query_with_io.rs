@@ -31,7 +31,7 @@ use datafusion::{
 use datafusion_execution::runtime_env::RuntimeEnv;
 use itertools::Itertools;
 use object_store::{
-    ObjectStore,
+    ObjectStore, ObjectStoreExt,
     memory::InMemory,
     path::Path,
     throttle::{ThrottleConfig, ThrottledStore},
@@ -124,8 +124,10 @@ async fn setup_context(object_store: Arc<dyn ObjectStore>) -> SessionContext {
         let table_name = table_name(table_id);
         let file_format = ParquetFormat::default().with_enable_pruning(true);
         let options = ListingOptions::new(Arc::new(file_format))
-            .with_table_partition_cols(vec![(String::from("partition"), DataType::UInt8)])
-            .with_target_partitions(THREADS);
+            .with_table_partition_cols(vec![(
+                String::from("partition"),
+                DataType::UInt8,
+            )]);
 
         // make sure we actually find the data
         let path = format!("data://my_store/{table_name}/");

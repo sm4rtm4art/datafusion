@@ -21,19 +21,41 @@
 //!
 //! ## Usage
 //! ```bash
-//! cargo run --example udf -- [all|adv_udaf|adv_udf|adv_udwf|async_udf|udaf|udf|udtf|udwf]
+//! cargo run --example udf -- [all|adv_udaf|adv_udf|adv_udwf|async_udf|udaf|udf|udtf|udwf|table_list_udtf]
 //! ```
 //!
 //! Each subcommand runs a corresponding example:
 //! - `all` — run all examples included in this module
-//! - `adv_udaf` — user defined aggregate function example
-//! - `adv_udf` — user defined scalar function example
-//! - `adv_udwf` — user defined window function example
-//! - `async_udf` — asynchronous user defined function example
-//! - `udaf` — simple user defined aggregate function example
-//! - `udf` — simple user defined scalar function example
-//! - `udtf` — simple user defined table function example
-//! - `udwf` — simple user defined window function example
+//!
+//! - `adv_udaf`
+//!   (file: advanced_udaf.rs, desc: Advanced User Defined Aggregate Function (UDAF))
+//!
+//! - `adv_udf`
+//!   (file: advanced_udf.rs, desc: Advanced User Defined Scalar Function (UDF))
+//!
+//! - `adv_udwf`
+//!   (file: advanced_udwf.rs, desc: Advanced User Defined Window Function (UDWF))
+//!
+//! - `async_udf`
+//!   (file: async_udf.rs, desc: Asynchronous User Defined Scalar Function)
+//!
+//! - `struct_udaf`
+//!   (file: struct_returning_udaf.rs, desc: Struct-returning UDAF with window metadata)
+//!
+//! - `udaf`
+//!   (file: simple_udaf.rs, desc: Simple UDAF example)
+//!
+//! - `udf`
+//!   (file: simple_udf.rs, desc: Simple UDF example)
+//!
+//! - `udtf`
+//!   (file: simple_udtf.rs, desc: Simple UDTF example)
+//!
+//! - `udwf`
+//!   (file: simple_udwf.rs, desc: Simple UDWF example)
+//!
+//! - `table_list_udtf`
+//!   (file: table_list_udtf.rs, desc: Session-aware UDTF table list example)
 
 mod advanced_udaf;
 mod advanced_udf;
@@ -43,6 +65,8 @@ mod simple_udaf;
 mod simple_udf;
 mod simple_udtf;
 mod simple_udwf;
+mod struct_returning_udaf;
+mod table_list_udtf;
 
 use datafusion::error::{DataFusionError, Result};
 use strum::{IntoEnumIterator, VariantNames};
@@ -56,10 +80,12 @@ enum ExampleKind {
     AdvUdf,
     AdvUdwf,
     AsyncUdf,
+    StructUdaf,
     Udf,
     Udaf,
     Udwf,
     Udtf,
+    TableListUdtf,
 }
 
 impl ExampleKind {
@@ -81,10 +107,14 @@ impl ExampleKind {
             ExampleKind::AdvUdf => advanced_udf::advanced_udf().await?,
             ExampleKind::AdvUdwf => advanced_udwf::advanced_udwf().await?,
             ExampleKind::AsyncUdf => async_udf::async_udf().await?,
+            ExampleKind::StructUdaf => {
+                struct_returning_udaf::struct_returning_udaf().await?
+            }
             ExampleKind::Udaf => simple_udaf::simple_udaf().await?,
             ExampleKind::Udf => simple_udf::simple_udf().await?,
             ExampleKind::Udtf => simple_udtf::simple_udtf().await?,
             ExampleKind::Udwf => simple_udwf::simple_udwf().await?,
+            ExampleKind::TableListUdtf => table_list_udtf::table_list_udtf().await?,
         }
 
         Ok(())
@@ -101,7 +131,7 @@ async fn main() -> Result<()> {
 
     let example: ExampleKind = std::env::args()
         .nth(1)
-        .ok_or_else(|| DataFusionError::Execution(format!("Missing argument. {usage}")))?
+        .unwrap_or_else(|| ExampleKind::All.to_string())
         .parse()
         .map_err(|_| DataFusionError::Execution(format!("Unknown example. {usage}")))?;
 

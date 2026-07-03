@@ -20,14 +20,16 @@
 use std::any::Any;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use datafusion_physical_expr::projection::ProjectionExprs;
 use datafusion_physical_plan::execution_plan::{
     Boundedness, EmissionType, SchedulingType,
 };
 use datafusion_physical_plan::metrics::SplitMetrics;
-use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, MetricsSet};
+use datafusion_physical_plan::metrics::{
+    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
+};
 use datafusion_physical_plan::projection::ProjectionExec;
 use datafusion_physical_plan::stream::BatchSplitStream;
 use datafusion_physical_plan::{
@@ -35,6 +37,7 @@ use datafusion_physical_plan::{
 };
 use itertools::Itertools;
 
+use crate::file::FileSource;
 use crate::file_scan_config::FileScanConfig;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{Constraints, Result, Statistics};
@@ -42,6 +45,7 @@ use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_expr::{EquivalenceProperties, Partitioning, PhysicalExpr};
 use datafusion_physical_expr_common::sort_expr::{LexOrdering, PhysicalSortExpr};
 use datafusion_physical_plan::SortOrderPushdownResult;
+use datafusion_physical_plan::StatisticsArgs;
 use datafusion_physical_plan::filter_pushdown::{
     ChildPushdownResult, FilterPushdownPhase, FilterPushdownPropagation, PushedDown,
 };
@@ -74,8 +78,8 @@ use datafusion_physical_plan::filter_pushdown::{
 /// ```text
 ///                       ┌─────────────────────┐                              -----► execute path
 ///                       │                     │                              ┄┄┄┄┄► init path
-///                       │   DataSourceExec    │  
-///                       │                     │    
+///                       │   DataSourceExec    │
+///                       │                     │
 ///                       └───────▲─────────────┘
 ///                               ┊  │
 ///                               ┊  │
@@ -119,13 +123,22 @@ use datafusion_physical_plan::filter_pushdown::{
 ///    │                     │
 ///    └─────────────────────┘
 /// ```
-pub trait DataSource: Send + Sync + Debug {
+pub trait DataSource: Any + Send + Sync + Debug {
+    /// Open the specified output partition and return its stream of
+    /// [`RecordBatch`]es.
+    ///
+    /// This should be used by data sources that do not need any sibling
+    /// coordination. Data sources that want to use per-execution shared state
+    /// (for example, to reorder work across partitions at runtime) should
+    /// implement [`Self::open_with_args`] instead.
+    ///
+    /// [`RecordBatch`]: arrow::record_batch::RecordBatch
     fn open(
         &self,
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream>;
-    fn as_any(&self) -> &dyn Any;
+
     /// Format this source for display in explain plans
     fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> fmt::Result;
 
@@ -156,17 +169,7 @@ pub trait DataSource: Send + Sync + Debug {
 
     /// Returns statistics for a specific partition, or aggregate statistics
     /// across all partitions if `partition` is `None`.
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics>;
-
-    /// Returns aggregate statistics across all partitions.
-    ///
-    /// # Deprecated
-    /// Use [`Self::partition_statistics`] instead, which provides more fine-grained
-    /// control over statistics retrieval (per-partition or aggregate).
-    #[deprecated(since = "51.0.0", note = "Use partition_statistics instead")]
-    fn statistics(&self) -> Result<Statistics> {
-        self.partition_statistics(None)
-    }
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>>;
 
     /// Return a copy of this DataSource with a new fetch limit
     fn with_fetch(&self, _limit: Option<usize>) -> Option<Arc<dyn DataSource>>;
@@ -178,7 +181,13 @@ pub trait DataSource: Send + Sync + Debug {
         &self,
         _projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn DataSource>>>;
+
     /// Try to push down filters into this DataSource.
+    ///
+    /// These filters are in terms of the output schema of this DataSource (e.g.
+    /// [`Self::eq_properties`] and output of any projections pushed into the
+    /// source), not the original table schema.
+    ///
     /// See [`ExecutionPlan::handle_child_pushdown_result`] for more details.
     ///
     /// [`ExecutionPlan::handle_child_pushdown_result`]: datafusion_physical_plan::ExecutionPlan::handle_child_pushdown_result
@@ -210,6 +219,93 @@ pub trait DataSource: Send + Sync + Debug {
     ) -> Result<SortOrderPushdownResult<Arc<dyn DataSource>>> {
         Ok(SortOrderPushdownResult::Unsupported)
     }
+
+    /// Returns a variant of this `DataSource` that is aware of order-sensitivity.
+    fn with_preserve_order(&self, _preserve_order: bool) -> Option<Arc<dyn DataSource>> {
+        None
+    }
+
+    /// Injects arbitrary run-time state into this DataSource, returning a new instance
+    /// that incorporates that state *if* it is relevant to the concrete DataSource implementation.
+    ///
+    /// This is a generic entry point: the `state` can be any type wrapped in
+    /// `Arc<dyn Any + Send + Sync>`.  A data source that cares about the state should
+    /// down-cast it to the concrete type it expects and, if successful, return a
+    /// modified copy of itself that captures the provided value.  If the state is
+    /// not applicable, the default behaviour is to return `None` so that parent
+    /// nodes can continue propagating the attempt further down the plan tree.
+    fn with_new_state(
+        &self,
+        _state: Arc<dyn Any + Send + Sync>,
+    ) -> Option<Arc<dyn DataSource>> {
+        None
+    }
+
+    /// Create per execution state to share across sibling instances of this
+    /// data source during one execution.
+    ///
+    /// `config` is the session configuration, so implementations can honor
+    /// options that disable sibling sharing (returning `None`) for consumers
+    /// that cannot poll all partitions in one process.
+    ///
+    /// Returns `None` (the default) if this data source has
+    /// no sibling-shared execution state.
+    fn create_sibling_state(
+        &self,
+        _config: &ConfigOptions,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        None
+    }
+
+    /// Open a partition using optional sibling-shared execution state.
+    ///
+    /// The default implementation ignores the additional state and delegates to
+    /// [`Self::open`].
+    fn open_with_args(&self, args: OpenArgs) -> Result<SendableRecordBatchStream> {
+        self.open(args.partition, args.context)
+    }
+}
+
+/// Arguments for [`DataSource::open_with_args`]
+#[derive(Debug, Clone)]
+pub struct OpenArgs {
+    /// Which partition to open
+    pub partition: usize,
+    /// The task context for execution
+    pub context: Arc<TaskContext>,
+    /// Optional sibling-shared execution state, see
+    /// [`DataSource::create_sibling_state`] for details.
+    pub sibling_state: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl OpenArgs {
+    /// Create a new OpenArgs with required arguments
+    pub fn new(partition: usize, context: Arc<TaskContext>) -> Self {
+        Self {
+            partition,
+            context,
+            sibling_state: None,
+        }
+    }
+
+    /// Set sibling shared state
+    pub fn with_shared_state(
+        mut self,
+        sibling_state: Option<Arc<dyn Any + Send + Sync>>,
+    ) -> Self {
+        self.sibling_state = sibling_state;
+        self
+    }
+}
+
+impl dyn DataSource {
+    pub fn is<T: DataSource>(&self) -> bool {
+        (self as &dyn Any).is::<T>()
+    }
+
+    pub fn downcast_ref<T: DataSource>(&self) -> Option<&T> {
+        (self as &dyn Any).downcast_ref()
+    }
 }
 
 /// [`ExecutionPlan`] that reads one or more files
@@ -229,7 +325,13 @@ pub struct DataSourceExec {
     /// The source of the data -- for example, `FileScanConfig` or `MemorySourceConfig`
     data_source: Arc<dyn DataSource>,
     /// Cached plan properties such as sort order
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
+    /// Per execution state shared across partitions of this plan.
+    ///
+    /// Created by [`DataSource::create_sibling_state`]
+    /// and then passed to
+    /// [`DataSource::open_with_args`].
+    execution_state: Arc<OnceLock<Option<Arc<dyn Any + Send + Sync>>>>,
 }
 
 impl DisplayAs for DataSourceExec {
@@ -249,11 +351,7 @@ impl ExecutionPlan for DataSourceExec {
         "DataSourceExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
@@ -299,8 +397,18 @@ impl ExecutionPlan for DataSourceExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let stream = self.data_source.open(partition, Arc::clone(&context))?;
+        let shared_state = self
+            .execution_state
+            .get_or_init(|| {
+                self.data_source
+                    .create_sibling_state(context.session_config().options())
+            })
+            .clone();
+        let args = OpenArgs::new(partition, Arc::clone(&context))
+            .with_shared_state(shared_state);
+        let stream = self.data_source.open_with_args(args)?;
         let batch_size = context.session_config().batch_size();
+
         log::debug!(
             "Batch splitting enabled for partition {partition}: batch_size={batch_size}"
         );
@@ -314,18 +422,35 @@ impl ExecutionPlan for DataSourceExec {
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
-        Some(self.data_source.metrics().clone_inner())
+        let mut metrics = self.data_source.metrics().clone_inner();
+
+        // Add `output_rows_skew` metric to the metrics set.
+        // Done here because it's a derived metric from output_rows metric.
+        if let Some(file_scan_config) = self.data_source.downcast_ref::<FileScanConfig>()
+            && file_scan_config.file_source().file_type() == "parquet"
+            && let Some(output_rows_skew) =
+                BaselineMetrics::output_rows_skew_metric(&metrics)
+        {
+            metrics.push(output_rows_skew);
+        }
+
+        Some(metrics)
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
-        self.data_source.partition_statistics(partition)
+    fn statistics_with_args(&self, args: &StatisticsArgs) -> Result<Arc<Statistics>> {
+        self.data_source.partition_statistics(args.partition())
     }
 
     fn with_fetch(&self, limit: Option<usize>) -> Option<Arc<dyn ExecutionPlan>> {
         let data_source = self.data_source.with_fetch(limit)?;
-        let cache = self.cache.clone();
+        let cache = Arc::clone(&self.cache);
+        let execution_state = Arc::new(OnceLock::new());
 
-        Some(Arc::new(Self { data_source, cache }))
+        Some(Arc::new(Self {
+            data_source,
+            cache,
+            execution_state,
+        }))
     }
 
     fn fetch(&self) -> Option<usize> {
@@ -367,7 +492,8 @@ impl ExecutionPlan for DataSourceExec {
                 let mut new_node = self.clone();
                 new_node.data_source = data_source;
                 // Re-compute properties since we have new filters which will impact equivalence info
-                new_node.cache = Self::compute_properties(&new_node.data_source);
+                new_node.cache =
+                    Arc::new(Self::compute_properties(&new_node.data_source));
 
                 Ok(FilterPushdownPropagation {
                     filters: res.filters,
@@ -393,6 +519,36 @@ impl ExecutionPlan for DataSourceExec {
                 Ok(Arc::new(new_exec) as Arc<dyn ExecutionPlan>)
             })
     }
+
+    fn with_preserve_order(
+        &self,
+        preserve_order: bool,
+    ) -> Option<Arc<dyn ExecutionPlan>> {
+        self.data_source
+            .with_preserve_order(preserve_order)
+            .map(|new_data_source| {
+                Arc::new(self.clone().with_data_source(new_data_source))
+                    as Arc<dyn ExecutionPlan>
+            })
+    }
+
+    fn with_new_state(
+        &self,
+        state: Arc<dyn Any + Send + Sync>,
+    ) -> Option<Arc<dyn ExecutionPlan>> {
+        self.data_source
+            .with_new_state(state)
+            .map(|new_data_source| {
+                Arc::new(self.clone().with_data_source(new_data_source))
+                    as Arc<dyn ExecutionPlan>
+            })
+    }
+
+    fn reset_state(self: Arc<Self>) -> Result<Arc<dyn ExecutionPlan>> {
+        let mut new_exec = Arc::unwrap_or_clone(self);
+        new_exec.execution_state = Arc::new(OnceLock::new());
+        Ok(Arc::new(new_exec))
+    }
 }
 
 impl DataSourceExec {
@@ -403,7 +559,11 @@ impl DataSourceExec {
     // Default constructor for `DataSourceExec`, setting the `cooperative` flag to `true`.
     pub fn new(data_source: Arc<dyn DataSource>) -> Self {
         let cache = Self::compute_properties(&data_source);
-        Self { data_source, cache }
+        Self {
+            data_source,
+            cache: Arc::new(cache),
+            execution_state: Arc::new(OnceLock::new()),
+        }
     }
 
     /// Return the source object
@@ -412,20 +572,21 @@ impl DataSourceExec {
     }
 
     pub fn with_data_source(mut self, data_source: Arc<dyn DataSource>) -> Self {
-        self.cache = Self::compute_properties(&data_source);
+        self.cache = Arc::new(Self::compute_properties(&data_source));
         self.data_source = data_source;
+        self.execution_state = Arc::new(OnceLock::new());
         self
     }
 
     /// Assign constraints
     pub fn with_constraints(mut self, constraints: Constraints) -> Self {
-        self.cache = self.cache.with_constraints(constraints);
+        Arc::make_mut(&mut self.cache).set_constraints(constraints);
         self
     }
 
     /// Assign output partitioning
     pub fn with_partitioning(mut self, partitioning: Partitioning) -> Self {
-        self.cache = self.cache.with_partitioning(partitioning);
+        Arc::make_mut(&mut self.cache).partitioning = partitioning;
         self
     }
 
@@ -444,14 +605,14 @@ impl DataSourceExec {
     /// Returns `None` if
     /// 1. the datasource is not scanning files (`FileScanConfig`)
     /// 2. The [`FileScanConfig::file_source`] is not of type `T`
-    pub fn downcast_to_file_source<T: 'static>(&self) -> Option<(&FileScanConfig, &T)> {
+    pub fn downcast_to_file_source<T: FileSource>(
+        &self,
+    ) -> Option<(&FileScanConfig, &T)> {
         self.data_source()
-            .as_any()
             .downcast_ref::<FileScanConfig>()
             .and_then(|file_scan_conf| {
                 file_scan_conf
                     .file_source()
-                    .as_any()
                     .downcast_ref::<T>()
                     .map(|source| (file_scan_conf, source))
             })

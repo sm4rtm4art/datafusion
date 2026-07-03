@@ -42,10 +42,6 @@ impl SparkIf {
 }
 
 impl ScalarUDFImpl for SparkIf {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "if"
     }
@@ -86,7 +82,7 @@ impl ScalarUDFImpl for SparkIf {
     fn simplify(
         &self,
         args: Vec<Expr>,
-        _info: &dyn datafusion_expr::simplify::SimplifyInfo,
+        _info: &datafusion_expr::simplify::SimplifyContext,
     ) -> Result<ExprSimplifyResult> {
         let condition = args[0].clone();
         let then_expr = args[1].clone();

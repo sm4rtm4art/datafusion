@@ -26,6 +26,9 @@ on:
   push:
     paths:
       - "docs/**"
+    branches:
+      - main
+      - branch-*
   pull_request:
     paths:
       - "docs/**"
@@ -33,31 +36,31 @@ on:
   # https://docs.github.com/en/actions/managing-workflow-runs/manually-running-a-workflow
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  
   # Test doc build
   linux-test-doc-build:
     name: Test doc build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           submodules: true
           fetch-depth: 1
-      - name: Setup Python
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
-        with:
-          python-version: "3.12"
+      - name: Setup uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
       - name: Install doc dependencies
+        run: uv sync --package datafusion-docs
+      - name: Install dependency graph tooling
         run: |
           set -x
-          python3 -m venv venv
-          source venv/bin/activate
-          pip install -r docs/requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+          cargo install cargo-depgraph --version ^1.6 --locked
       - name: Build docs html and check for warnings
         run: |
           set -x
-          source venv/bin/activate
           cd docs
-          ./build.sh # fails on errors
-
+          uv run --package datafusion-docs ./build.sh # fails on errors

@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -42,7 +41,7 @@ use datafusion_common::{
     assert_batches_sorted_eq, assert_contains, exec_datafusion_err, exec_err,
     not_impl_err, plan_err,
 };
-use datafusion_expr::simplify::{ExprSimplifyResult, SimplifyInfo};
+use datafusion_expr::simplify::{ExprSimplifyResult, SimplifyContext};
 use datafusion_expr::{
     Accumulator, ColumnarValue, CreateFunction, CreateFunctionBody, LogicalPlanBuilder,
     OperateFunctionArg, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl,
@@ -201,10 +200,6 @@ impl std::fmt::Debug for Simple0ArgsScalarUDF {
 }
 
 impl ScalarUDFImpl for Simple0ArgsScalarUDF {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -511,10 +506,6 @@ impl AddIndexToStringVolatileScalarUDF {
 }
 
 impl ScalarUDFImpl for AddIndexToStringVolatileScalarUDF {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -678,9 +669,6 @@ impl CastToI64UDF {
 }
 
 impl ScalarUDFImpl for CastToI64UDF {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
     fn name(&self) -> &str {
         "cast_to_i64"
     }
@@ -699,7 +687,7 @@ impl ScalarUDFImpl for CastToI64UDF {
     fn simplify(
         &self,
         mut args: Vec<Expr>,
-        info: &dyn SimplifyInfo,
+        info: &SimplifyContext,
     ) -> Result<ExprSimplifyResult> {
         // DataFusion should have ensured the function is called with just a
         // single argument
@@ -715,10 +703,7 @@ impl ScalarUDFImpl for CastToI64UDF {
             arg
         } else {
             // need to use an actual cast to get the correct type
-            Expr::Cast(datafusion_expr::Cast {
-                expr: Box::new(arg),
-                data_type: DataType::Int64,
-            })
+            Expr::Cast(datafusion_expr::Cast::new(Box::new(arg), DataType::Int64))
         };
         // return the newly written argument to DataFusion
         Ok(ExprSimplifyResult::Simplified(new_expr))
@@ -803,9 +788,6 @@ impl TakeUDF {
 
 /// Implement a ScalarUDFImpl whose return type is a function of the input values
 impl ScalarUDFImpl for TakeUDF {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
     fn name(&self) -> &str {
         "take"
     }
@@ -952,10 +934,6 @@ struct ScalarFunctionWrapper {
 }
 
 impl ScalarUDFImpl for ScalarFunctionWrapper {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -975,7 +953,7 @@ impl ScalarUDFImpl for ScalarFunctionWrapper {
     fn simplify(
         &self,
         args: Vec<Expr>,
-        _info: &dyn SimplifyInfo,
+        _info: &SimplifyContext,
     ) -> Result<ExprSimplifyResult> {
         let replacement = Self::replacement(&self.expr, &args, &self.defaults)?;
 
@@ -1306,19 +1284,14 @@ async fn create_scalar_function_from_sql_statement_default_arguments() -> Result
         "Error during planning: Non-default arguments cannot follow default arguments.";
     assert!(expected.starts_with(&err.strip_backtrace()));
 
-    // FIXME: The `DEFAULT` syntax does not work with positional params
-    let bad_expression_sql = r#"
+    let expression_sql = r#"
     CREATE FUNCTION bad_expression_fun(DOUBLE, DOUBLE DEFAULT 2.0)
         RETURNS DOUBLE
         RETURN $1 + $2
     "#;
-    let err = ctx
-        .sql(bad_expression_sql)
-        .await
-        .expect_err("sqlparser error");
-    let expected =
-        "SQL error: ParserError(\"Expected: ), found: 2.0 at Line: 2, Column: 63\")";
-    assert!(expected.starts_with(&err.strip_backtrace()));
+    let result = ctx.sql(expression_sql).await;
+
+    assert!(result.is_ok());
     Ok(())
 }
 
@@ -1449,10 +1422,6 @@ impl MyRegexUdf {
 }
 
 impl ScalarUDFImpl for MyRegexUdf {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "regex_udf"
     }
@@ -1617,10 +1586,6 @@ impl MetadataBasedUdf {
 }
 
 impl ScalarUDFImpl for MetadataBasedUdf {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -1826,10 +1791,6 @@ impl Default for ExtensionBasedUdf {
     }
 }
 impl ScalarUDFImpl for ExtensionBasedUdf {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -1996,9 +1957,6 @@ async fn test_config_options_work_for_scalar_func() -> Result<()> {
     }
 
     impl ScalarUDFImpl for TestScalarUDF {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
         fn name(&self) -> &str {
             "TestScalarUDF"
         }
@@ -2060,10 +2018,6 @@ async fn test_extension_metadata_preserve_in_sql_values() -> Result<()> {
     }
 
     impl ScalarUDFImpl for MakeExtension {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
         fn name(&self) -> &str {
             "make_extension"
         }
@@ -2141,10 +2095,6 @@ async fn test_extension_metadata_preserve_in_subquery() -> Result<()> {
     }
 
     impl ScalarUDFImpl for ExtensionScalarPredicate {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
         fn name(&self) -> &str {
             "extension_predicate"
         }

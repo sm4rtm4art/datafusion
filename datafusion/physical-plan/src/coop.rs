@@ -22,9 +22,14 @@
 //! A single call to `poll_next` on a top-level [`Stream`] may potentially perform a lot of work
 //! before it returns a `Poll::Pending`. Think for instance of calculating an aggregation over a
 //! large dataset.
+//!
 //! If a `Stream` runs for a long period of time without yielding back to the Tokio executor,
 //! it can starve other tasks waiting on that executor to execute them.
 //! Additionally, this prevents the query execution from being cancelled.
+//!
+//! For more background, please also see the [Using Rust async for Query Execution and Cancelling Long-Running Queries blog]
+//!
+//! [Using Rust async for Query Execution and Cancelling Long-Running Queries blog]: https://datafusion.apache.org/blog/2025/06/30/cancellation
 //!
 //! To ensure that `Stream` implementations yield regularly, operators can insert explicit yield
 //! points using the utilities in this module. For most operators this is **not** necessary. The
@@ -69,7 +74,6 @@ use datafusion_common::config::ConfigOptions;
 use datafusion_physical_expr::PhysicalExpr;
 #[cfg(datafusion_coop = "tokio_fallback")]
 use futures::Future;
-use std::any::Any;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -80,9 +84,10 @@ use crate::filter_pushdown::{
     FilterPushdownPropagation,
 };
 use crate::projection::ProjectionExec;
+use crate::statistics::StatisticsArgs;
 use crate::{
     DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, RecordBatchStream,
-    SendableRecordBatchStream, SortOrderPushdownResult,
+    SendableRecordBatchStream, SortOrderPushdownResult, check_if_same_properties,
 };
 use arrow::record_batch::RecordBatch;
 use arrow_schema::Schema;
@@ -212,16 +217,15 @@ where
 #[derive(Debug, Clone)]
 pub struct CooperativeExec {
     input: Arc<dyn ExecutionPlan>,
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
 }
 
 impl CooperativeExec {
     /// Creates a new `CooperativeExec` operator that wraps the given input execution plan.
     pub fn new(input: Arc<dyn ExecutionPlan>) -> Self {
-        let properties = input
-            .properties()
-            .clone()
-            .with_scheduling_type(SchedulingType::Cooperative);
+        let properties = PlanProperties::clone(input.properties())
+            .with_scheduling_type(SchedulingType::Cooperative)
+            .into();
 
         Self { input, properties }
     }
@@ -229,6 +233,16 @@ impl CooperativeExec {
     /// Returns a reference to the wrapped input execution plan.
     pub fn input(&self) -> &Arc<dyn ExecutionPlan> {
         &self.input
+    }
+
+    fn with_new_children_and_same_properties(
+        &self,
+        mut children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Self {
+        Self {
+            input: children.swap_remove(0),
+            ..Self::clone(self)
+        }
     }
 }
 
@@ -247,15 +261,11 @@ impl ExecutionPlan for CooperativeExec {
         "CooperativeExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> Arc<Schema> {
         self.input.schema()
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
@@ -276,6 +286,7 @@ impl ExecutionPlan for CooperativeExec {
             1,
             "CooperativeExec requires exactly one child"
         );
+        check_if_same_properties!(self, children);
         Ok(Arc::new(CooperativeExec::new(children.swap_remove(0))))
     }
 
@@ -288,8 +299,8 @@ impl ExecutionPlan for CooperativeExec {
         Ok(make_cooperative(child_stream))
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
-        self.input.partition_statistics(partition)
+    fn statistics_with_args(&self, args: &StatisticsArgs) -> Result<Arc<Statistics>> {
+        args.compute_child_statistics(&self.input, args.partition())
     }
 
     fn supports_limit_pushdown(&self) -> bool {
@@ -378,11 +389,10 @@ pub fn make_cooperative(stream: SendableRecordBatchStream) -> SendableRecordBatc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream::RecordBatchStreamAdapter;
 
     use arrow_schema::SchemaRef;
 
-    use futures::{StreamExt, stream};
+    use futures::stream;
 
     // This is the hardcoded value Tokio uses
     const TASK_BUDGET: usize = 128;

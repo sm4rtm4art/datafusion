@@ -24,10 +24,10 @@ use arrow::{array::types::Date32Type, compute::kernels::cast_utils::Parser};
 use datafusion_common::format::DEFAULT_CAST_OPTIONS;
 use datafusion_common::{Result, arrow_err, exec_err, internal_datafusion_err};
 use datafusion_expr::{
-    ColumnarValue, Documentation, ScalarUDFImpl, Signature, Volatility,
+    ColumnarValue, Documentation, ScalarFunctionArgs, ScalarUDFImpl, Signature,
+    Volatility,
 };
 use datafusion_macros::user_doc;
-use std::any::Any;
 
 #[user_doc(
     doc_section(label = "Time and Date Functions"),
@@ -84,7 +84,7 @@ impl ToDateFunc {
 
     fn to_date(&self, args: &[ColumnarValue]) -> Result<ColumnarValue> {
         match args.len() {
-            1 => handle::<Date32Type, _, Date32Type>(
+            1 => handle::<Date32Type, _>(
                 args,
                 |s| match Date32Type::parse(s) {
                     Some(v) => Ok(v),
@@ -94,8 +94,9 @@ impl ToDateFunc {
                     )),
                 },
                 "to_date",
+                &Date32,
             ),
-            2.. => handle_multiple::<Date32Type, _, Date32Type, _>(
+            2.. => handle_multiple::<Date32Type, _, _>(
                 args,
                 |s, format| {
                     string_to_timestamp_millis_formatted(s, format)
@@ -108,6 +109,7 @@ impl ToDateFunc {
                 },
                 |n| n,
                 "to_date",
+                &Date32,
             ),
             0 => exec_err!("Unsupported 0 argument count for function to_date"),
         }
@@ -115,10 +117,6 @@ impl ToDateFunc {
 }
 
 impl ScalarUDFImpl for ToDateFunc {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "to_date"
     }
@@ -131,10 +129,7 @@ impl ScalarUDFImpl for ToDateFunc {
         Ok(Date32)
     }
 
-    fn invoke_with_args(
-        &self,
-        args: datafusion_expr::ScalarFunctionArgs,
-    ) -> Result<ColumnarValue> {
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let args = args.args;
         if args.is_empty() {
             return exec_err!("to_date function requires 1 or more arguments, got 0");
@@ -202,7 +197,7 @@ mod tests {
     use arrow::{compute::kernels::cast_utils::Parser, datatypes::Date32Type};
     use datafusion_common::config::ConfigOptions;
     use datafusion_common::{DataFusionError, ScalarValue};
-    use datafusion_expr::{ColumnarValue, ScalarUDFImpl};
+    use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
     use std::sync::Arc;
 
     fn invoke_to_date_with_args(
@@ -214,7 +209,7 @@ mod tests {
             .map(|arg| Field::new("a", arg.data_type(), true).into())
             .collect::<Vec<_>>();
 
-        let args = datafusion_expr::ScalarFunctionArgs {
+        let args = ScalarFunctionArgs {
             args,
             arg_fields,
             number_rows,

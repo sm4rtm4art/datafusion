@@ -18,7 +18,6 @@
 use insta::assert_snapshot;
 use std::sync::Arc;
 use std::{
-    any::Any,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -45,7 +44,7 @@ use datafusion_physical_plan::joins::utils::JoinFilter;
 use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec, PartitionMode};
 use datafusion_physical_plan::projection::ProjectionExec;
 use datafusion_physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
+    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, StatisticsArgs,
     execution_plan::{Boundedness, EmissionType},
 };
 
@@ -222,6 +221,7 @@ async fn test_join_with_swap() {
             None,
             PartitionMode::CollectLeft,
             NullEquality::NullEqualsNothing,
+            false,
         )
         .unwrap(),
     );
@@ -231,7 +231,6 @@ async fn test_join_with_swap() {
         .unwrap();
 
     let swapping_projection = optimized_join
-        .as_any()
         .downcast_ref::<ProjectionExec>()
         .expect("A proj is required to swap columns back to their original order");
 
@@ -245,14 +244,13 @@ async fn test_join_with_swap() {
 
     let swapped_join = swapping_projection
         .input()
-        .as_any()
         .downcast_ref::<HashJoinExec>()
         .expect("The type of the plan should not be changed");
 
     assert_eq!(
         swapped_join
             .left()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(8192)
@@ -260,7 +258,7 @@ async fn test_join_with_swap() {
     assert_eq!(
         swapped_join
             .right()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(2097152)
@@ -284,6 +282,7 @@ async fn test_left_join_no_swap() {
             None,
             PartitionMode::CollectLeft,
             NullEquality::NullEqualsNothing,
+            false,
         )
         .unwrap(),
     );
@@ -293,14 +292,13 @@ async fn test_left_join_no_swap() {
         .unwrap();
 
     let swapped_join = optimized_join
-        .as_any()
         .downcast_ref::<HashJoinExec>()
         .expect("The type of the plan should not be changed");
 
     assert_eq!(
         swapped_join
             .left()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(8192)
@@ -308,7 +306,7 @@ async fn test_left_join_no_swap() {
     assert_eq!(
         swapped_join
             .right()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(2097152)
@@ -333,6 +331,7 @@ async fn test_join_with_swap_semi() {
             None,
             PartitionMode::Partitioned,
             NullEquality::NullEqualsNothing,
+            false,
         )
         .unwrap();
 
@@ -342,18 +341,15 @@ async fn test_join_with_swap_semi() {
             .optimize(Arc::new(join), &ConfigOptions::new())
             .unwrap();
 
-        let swapped_join = optimized_join
-            .as_any()
-            .downcast_ref::<HashJoinExec>()
-            .expect(
-                "A proj is not required to swap columns back to their original order",
-            );
+        let swapped_join = optimized_join.downcast_ref::<HashJoinExec>().expect(
+            "A proj is not required to swap columns back to their original order",
+        );
 
         assert_eq!(swapped_join.schema().fields().len(), 1);
         assert_eq!(
             swapped_join
                 .left()
-                .partition_statistics(None)
+                .statistics_with_args(&StatisticsArgs::new())
                 .unwrap()
                 .total_byte_size,
             Precision::Inexact(8192)
@@ -361,7 +357,7 @@ async fn test_join_with_swap_semi() {
         assert_eq!(
             swapped_join
                 .right()
-                .partition_statistics(None)
+                .statistics_with_args(&StatisticsArgs::new())
                 .unwrap()
                 .total_byte_size,
             Precision::Inexact(2097152)
@@ -388,6 +384,7 @@ async fn test_join_with_swap_mark() {
             None,
             PartitionMode::Partitioned,
             NullEquality::NullEqualsNothing,
+            false,
         )
         .unwrap();
 
@@ -397,18 +394,15 @@ async fn test_join_with_swap_mark() {
             .optimize(Arc::new(join), &ConfigOptions::new())
             .unwrap();
 
-        let swapped_join = optimized_join
-            .as_any()
-            .downcast_ref::<HashJoinExec>()
-            .expect(
-                "A proj is not required to swap columns back to their original order",
-            );
+        let swapped_join = optimized_join.downcast_ref::<HashJoinExec>().expect(
+            "A proj is not required to swap columns back to their original order",
+        );
 
         assert_eq!(swapped_join.schema().fields().len(), 2);
         assert_eq!(
             swapped_join
                 .left()
-                .partition_statistics(None)
+                .statistics_with_args(&StatisticsArgs::new())
                 .unwrap()
                 .total_byte_size,
             Precision::Inexact(8192)
@@ -416,7 +410,7 @@ async fn test_join_with_swap_mark() {
         assert_eq!(
             swapped_join
                 .right()
-                .partition_statistics(None)
+                .statistics_with_args(&StatisticsArgs::new())
                 .unwrap()
                 .total_byte_size,
             Precision::Inexact(2097152)
@@ -461,6 +455,7 @@ async fn test_nested_join_swap() {
         None,
         PartitionMode::CollectLeft,
         NullEquality::NullEqualsNothing,
+        false,
     )
     .unwrap();
     let child_schema = child_join.schema();
@@ -478,6 +473,7 @@ async fn test_nested_join_swap() {
         None,
         PartitionMode::CollectLeft,
         NullEquality::NullEqualsNothing,
+        false,
     )
     .unwrap();
 
@@ -518,6 +514,7 @@ async fn test_join_no_swap() {
             None,
             PartitionMode::CollectLeft,
             NullEquality::NullEqualsNothing,
+            false,
         )
         .unwrap(),
     );
@@ -527,14 +524,13 @@ async fn test_join_no_swap() {
         .unwrap();
 
     let swapped_join = optimized_join
-        .as_any()
         .downcast_ref::<HashJoinExec>()
         .expect("The type of the plan should not be changed");
 
     assert_eq!(
         swapped_join
             .left()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(8192)
@@ -542,7 +538,7 @@ async fn test_join_no_swap() {
     assert_eq!(
         swapped_join
             .right()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(2097152)
@@ -576,7 +572,6 @@ async fn test_nl_join_with_swap(join_type: JoinType) {
         .unwrap();
 
     let swapping_projection = optimized_join
-        .as_any()
         .downcast_ref::<ProjectionExec>()
         .expect("A proj is required to swap columns back to their original order");
 
@@ -590,7 +585,6 @@ async fn test_nl_join_with_swap(join_type: JoinType) {
 
     let swapped_join = swapping_projection
         .input()
-        .as_any()
         .downcast_ref::<NestedLoopJoinExec>()
         .expect("The type of the plan should not be changed");
 
@@ -611,7 +605,7 @@ async fn test_nl_join_with_swap(join_type: JoinType) {
     assert_eq!(
         swapped_join
             .left()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(8192)
@@ -619,7 +613,7 @@ async fn test_nl_join_with_swap(join_type: JoinType) {
     assert_eq!(
         swapped_join
             .right()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(2097152)
@@ -657,7 +651,6 @@ async fn test_nl_join_with_swap_no_proj(join_type: JoinType) {
         .unwrap();
 
     let swapped_join = optimized_join
-        .as_any()
         .downcast_ref::<NestedLoopJoinExec>()
         .expect("The type of the plan should not be changed");
 
@@ -685,7 +678,7 @@ async fn test_nl_join_with_swap_no_proj(join_type: JoinType) {
     assert_eq!(
         swapped_join
             .left()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(8192)
@@ -693,7 +686,7 @@ async fn test_nl_join_with_swap_no_proj(join_type: JoinType) {
     assert_eq!(
         swapped_join
             .right()
-            .partition_statistics(None)
+            .statistics_with_args(&StatisticsArgs::new())
             .unwrap()
             .total_byte_size,
         Precision::Inexact(2097152)
@@ -745,16 +738,19 @@ async fn test_hash_join_swap_on_joins_with_projections(
         Some(projection),
         PartitionMode::Partitioned,
         NullEquality::NullEqualsNothing,
+        false,
     )?);
 
     let swapped = join
         .swap_inputs(PartitionMode::Partitioned)
         .expect("swap_hash_join must support joins with projections");
-    let swapped_join = swapped.as_any().downcast_ref::<HashJoinExec>().expect(
+    let swapped_join = swapped
+        .downcast_ref::<HashJoinExec>()
+        .expect(
             "ProjectionExec won't be added above if HashJoinExec contains embedded projection",
         );
 
-    assert_eq!(swapped_join.projection, Some(vec![0_usize]));
+    assert_eq!(swapped_join.projection.as_deref().unwrap(), &[0_usize]);
     assert_eq!(swapped.schema().fields.len(), 1);
     assert_eq!(swapped.schema().fields[0].name(), "small_col");
     Ok(())
@@ -762,7 +758,6 @@ async fn test_hash_join_swap_on_joins_with_projections(
 
 fn assert_col_expr(expr: &Arc<dyn PhysicalExpr>, name: &str, index: usize) {
     let col = expr
-        .as_any()
         .downcast_ref::<Column>()
         .expect("Projection items should be Column expression");
     assert_eq!(col.name(), name);
@@ -906,6 +901,7 @@ fn check_join_partition_mode(
             None,
             PartitionMode::Auto,
             NullEquality::NullEqualsNothing,
+            false,
         )
         .unwrap(),
     );
@@ -916,18 +912,15 @@ fn check_join_partition_mode(
 
     if !is_swapped {
         let swapped_join = optimized_join
-            .as_any()
             .downcast_ref::<HashJoinExec>()
             .expect("The type of the plan should not be changed");
         assert_eq!(*swapped_join.partition_mode(), expected_mode);
     } else {
         let swapping_projection = optimized_join
-            .as_any()
             .downcast_ref::<ProjectionExec>()
             .expect("A proj is required to swap columns back to their original order");
         let swapped_join = swapping_projection
             .input()
-            .as_any()
             .downcast_ref::<HashJoinExec>()
             .expect("The type of the plan should not be changed");
 
@@ -970,7 +963,7 @@ impl RecordBatchStream for UnboundedStream {
 pub struct UnboundedExec {
     batch_produce: Option<usize>,
     batch: RecordBatch,
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
 }
 
 impl UnboundedExec {
@@ -986,7 +979,7 @@ impl UnboundedExec {
         Self {
             batch_produce,
             batch,
-            cache,
+            cache: Arc::new(cache),
         }
     }
 
@@ -1039,11 +1032,7 @@ impl ExecutionPlan for UnboundedExec {
         Self::static_name()
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
@@ -1082,7 +1071,7 @@ pub enum SourceType {
 pub struct StatisticsExec {
     stats: Statistics,
     schema: Arc<Schema>,
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
 }
 
 impl StatisticsExec {
@@ -1096,7 +1085,7 @@ impl StatisticsExec {
         Self {
             stats,
             schema: Arc::new(schema),
-            cache,
+            cache: Arc::new(cache),
         }
     }
 
@@ -1140,11 +1129,7 @@ impl ExecutionPlan for StatisticsExec {
         Self::static_name()
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
@@ -1167,16 +1152,12 @@ impl ExecutionPlan for StatisticsExec {
         unimplemented!("This plan only serves for testing statistics")
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        Ok(self.stats.clone())
-    }
-
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
-        Ok(if partition.is_some() {
+    fn statistics_with_args(&self, args: &StatisticsArgs) -> Result<Arc<Statistics>> {
+        Ok(Arc::new(if args.partition().is_some() {
             Statistics::new_unknown(&self.schema)
         } else {
             self.stats.clone()
-        })
+        }))
     }
 }
 
@@ -1554,16 +1535,16 @@ async fn test_join_with_maybe_swap_unbounded_case(t: TestCase) -> Result<()> {
         None,
         t.initial_mode,
         NullEquality::NullEqualsNothing,
+        false,
     )?) as _;
 
     let optimized_join_plan =
         JoinSelection::new().optimize(Arc::clone(&join), &ConfigOptions::new())?;
 
     // If swap did happen
-    let projection_added = optimized_join_plan.as_any().is::<ProjectionExec>();
+    let projection_added = optimized_join_plan.is::<ProjectionExec>();
     let plan = if projection_added {
         let proj = optimized_join_plan
-            .as_any()
             .downcast_ref::<ProjectionExec>()
             .expect("A proj is required to swap columns back to their original order");
         Arc::<dyn ExecutionPlan>::clone(proj.input())
@@ -1577,7 +1558,7 @@ async fn test_join_with_maybe_swap_unbounded_case(t: TestCase) -> Result<()> {
         join_type,
         mode,
         ..
-    }) = plan.as_any().downcast_ref::<HashJoinExec>()
+    }) = plan.downcast_ref::<HashJoinExec>()
     {
         let left_changed = Arc::ptr_eq(left, &right_exec);
         let right_changed = Arc::ptr_eq(right, &left_exec);

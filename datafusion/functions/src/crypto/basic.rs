@@ -17,73 +17,22 @@
 
 //! "crypto" DataFusion functions
 
-use arrow::array::{
-    Array, ArrayRef, AsArray, BinaryArray, BinaryArrayType, StringViewArray,
-};
+use arrow::array::{Array, ArrayRef, AsArray, BinaryArray, BinaryArrayType};
 use arrow::datatypes::DataType;
-use blake2::{Blake2b512, Blake2s256, Digest};
+use blake2::{Blake2b512, Blake2s256};
 use blake3::Hasher as Blake3;
-use datafusion_common::cast::as_binary_array;
 
 use arrow::compute::StringArrayType;
-use datafusion_common::{
-    DataFusionError, Result, ScalarValue, exec_err, internal_err, plan_err,
-    utils::take_function_args,
-};
+use datafusion_common::{DataFusionError, Result, ScalarValue, exec_err, plan_err};
 use datafusion_expr::ColumnarValue;
 use md5::Md5;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
-use std::fmt::{self, Write};
+use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
-macro_rules! define_digest_function {
-    ($NAME: ident, $METHOD: ident, $DOC: expr) => {
-        #[doc = $DOC]
-        pub fn $NAME(args: &[ColumnarValue]) -> Result<ColumnarValue> {
-            let [data] = take_function_args(&DigestAlgorithm::$METHOD.to_string(), args)?;
-            digest_process(data, DigestAlgorithm::$METHOD)
-        }
-    };
-}
-define_digest_function!(
-    sha224,
-    Sha224,
-    "computes sha224 hash digest of the given input"
-);
-define_digest_function!(
-    sha256,
-    Sha256,
-    "computes sha256 hash digest of the given input"
-);
-define_digest_function!(
-    sha384,
-    Sha384,
-    "computes sha384 hash digest of the given input"
-);
-define_digest_function!(
-    sha512,
-    Sha512,
-    "computes sha512 hash digest of the given input"
-);
-define_digest_function!(
-    blake2b,
-    Blake2b,
-    "computes blake2b hash digest of the given input"
-);
-define_digest_function!(
-    blake2s,
-    Blake2s,
-    "computes blake2s hash digest of the given input"
-);
-define_digest_function!(
-    blake3,
-    Blake3,
-    "computes blake3 hash digest of the given input"
-);
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum DigestAlgorithm {
+pub(crate) enum DigestAlgorithm {
     Md5,
     Sha224,
     Sha256,
@@ -135,63 +84,21 @@ impl fmt::Display for DigestAlgorithm {
     }
 }
 
-/// computes md5 hash digest of the given input
-pub fn md5(args: &[ColumnarValue]) -> Result<ColumnarValue> {
-    let [data] = take_function_args("md5", args)?;
-    let value = digest_process(data, DigestAlgorithm::Md5)?;
-
-    // md5 requires special handling because of its unique utf8view return type
-    Ok(match value {
-        ColumnarValue::Array(array) => {
-            let binary_array = as_binary_array(&array)?;
-            let string_array: StringViewArray = binary_array
-                .iter()
-                .map(|opt| opt.map(hex_encode::<_>))
-                .collect();
-            ColumnarValue::Array(Arc::new(string_array))
-        }
-        ColumnarValue::Scalar(ScalarValue::Binary(opt)) => {
-            ColumnarValue::Scalar(ScalarValue::Utf8View(opt.map(hex_encode::<_>)))
-        }
-        _ => return internal_err!("Impossibly got invalid results from digest"),
-    })
-}
-
-/// this function exists so that we do not need to pull in the crate hex. it is only used by md5
-/// function below
-#[inline]
-fn hex_encode<T: AsRef<[u8]>>(data: T) -> String {
-    let mut s = String::with_capacity(data.as_ref().len() * 2);
-    for b in data.as_ref() {
-        // Writing to a string never errors, so we can unwrap here.
-        write!(&mut s, "{b:02x}").unwrap();
-    }
-    s
-}
-
 macro_rules! digest_to_array {
-    ($METHOD:ident, $INPUT:expr) => {{
+    ($MODULE:ident, $METHOD:ident, $INPUT:expr) => {{
+        use $MODULE::Digest;
         let binary_array: BinaryArray = $INPUT
             .iter()
-            .map(|x| {
-                x.map(|x| {
-                    let mut digest = $METHOD::default();
-                    digest.update(x);
-                    digest.finalize()
-                })
-            })
+            .map(|x| x.map(|x| $METHOD::digest(x)))
             .collect();
         Arc::new(binary_array)
     }};
 }
 
 macro_rules! digest_to_scalar {
-    ($METHOD: ident, $INPUT:expr) => {{
-        ScalarValue::Binary($INPUT.as_ref().map(|v| {
-            let mut digest = $METHOD::default();
-            digest.update(v);
-            digest.finalize().as_slice().to_vec()
-        }))
+    ($MODULE: ident, $METHOD: ident, $INPUT:expr) => {{
+        use $MODULE::Digest;
+        ScalarValue::Binary($INPUT.map(|v| $METHOD::digest(v).as_slice().to_vec()))
     }};
 }
 
@@ -199,13 +106,13 @@ impl DigestAlgorithm {
     /// digest an optional string to its hash value, null values are returned as is
     fn digest_scalar(self, value: Option<&[u8]>) -> ColumnarValue {
         ColumnarValue::Scalar(match self {
-            Self::Md5 => digest_to_scalar!(Md5, value),
-            Self::Sha224 => digest_to_scalar!(Sha224, value),
-            Self::Sha256 => digest_to_scalar!(Sha256, value),
-            Self::Sha384 => digest_to_scalar!(Sha384, value),
-            Self::Sha512 => digest_to_scalar!(Sha512, value),
-            Self::Blake2b => digest_to_scalar!(Blake2b512, value),
-            Self::Blake2s => digest_to_scalar!(Blake2s256, value),
+            Self::Md5 => digest_to_scalar!(md5, Md5, value),
+            Self::Sha224 => digest_to_scalar!(sha2, Sha224, value),
+            Self::Sha256 => digest_to_scalar!(sha2, Sha256, value),
+            Self::Sha384 => digest_to_scalar!(sha2, Sha384, value),
+            Self::Sha512 => digest_to_scalar!(sha2, Sha512, value),
+            Self::Blake2b => digest_to_scalar!(blake2, Blake2b512, value),
+            Self::Blake2s => digest_to_scalar!(blake2, Blake2s256, value),
             Self::Blake3 => ScalarValue::Binary(value.map(|v| {
                 let mut digest = Blake3::default();
                 digest.update(v);
@@ -222,13 +129,13 @@ impl DigestAlgorithm {
         StringArrType: StringArrayType<'a>,
     {
         match self {
-            Self::Md5 => digest_to_array!(Md5, input_value),
-            Self::Sha224 => digest_to_array!(Sha224, input_value),
-            Self::Sha256 => digest_to_array!(Sha256, input_value),
-            Self::Sha384 => digest_to_array!(Sha384, input_value),
-            Self::Sha512 => digest_to_array!(Sha512, input_value),
-            Self::Blake2b => digest_to_array!(Blake2b512, input_value),
-            Self::Blake2s => digest_to_array!(Blake2s256, input_value),
+            Self::Md5 => digest_to_array!(md5, Md5, input_value),
+            Self::Sha224 => digest_to_array!(sha2, Sha224, input_value),
+            Self::Sha256 => digest_to_array!(sha2, Sha256, input_value),
+            Self::Sha384 => digest_to_array!(sha2, Sha384, input_value),
+            Self::Sha512 => digest_to_array!(sha2, Sha512, input_value),
+            Self::Blake2b => digest_to_array!(blake2, Blake2b512, input_value),
+            Self::Blake2s => digest_to_array!(blake2, Blake2s256, input_value),
             Self::Blake3 => {
                 let binary_array: BinaryArray = input_value
                     .iter()
@@ -253,13 +160,13 @@ impl DigestAlgorithm {
         BinaryArrType: BinaryArrayType<'a>,
     {
         match self {
-            Self::Md5 => digest_to_array!(Md5, input_value),
-            Self::Sha224 => digest_to_array!(Sha224, input_value),
-            Self::Sha256 => digest_to_array!(Sha256, input_value),
-            Self::Sha384 => digest_to_array!(Sha384, input_value),
-            Self::Sha512 => digest_to_array!(Sha512, input_value),
-            Self::Blake2b => digest_to_array!(Blake2b512, input_value),
-            Self::Blake2s => digest_to_array!(Blake2s256, input_value),
+            Self::Md5 => digest_to_array!(md5, Md5, input_value),
+            Self::Sha224 => digest_to_array!(sha2, Sha224, input_value),
+            Self::Sha256 => digest_to_array!(sha2, Sha256, input_value),
+            Self::Sha384 => digest_to_array!(sha2, Sha384, input_value),
+            Self::Sha512 => digest_to_array!(sha2, Sha512, input_value),
+            Self::Blake2b => digest_to_array!(blake2, Blake2b512, input_value),
+            Self::Blake2s => digest_to_array!(blake2, Blake2s256, input_value),
             Self::Blake3 => {
                 let binary_array: BinaryArray = input_value
                     .iter()
@@ -277,7 +184,7 @@ impl DigestAlgorithm {
     }
 }
 
-pub fn digest_process(
+pub(crate) fn digest_process(
     value: &ColumnarValue,
     digest_algorithm: DigestAlgorithm,
 ) -> Result<ColumnarValue> {

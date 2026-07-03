@@ -34,6 +34,7 @@ use crate::error::Result;
 use crate::execution::context::{SessionConfig, SessionState};
 
 use arrow::datatypes::{DataType, Schema, SchemaRef};
+use datafusion_catalog_listing::SchemaSource;
 use datafusion_common::config::{ConfigFileDecryptionProperties, TableOptions};
 use datafusion_common::{
     DEFAULT_ARROW_EXTENSION, DEFAULT_AVRO_EXTENSION, DEFAULT_CSV_EXTENSION,
@@ -442,14 +443,23 @@ impl<'a> AvroReadOptions<'a> {
     }
 }
 
-/// Options that control the reading of Line-delimited JSON files (NDJson)
+#[deprecated(
+    since = "53.0.0",
+    note = "Use `JsonReadOptions` instead. This alias will be removed in a future version."
+)]
+#[doc = "Deprecated: Use [`JsonReadOptions`] instead."]
+pub type NdJsonReadOptions<'a> = JsonReadOptions<'a>;
+
+/// Options that control the reading of JSON files.
+///
+/// Supports both newline-delimited JSON (NDJSON) and JSON array formats.
 ///
 /// Note this structure is supplied when a datasource is created and
-/// can not not vary from statement to statement. For settings that
+/// can not vary from statement to statement. For settings that
 /// can vary statement to statement see
 /// [`ConfigOptions`](crate::config::ConfigOptions).
 #[derive(Clone)]
-pub struct NdJsonReadOptions<'a> {
+pub struct JsonReadOptions<'a> {
     /// The data source schema.
     pub schema: Option<&'a Schema>,
     /// Max number of rows to read from JSON files for schema inference if needed. Defaults to `DEFAULT_SCHEMA_INFER_MAX_RECORD`.
@@ -465,9 +475,25 @@ pub struct NdJsonReadOptions<'a> {
     pub infinite: bool,
     /// Indicates how the file is sorted
     pub file_sort_order: Vec<Vec<SortExpr>>,
+    /// Whether to read as newline-delimited JSON (default: true).
+    ///
+    /// When `true` (default), expects newline-delimited JSON (NDJSON):
+    /// ```text
+    /// {"key1": 1, "key2": "val"}
+    /// {"key1": 2, "key2": "vals"}
+    /// ```
+    ///
+    /// When `false`, expects JSON array format:
+    /// ```text
+    /// [
+    ///   {"key1": 1, "key2": "val"},
+    ///   {"key1": 2, "key2": "vals"}
+    /// ]
+    /// ```
+    pub newline_delimited: bool,
 }
 
-impl Default for NdJsonReadOptions<'_> {
+impl Default for JsonReadOptions<'_> {
     fn default() -> Self {
         Self {
             schema: None,
@@ -477,11 +503,12 @@ impl Default for NdJsonReadOptions<'_> {
             file_compression_type: FileCompressionType::UNCOMPRESSED,
             infinite: false,
             file_sort_order: vec![],
+            newline_delimited: true,
         }
     }
 }
 
-impl<'a> NdJsonReadOptions<'a> {
+impl<'a> JsonReadOptions<'a> {
     /// Specify table_partition_cols for partition pruning
     pub fn table_partition_cols(
         mut self,
@@ -529,6 +556,26 @@ impl<'a> NdJsonReadOptions<'a> {
         self.schema_infer_max_records = schema_infer_max_records;
         self
     }
+
+    /// Set whether to read as newline-delimited JSON.
+    ///
+    /// When `true` (default), expects newline-delimited JSON (NDJSON):
+    /// ```text
+    /// {"key1": 1, "key2": "val"}
+    /// {"key1": 2, "key2": "vals"}
+    /// ```
+    ///
+    /// When `false`, expects JSON array format:
+    /// ```text
+    /// [
+    ///   {"key1": 1, "key2": "val"},
+    ///   {"key1": 2, "key2": "vals"}
+    /// ]
+    /// ```
+    pub fn newline_delimited(mut self, newline_delimited: bool) -> Self {
+        self.newline_delimited = newline_delimited;
+        self
+    }
 }
 
 #[async_trait]
@@ -548,6 +595,11 @@ pub trait ReadOptions<'a> {
         state: SessionState,
         table_path: ListingTableUrl,
     ) -> Result<SchemaRef>;
+
+    /// Returns whether the read schema was inferred or specified.
+    fn schema_source(&self) -> SchemaSource {
+        SchemaSource::Specified
+    }
 
     /// helper function to reduce repetitive code. Infers the schema from sources if not provided. Infinite data sources not supported through this function.
     async fn _get_resolved_schema(
@@ -574,7 +626,7 @@ pub trait ReadOptions<'a> {
 impl ReadOptions<'_> for CsvReadOptions<'_> {
     fn to_listing_options(
         &self,
-        config: &SessionConfig,
+        _config: &SessionConfig,
         table_options: TableOptions,
     ) -> ListingOptions {
         let file_format = CsvFormat::default()
@@ -593,7 +645,6 @@ impl ReadOptions<'_> for CsvReadOptions<'_> {
 
         ListingOptions::new(Arc::new(file_format))
             .with_file_extension(self.file_extension)
-            .with_session_config_options(config)
             .with_table_partition_cols(self.table_partition_cols.clone())
             .with_file_sort_order(self.file_sort_order.clone())
     }
@@ -607,6 +658,10 @@ impl ReadOptions<'_> for CsvReadOptions<'_> {
         self._get_resolved_schema(config, state, table_path, self.schema)
             .await
     }
+
+    fn schema_source(&self) -> SchemaSource {
+        schema_source_from_option(self.schema)
+    }
 }
 
 #[cfg(feature = "parquet")]
@@ -614,7 +669,7 @@ impl ReadOptions<'_> for CsvReadOptions<'_> {
 impl ReadOptions<'_> for ParquetReadOptions<'_> {
     fn to_listing_options(
         &self,
-        config: &SessionConfig,
+        _config: &SessionConfig,
         table_options: TableOptions,
     ) -> ListingOptions {
         let mut options = table_options.parquet;
@@ -639,7 +694,6 @@ impl ReadOptions<'_> for ParquetReadOptions<'_> {
             .with_file_extension(self.file_extension)
             .with_table_partition_cols(self.table_partition_cols.clone())
             .with_file_sort_order(self.file_sort_order.clone())
-            .with_session_config_options(config)
     }
 
     async fn get_resolved_schema(
@@ -651,23 +705,27 @@ impl ReadOptions<'_> for ParquetReadOptions<'_> {
         self._get_resolved_schema(config, state, table_path, self.schema)
             .await
     }
+
+    fn schema_source(&self) -> SchemaSource {
+        schema_source_from_option(self.schema)
+    }
 }
 
 #[async_trait]
-impl ReadOptions<'_> for NdJsonReadOptions<'_> {
+impl ReadOptions<'_> for JsonReadOptions<'_> {
     fn to_listing_options(
         &self,
-        config: &SessionConfig,
+        _config: &SessionConfig,
         table_options: TableOptions,
     ) -> ListingOptions {
         let file_format = JsonFormat::default()
             .with_options(table_options.json)
             .with_schema_infer_max_rec(self.schema_infer_max_records)
-            .with_file_compression_type(self.file_compression_type.to_owned());
+            .with_file_compression_type(self.file_compression_type.to_owned())
+            .with_newline_delimited(self.newline_delimited);
 
         ListingOptions::new(Arc::new(file_format))
             .with_file_extension(self.file_extension)
-            .with_session_config_options(config)
             .with_table_partition_cols(self.table_partition_cols.clone())
             .with_file_sort_order(self.file_sort_order.clone())
     }
@@ -681,6 +739,10 @@ impl ReadOptions<'_> for NdJsonReadOptions<'_> {
         self._get_resolved_schema(config, state, table_path, self.schema)
             .await
     }
+
+    fn schema_source(&self) -> SchemaSource {
+        schema_source_from_option(self.schema)
+    }
 }
 
 #[cfg(feature = "avro")]
@@ -688,14 +750,13 @@ impl ReadOptions<'_> for NdJsonReadOptions<'_> {
 impl ReadOptions<'_> for AvroReadOptions<'_> {
     fn to_listing_options(
         &self,
-        config: &SessionConfig,
+        _config: &SessionConfig,
         _table_options: TableOptions,
     ) -> ListingOptions {
         let file_format = AvroFormat;
 
         ListingOptions::new(Arc::new(file_format))
             .with_file_extension(self.file_extension)
-            .with_session_config_options(config)
             .with_table_partition_cols(self.table_partition_cols.clone())
     }
 
@@ -707,6 +768,10 @@ impl ReadOptions<'_> for AvroReadOptions<'_> {
     ) -> Result<SchemaRef> {
         self._get_resolved_schema(config, state, table_path, self.schema)
             .await
+    }
+
+    fn schema_source(&self) -> SchemaSource {
+        schema_source_from_option(self.schema)
     }
 }
 
@@ -714,14 +779,13 @@ impl ReadOptions<'_> for AvroReadOptions<'_> {
 impl ReadOptions<'_> for ArrowReadOptions<'_> {
     fn to_listing_options(
         &self,
-        config: &SessionConfig,
+        _config: &SessionConfig,
         _table_options: TableOptions,
     ) -> ListingOptions {
         let file_format = ArrowFormat;
 
         ListingOptions::new(Arc::new(file_format))
             .with_file_extension(self.file_extension)
-            .with_session_config_options(config)
             .with_table_partition_cols(self.table_partition_cols.clone())
     }
 
@@ -733,5 +797,17 @@ impl ReadOptions<'_> for ArrowReadOptions<'_> {
     ) -> Result<SchemaRef> {
         self._get_resolved_schema(config, state, table_path, self.schema)
             .await
+    }
+
+    fn schema_source(&self) -> SchemaSource {
+        schema_source_from_option(self.schema)
+    }
+}
+
+fn schema_source_from_option(schema: Option<&Schema>) -> SchemaSource {
+    if schema.is_some() {
+        SchemaSource::Specified
+    } else {
+        SchemaSource::Inferred
     }
 }

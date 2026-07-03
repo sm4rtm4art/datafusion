@@ -15,10 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::any::Any;
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, AsArray, Date32Array, StringArrayType, new_null_array};
+use arrow::array::{ArrayRef, AsArray, Date32Array, StringArrayType};
 use arrow::datatypes::{DataType, Date32Type, Field, FieldRef};
 use chrono::{Datelike, Duration, Weekday};
 use datafusion_common::{Result, ScalarValue, exec_err, internal_err};
@@ -51,10 +50,6 @@ impl SparkNextDay {
 }
 
 impl ScalarUDFImpl for SparkNextDay {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "next_day"
     }
@@ -129,10 +124,7 @@ impl ScalarUDFImpl for SparkNextDay {
                         } else {
                             // TODO: if spark.sql.ansi.enabled is false,
                             //  returns NULL instead of an error for a malformed dayOfWeek.
-                            Ok(ColumnarValue::Array(Arc::new(new_null_array(
-                                &DataType::Date32,
-                                date_array.len(),
-                            ))))
+                            Ok(ColumnarValue::Scalar(ScalarValue::Date32(None)))
                         }
                     }
                     _ => exec_err!(
@@ -216,9 +208,9 @@ where
 }
 
 fn spark_next_day(days: i32, day_of_week: &str) -> Option<i32> {
-    let date = Date32Type::to_naive_date(days);
+    let date = Date32Type::to_naive_date_opt(days)?;
 
-    let day_of_week = day_of_week.trim().to_uppercase();
+    let day_of_week = day_of_week.to_uppercase();
     let day_of_week = match day_of_week.as_str() {
         "MO" | "MON" | "MONDAY" => Some("MONDAY"),
         "TU" | "TUE" | "TUESDAY" => Some("TUESDAY"),
@@ -256,7 +248,6 @@ fn spark_next_day(days: i32, day_of_week: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion_expr::ReturnFieldArgs;
 
     #[test]
     fn return_type_is_not_used() {
@@ -287,5 +278,11 @@ mod tests {
 
         assert_eq!(field.data_type(), &DataType::Date32);
         assert!(field.is_nullable());
+    }
+
+    #[test]
+    fn next_day_rejects_whitespace_padded_day_names() {
+        let monday = 19723; // 2024-01-01
+        assert_eq!(spark_next_day(monday, " MO "), None);
     }
 }

@@ -84,7 +84,7 @@ mod tests {
         .build();
 
         // Verify the expected options propagated down to parquet crate WriterProperties struct
-        assert_eq!(properties.max_row_group_size(), 123);
+        assert_eq!(properties.max_row_group_row_count(), Some(123));
         assert_eq!(properties.data_page_size_limit(), 123);
         assert_eq!(properties.write_batch_size(), 123);
         assert_eq!(properties.writer_version(), WriterVersion::PARQUET_2_0);
@@ -114,14 +114,14 @@ mod tests {
             properties
                 .bloom_filter_properties(&ColumnPath::from(""))
                 .expect("expected bloom properties!")
-                .fpp,
+                .fpp(),
             0.123
         );
         assert_eq!(
             properties
                 .bloom_filter_properties(&ColumnPath::from(""))
                 .expect("expected bloom properties!")
-                .ndv,
+                .ndv(),
             123
         );
 
@@ -242,7 +242,7 @@ mod tests {
             properties
                 .bloom_filter_properties(&col1)
                 .expect("expected bloom properties!")
-                .fpp,
+                .fpp(),
             0.123
         );
 
@@ -250,7 +250,7 @@ mod tests {
             properties
                 .bloom_filter_properties(&col2_nested)
                 .expect("expected bloom properties!")
-                .fpp,
+                .fpp(),
             0.456
         );
 
@@ -258,7 +258,7 @@ mod tests {
             properties
                 .bloom_filter_properties(&col1)
                 .expect("expected bloom properties!")
-                .ndv,
+                .ndv(),
             123
         );
 
@@ -266,7 +266,7 @@ mod tests {
             properties
                 .bloom_filter_properties(&col2_nested)
                 .expect("expected bloom properties!")
-                .ndv,
+                .ndv(),
             456
         );
 

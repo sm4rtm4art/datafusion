@@ -17,7 +17,9 @@
 
 use std::sync::Arc;
 
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result, TableReference};
+use datafusion_execution::cache::cache_manager::CachedFileList;
+use datafusion_execution::cache::cache_manager::TableScopedPath;
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_session::Session;
 
@@ -28,7 +30,7 @@ use itertools::Itertools;
 use log::debug;
 use object_store::path::DELIMITER;
 use object_store::path::Path;
-use object_store::{ObjectMeta, ObjectStore};
+use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
 use url::Url;
 
 /// A parsed URL identifying files for a listing table, see [`ListingTableUrl::parse`]
@@ -41,6 +43,8 @@ pub struct ListingTableUrl {
     prefix: Path,
     /// An optional glob expression used to filter files
     glob: Option<Pattern>,
+    /// Optional table reference for the table this url belongs to
+    table_ref: Option<TableReference>,
 }
 
 impl ListingTableUrl {
@@ -145,7 +149,12 @@ impl ListingTableUrl {
     /// to create a [`ListingTableUrl`].
     pub fn try_new(url: Url, glob: Option<Pattern>) -> Result<Self> {
         let prefix = Path::from_url_path(url.path())?;
-        Ok(Self { url, prefix, glob })
+        Ok(Self {
+            url,
+            prefix,
+            glob,
+            table_ref: None,
+        })
     }
 
     /// Returns the URL scheme
@@ -249,13 +258,20 @@ impl ListingTableUrl {
         let full_prefix = if let Some(ref p) = prefix {
             let mut parts = self.prefix.parts().collect::<Vec<_>>();
             parts.extend(p.parts());
-            Path::from_iter(parts.into_iter())
+            Path::from_iter(parts)
         } else {
             self.prefix.clone()
         };
 
         let list: BoxStream<'a, Result<ObjectMeta>> = if self.is_collection() {
-            list_with_cache(ctx, store, &self.prefix, prefix.as_ref()).await?
+            list_with_cache(
+                ctx,
+                store,
+                self.table_ref.as_ref(),
+                &self.prefix,
+                prefix.as_ref(),
+            )
+            .await?
         } else {
             match store.head(&full_prefix).await {
                 Ok(meta) => futures::stream::once(async { Ok(meta) })
@@ -264,7 +280,14 @@ impl ListingTableUrl {
                 // If the head command fails, it is likely that object doesn't exist.
                 // Retry as though it were a prefix (aka a collection)
                 Err(object_store::Error::NotFound { .. }) => {
-                    list_with_cache(ctx, store, &self.prefix, prefix.as_ref()).await?
+                    list_with_cache(
+                        ctx,
+                        store,
+                        self.table_ref.as_ref(),
+                        &self.prefix,
+                        prefix.as_ref(),
+                    )
+                    .await?
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -318,10 +341,21 @@ impl ListingTableUrl {
     }
 
     /// Returns a copy of current [`ListingTableUrl`] with a specified `glob`
-    pub fn with_glob(self, glob: &str) -> Result<Self> {
-        let glob =
-            Pattern::new(glob).map_err(|e| DataFusionError::External(Box::new(e)))?;
-        Self::try_new(self.url, Some(glob))
+    pub fn with_glob(mut self, glob: &str) -> Result<Self> {
+        self.glob =
+            Some(Pattern::new(glob).map_err(|e| DataFusionError::External(Box::new(e)))?);
+        Ok(self)
+    }
+
+    /// Set the table reference for this [`ListingTableUrl`]
+    pub fn with_table_ref(mut self, table_ref: TableReference) -> Self {
+        self.table_ref = Some(table_ref);
+        self
+    }
+
+    /// Return the table reference for this [`ListingTableUrl`]
+    pub fn get_table_ref(&self) -> &Option<TableReference> {
+        &self.table_ref
     }
 }
 
@@ -345,6 +379,7 @@ impl ListingTableUrl {
 async fn list_with_cache<'b>(
     ctx: &'b dyn Session,
     store: &'b dyn ObjectStore,
+    table_ref: Option<&TableReference>,
     table_base_path: &Path,
     prefix: Option<&Path>,
 ) -> Result<BoxStream<'b, Result<ObjectMeta>>> {
@@ -364,37 +399,35 @@ async fn list_with_cache<'b>(
             .map(|res| res.map_err(|e| DataFusionError::ObjectStore(Box::new(e))))
             .boxed()),
         Some(cache) => {
-            // Convert prefix to Option<Path> for cache lookup
-            let prefix_filter = prefix.cloned();
+            // Build the filter prefix (only Some if prefix was requested)
+            let filter_prefix = prefix.is_some().then(|| full_prefix.clone());
 
-            // Try cache lookup with optional prefix filter
-            let vec = if let Some(res) =
-                cache.get_with_extra(table_base_path, &prefix_filter)
-            {
+            let table_scoped_base_path = TableScopedPath {
+                table: table_ref.cloned(),
+                path: table_base_path.clone(),
+            };
+
+            // Try cache lookup - get returns CachedFileList
+            let vec = if let Some(cached) = cache.get(&table_scoped_base_path) {
                 debug!("Hit list files cache");
-                res.as_ref().clone()
+                cached.files_matching_prefix(&filter_prefix)
             } else {
                 // Cache miss - always list and cache the full table
                 // This ensures we have complete data for future prefix queries
-                let vec = store
+                let mut vec = store
                     .list(Some(table_base_path))
                     .try_collect::<Vec<ObjectMeta>>()
                     .await?;
-                cache.put(table_base_path, Arc::new(vec.clone()));
-
-                // If a prefix filter was requested, apply it to the results
-                if prefix.is_some() {
-                    let full_prefix_str = full_prefix.as_ref();
-                    vec.into_iter()
-                        .filter(|meta| {
-                            meta.location.as_ref().starts_with(full_prefix_str)
-                        })
-                        .collect()
-                } else {
-                    vec
-                }
+                vec.shrink_to_fit(); // Right-size before caching
+                let cached: CachedFileList = vec.into();
+                let result = cached.files_matching_prefix(&filter_prefix);
+                cache.put(&table_scoped_base_path, cached);
+                result
             };
-            Ok(futures::stream::iter(vec.into_iter().map(Ok)).boxed())
+            Ok(
+                futures::stream::iter(Arc::unwrap_or_clone(vec).into_iter().map(Ok))
+                    .boxed(),
+            )
         }
     }
 }
@@ -484,12 +517,15 @@ mod tests {
     use datafusion_execution::config::SessionConfig;
     use datafusion_execution::runtime_env::RuntimeEnv;
     use datafusion_expr::execution_props::ExecutionProps;
-    use datafusion_expr::{AggregateUDF, Expr, LogicalPlan, ScalarUDF, WindowUDF};
+    use datafusion_expr::registry::ExtensionTypeRegistryRef;
+    use datafusion_expr::{
+        AggregateUDF, Expr, HigherOrderUDF, LogicalPlan, ScalarUDF, WindowUDF,
+    };
     use datafusion_physical_expr_common::physical_expr::PhysicalExpr;
     use datafusion_physical_plan::ExecutionPlan;
     use object_store::{
-        GetOptions, GetResult, ListResult, MultipartUpload, PutMultipartOptions,
-        PutPayload,
+        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload,
+        PutMultipartOptions, PutPayload,
     };
     use std::any::Any;
     use std::collections::HashMap;
@@ -502,7 +538,7 @@ mod tests {
         let root = root.to_string_lossy();
 
         let url = ListingTableUrl::parse(root).unwrap();
-        let child = url.prefix.child("partition").child("file");
+        let child = url.prefix.clone().join("partition").join("file");
 
         let prefix: Vec<_> = url.strip_prefix(&child).unwrap().collect();
         assert_eq!(prefix, vec!["partition", "file"]);
@@ -1074,7 +1110,14 @@ mod tests {
             location: &Path,
             options: GetOptions,
         ) -> object_store::Result<GetResult> {
-            self.in_mem.get_opts(location, options).await
+            if options.head && self.forbidden_paths.contains(location) {
+                Err(object_store::Error::PermissionDenied {
+                    path: location.to_string(),
+                    source: "forbidden".into(),
+                })
+            } else {
+                self.in_mem.get_opts(location, options).await
+            }
         }
 
         async fn get_ranges(
@@ -1085,19 +1128,11 @@ mod tests {
             self.in_mem.get_ranges(location, ranges).await
         }
 
-        async fn head(&self, location: &Path) -> object_store::Result<ObjectMeta> {
-            if self.forbidden_paths.contains(location) {
-                Err(object_store::Error::PermissionDenied {
-                    path: location.to_string(),
-                    source: "forbidden".into(),
-                })
-            } else {
-                self.in_mem.head(location).await
-            }
-        }
-
-        async fn delete(&self, location: &Path) -> object_store::Result<()> {
-            self.in_mem.delete(location).await
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, object_store::Result<Path>>,
+        ) -> BoxStream<'static, object_store::Result<Path>> {
+            self.in_mem.delete_stream(locations)
         }
 
         fn list(
@@ -1114,16 +1149,13 @@ mod tests {
             self.in_mem.list_with_delimiter(prefix).await
         }
 
-        async fn copy(&self, from: &Path, to: &Path) -> object_store::Result<()> {
-            self.in_mem.copy(from, to).await
-        }
-
-        async fn copy_if_not_exists(
+        async fn copy_opts(
             &self,
             from: &Path,
             to: &Path,
+            options: CopyOptions,
         ) -> object_store::Result<()> {
-            self.in_mem.copy_if_not_exists(from, to).await
+            self.in_mem.copy_opts(from, to, options).await
         }
     }
 
@@ -1178,11 +1210,19 @@ mod tests {
             unimplemented!()
         }
 
+        fn higher_order_functions(&self) -> &HashMap<String, Arc<HigherOrderUDF>> {
+            unimplemented!()
+        }
+
         fn aggregate_functions(&self) -> &HashMap<String, Arc<AggregateUDF>> {
             unimplemented!()
         }
 
         fn window_functions(&self) -> &HashMap<String, Arc<WindowUDF>> {
+            unimplemented!()
+        }
+
+        fn extension_type_registry(&self) -> &ExtensionTypeRegistryRef {
             unimplemented!()
         }
 

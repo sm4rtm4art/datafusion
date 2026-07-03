@@ -98,7 +98,6 @@ impl AddOne {
 
 /// Implement the ScalarUDFImpl trait for AddOne
 impl ScalarUDFImpl for AddOne {
-   fn as_any(&self) -> &dyn Any { self }
    fn name(&self) -> &str { "add_one" }
    fn signature(&self) -> &Signature { &self.signature }
    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
@@ -161,7 +160,6 @@ We now need to register the function with DataFusion so that it can be used in t
 #
 # /// Implement the ScalarUDFImpl trait for AddOne
 # impl ScalarUDFImpl for AddOne {
-#    fn as_any(&self) -> &dyn Any { self }
 #    fn name(&self) -> &str { "add_one" }
 #    fn signature(&self) -> &Signature { &self.signature }
 #    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
@@ -411,10 +409,6 @@ impl AsyncUpper {
 /// Implement the normal ScalarUDFImpl trait for AsyncUpper
 #[async_trait]
 impl ScalarUDFImpl for AsyncUpper {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "async_upper"
     }
@@ -514,10 +508,6 @@ We can now transfer the async UDF into the normal scalar using `into_scalar_udf`
 #
 # #[async_trait]
 # impl ScalarUDFImpl for AsyncUpper {
-#     fn as_any(&self) -> &dyn Any {
-#         self
-#     }
-#
 #     fn name(&self) -> &str {
 #         "async_upper"
 #     }
@@ -583,7 +573,6 @@ For async UDF implementation details, see [`async_udf.rs`](https://github.com/ap
 
 [`scalarudf`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.ScalarUDF.html
 [`create_udf`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.create_udf.html
-[`process_scalar_func_inputs`]: https://docs.rs/datafusion/latest/datafusion/physical_expr/functions/fn.process_scalar_func_inputs.html
 [`advanced_udf.rs`]: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/udf/advanced_udf.rs
 
 ## Named Arguments
@@ -642,7 +631,6 @@ impl PowerFunction {
 }
 
 impl ScalarUDFImpl for PowerFunction {
-    fn as_any(&self) -> &dyn Any { self }
     fn name(&self) -> &str { "power" }
     fn signature(&self) -> &Signature { &self.signature }
 
@@ -683,6 +671,10 @@ No function matches the given name and argument types substr(Utf8).
 
 Scalar UDFs are functions that take a row of data and return a single value. Window UDFs are similar, but they also have
 access to the rows around them. Access to the proximal rows is helpful, but adds some complexity to the implementation.
+
+For background and other considerations, see the [User defined Window Functions in DataFusion] blog.
+
+[user defined window functions in datafusion]: https://datafusion.apache.org/blog/2025/04/19/user-defined-window-functions
 
 For example, we will declare a user defined window function that computes a moving average.
 
@@ -1237,6 +1229,36 @@ The `create_udaf` has six arguments to check:
 - The fifth argument is the function implementation. This is the function that we defined above.
 - The sixth argument is the description of the state, which will by passed between execution stages.
 
+### Returning multiple values from an Aggregate UDF
+
+An aggregate UDF can return a `DataType::Struct` when one aggregate result needs
+to carry multiple values. This is useful for time-windowing extensions that
+need to return metadata such as the window start, window end, and the aggregate
+value together.
+
+Pass the relevant input columns to the aggregate so the accumulator has enough
+information to update and merge state normally in multi-stage aggregate plans.
+For example, rows can be grouped into time buckets with the built-in `date_bin`
+function, while a struct-returning aggregate computes the value and carries
+metadata about each bucket:
+
+```sql
+SELECT
+  augmented_avg(time, value)['window_start'] AS window_start,
+  augmented_avg(time, value)['window_end'] AS window_end,
+  augmented_avg(time, value)['window_duration'] AS window_duration,
+  augmented_avg(time, value)['avg_value'] AS avg_value
+FROM t
+GROUP BY date_bin(INTERVAL '30 seconds', time)
+ORDER BY window_start;
+```
+
+In this pattern `date_bin(...)` assigns rows to a time bucket, while
+`augmented_avg(time, value)` is a normal aggregate UDF whose accumulator stores
+mergeable state such as `window_start`, `window_end`, `sum`, and `count`.
+The aggregate's `evaluate` method returns a `ScalarValue::Struct`, and callers
+can project individual fields from that struct.
+
 ```rust
 
 # use datafusion::arrow::array::ArrayRef;
@@ -1385,15 +1407,16 @@ in the CLI to read the metadata from a Parquet file.
 
 The simple UDTF used here takes a single `Int64` argument and returns a table with a single column with the value of the
 argument. To create a function in DataFusion, you need to implement the `TableFunctionImpl` trait. This trait has a
-single method, `call`, that takes a slice of `Expr`s and returns a `Result<Arc<dyn TableProvider>>`.
+single method, `call_with_args`, that takes a `TableFunctionArgs` struct and returns a `Result<Arc<dyn TableProvider>>`.
+Passed struct includes function arguments as a slice of `Expr`s.
 
-In the `call` method, you parse the input `Expr`s and return a `TableProvider`. You might also want to do some
+In the `call_with_args` method, you parse the input `Expr`s and return a `TableProvider`. You might also want to do some
 validation of the input `Expr`s, e.g. checking that the number of arguments is correct.
 
 ```rust
 use std::sync::Arc;
 use datafusion::common::{plan_err, ScalarValue, Result};
-use datafusion::catalog::{TableFunctionImpl, TableProvider};
+use datafusion::catalog::{TableFunctionArgs, TableFunctionImpl, TableProvider};
 use datafusion::arrow::array::{ArrayRef, Int64Array};
 use datafusion::datasource::memory::MemTable;
 use arrow::record_batch::RecordBatch;
@@ -1405,7 +1428,8 @@ use datafusion_expr::Expr;
 pub struct EchoFunction {}
 
 impl TableFunctionImpl for EchoFunction {
-    fn call(&self, exprs: &[Expr]) -> Result<Arc<dyn TableProvider>> {
+    fn call_with_args(&self, args: TableFunctionArgs) -> Result<Arc<dyn TableProvider>> {
+        let exprs = args.exprs();
         let Some(Expr::Literal(ScalarValue::Int64(Some(value)), _)) = exprs.get(0) else {
             return plan_err!("First argument must be an integer");
         };
@@ -1434,7 +1458,7 @@ With the UDTF implemented, you can register it with the `SessionContext`:
 ```rust
 # use std::sync::Arc;
 # use datafusion::common::{plan_err, ScalarValue, Result};
-# use datafusion::catalog::{TableFunctionImpl, TableProvider};
+# use datafusion::catalog::{TableFunctionArgs, TableFunctionImpl, TableProvider};
 # use datafusion::arrow::array::{ArrayRef, Int64Array};
 # use datafusion::datasource::memory::MemTable;
 # use arrow::record_batch::RecordBatch;
@@ -1446,7 +1470,8 @@ With the UDTF implemented, you can register it with the `SessionContext`:
 # pub struct EchoFunction {}
 #
 # impl TableFunctionImpl for EchoFunction {
-#     fn call(&self, exprs: &[Expr]) -> Result<Arc<dyn TableProvider>> {
+#    fn call_with_args(&self, args: TableFunctionArgs) -> Result<Arc<dyn TableProvider>> {
+#        let exprs = args.exprs();
 #         let Some(Expr::Literal(ScalarValue::Int64(Some(value)), _)) = exprs.get(0) else {
 #             return plan_err!("First argument must be an integer");
 #         };

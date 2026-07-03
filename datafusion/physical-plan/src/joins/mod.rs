@@ -20,13 +20,16 @@
 use arrow::array::BooleanBufferBuilder;
 pub use cross_join::CrossJoinExec;
 use datafusion_physical_expr::PhysicalExprRef;
-pub use hash_join::{HashExpr, HashJoinExec, HashTableLookupExpr, SeededRandomState};
-pub use nested_loop_join::NestedLoopJoinExec;
+pub use hash_join::{
+    HashExpr, HashJoinExec, HashJoinExecBuilder, HashTableLookupExpr, SeededRandomState,
+};
+pub use nested_loop_join::{NestedLoopJoinExec, NestedLoopJoinExecBuilder};
 use parking_lot::Mutex;
 // Note: SortMergeJoin is not used in plans yet
 pub use piecewise_merge_join::PiecewiseMergeJoinExec;
 pub use sort_merge_join::SortMergeJoinExec;
 pub use symmetric_hash_join::SymmetricHashJoinExec;
+pub mod chain;
 mod cross_join;
 mod hash_join;
 mod nested_loop_join;
@@ -36,12 +39,47 @@ mod stream_join_utils;
 mod symmetric_hash_join;
 pub mod utils;
 
+mod array_map;
 mod join_filter;
 /// Hash map implementations for join operations.
 ///
 /// Note: This module is public for internal testing purposes only
 /// and is not guaranteed to be stable across versions.
 pub mod join_hash_map;
+
+use array_map::ArrayMap;
+use utils::JoinHashMapType;
+
+/// The build-side map of a hash join, indexing build rows by join key.
+///
+/// Under [`NullEquality::NullEqualsNothing`], build rows with a NULL in any
+/// join key column can never match a probe row and are omitted from the map.
+/// [`Map::is_empty`] and [`Map::num_of_distinct_key`] therefore reflect the
+/// *matchable* build rows: the map can be empty even when the build side
+/// contains rows.
+///
+/// [`NullEquality::NullEqualsNothing`]: datafusion_common::NullEquality::NullEqualsNothing
+pub enum Map {
+    HashMap(Box<dyn JoinHashMapType>),
+    ArrayMap(ArrayMap),
+}
+
+impl Map {
+    /// Returns the number of elements in the map.
+    pub fn num_of_distinct_key(&self) -> usize {
+        match self {
+            Map::HashMap(map) => map.len(),
+            Map::ArrayMap(array_map) => array_map.num_of_distinct_key(),
+        }
+    }
+
+    /// Returns `true` if the map contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.num_of_distinct_key() == 0
+    }
+}
+
+pub(crate) type MapOffset = (usize, Option<u64>);
 
 #[cfg(test)]
 pub mod test_utils;

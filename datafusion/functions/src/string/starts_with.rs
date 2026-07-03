@@ -15,19 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, Scalar};
 use arrow::compute::kernels::comparison::starts_with as arrow_starts_with;
 use arrow::datatypes::DataType;
-use datafusion_expr::simplify::{ExprSimplifyResult, SimplifyInfo};
+use datafusion_common::types::logical_string;
+use datafusion_common::utils::take_function_args;
+use datafusion_common::{Result, ScalarValue, exec_err};
+use datafusion_expr::simplify::{ExprSimplifyResult, SimplifyContext};
 use datafusion_expr::type_coercion::binary::{
     binary_to_string_coercion, string_coercion,
 };
-
-use datafusion_common::types::logical_string;
-use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{
     Coercion, ColumnarValue, Documentation, Expr, Like, ScalarFunctionArgs,
     ScalarUDFImpl, Signature, TypeSignatureClass, Volatility, cast,
@@ -75,10 +74,6 @@ impl StartsWithFunc {
 }
 
 impl ScalarUDFImpl for StartsWithFunc {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "starts_with"
     }
@@ -92,12 +87,7 @@ impl ScalarUDFImpl for StartsWithFunc {
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        let [str_arg, prefix_arg] = args.args.as_slice() else {
-            return exec_err!(
-                "starts_with was called with {} arguments, expected 2",
-                args.args.len()
-            );
-        };
+        let [str_arg, prefix_arg] = take_function_args(self.name(), &args.args)?;
 
         // Determine the common type for coercion
         let coercion_type = string_coercion(
@@ -168,7 +158,7 @@ impl ScalarUDFImpl for StartsWithFunc {
     fn simplify(
         &self,
         args: Vec<Expr>,
-        info: &dyn SimplifyInfo,
+        info: &SimplifyContext,
     ) -> Result<ExprSimplifyResult> {
         if let Expr::Literal(scalar_value, _) = &args[1] {
             // Convert starts_with(col, 'prefix') to col LIKE 'prefix%' with proper escaping
@@ -233,11 +223,8 @@ mod tests {
     use crate::utils::test::test_function;
     use arrow::array::{Array, BooleanArray, StringArray};
     use arrow::datatypes::DataType::Boolean;
-    use arrow::datatypes::{DataType, Field};
+    use arrow::datatypes::Field;
     use datafusion_common::config::ConfigOptions;
-    use datafusion_common::{Result, ScalarValue};
-    use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
-    use std::sync::Arc;
 
     use super::*;
 

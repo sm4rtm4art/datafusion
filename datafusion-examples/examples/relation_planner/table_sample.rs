@@ -80,16 +80,14 @@
 //! ```
 
 use std::{
-    any::Any,
     fmt::{self, Debug, Formatter},
     hash::{Hash, Hasher},
-    ops::{Add, Div, Mul, Sub},
     pin::Pin,
-    str::FromStr,
     sync::Arc,
     task::{Context, Poll},
 };
 
+use arrow::datatypes::{Float64Type, Int64Type};
 use arrow::{
     array::{ArrayRef, Int32Array, RecordBatch, StringArray, UInt32Array},
     compute,
@@ -102,6 +100,7 @@ use futures::{
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use tonic::async_trait;
 
+use datafusion::optimizer::simplify_expressions::simplify_literal::parse_literal;
 use datafusion::{
     execution::{
         RecordBatchStream, SendableRecordBatchStream, SessionState, SessionStateBuilder,
@@ -109,7 +108,7 @@ use datafusion::{
     },
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
+        DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, StatisticsArgs,
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, RecordOutput},
     },
     physical_planner::{DefaultPhysicalPlanner, ExtensionPlanner, PhysicalPlanner},
@@ -331,7 +330,7 @@ impl RelationPlanner for TableSamplePlanner {
             index_hints,
         } = relation
         else {
-            return Ok(RelationPlanning::Original(relation));
+            return Ok(RelationPlanning::Original(Box::new(relation)));
         };
 
         // Extract sample spec (handles both before/after alias positions)
@@ -401,7 +400,9 @@ impl RelationPlanner for TableSamplePlanner {
 
             let fraction = bucket_num as f64 / total as f64;
             let plan = TableSamplePlanNode::new(input, fraction, seed).into_plan();
-            return Ok(RelationPlanning::Planned(PlannedRelation::new(plan, alias)));
+            return Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+                plan, alias,
+            ))));
         }
 
         // Handle quantity-based sampling
@@ -410,31 +411,36 @@ impl RelationPlanner for TableSamplePlanner {
                 "TABLESAMPLE requires a quantity (percentage, fraction, or row count)"
             );
         };
+        let quantity_value_expr = context.sql_to_expr(quantity.value, input.schema())?;
 
         match quantity.unit {
             // TABLESAMPLE (N ROWS) - exact row limit
             Some(TableSampleUnit::Rows) => {
-                let rows = parse_quantity::<i64>(&quantity.value)?;
+                let rows: i64 = parse_literal::<Int64Type>(&quantity_value_expr)?;
                 if rows < 0 {
                     return plan_err!("row count must be non-negative, got {}", rows);
                 }
                 let plan = LogicalPlanBuilder::from(input)
                     .limit(0, Some(rows as usize))?
                     .build()?;
-                Ok(RelationPlanning::Planned(PlannedRelation::new(plan, alias)))
+                Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+                    plan, alias,
+                ))))
             }
 
             // TABLESAMPLE (N PERCENT) - percentage sampling
             Some(TableSampleUnit::Percent) => {
-                let percent = parse_quantity::<f64>(&quantity.value)?;
+                let percent: f64 = parse_literal::<Float64Type>(&quantity_value_expr)?;
                 let fraction = percent / 100.0;
                 let plan = TableSamplePlanNode::new(input, fraction, seed).into_plan();
-                Ok(RelationPlanning::Planned(PlannedRelation::new(plan, alias)))
+                Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+                    plan, alias,
+                ))))
             }
 
             // TABLESAMPLE (N) - fraction if <1.0, row limit if >=1.0
             None => {
-                let value = parse_quantity::<f64>(&quantity.value)?;
+                let value = parse_literal::<Float64Type>(&quantity_value_expr)?;
                 if value < 0.0 {
                     return plan_err!("sample value must be non-negative, got {}", value);
                 }
@@ -447,43 +453,11 @@ impl RelationPlanner for TableSamplePlanner {
                     // Interpret as fraction
                     TableSamplePlanNode::new(input, value, seed).into_plan()
                 };
-                Ok(RelationPlanning::Planned(PlannedRelation::new(plan, alias)))
+                Ok(RelationPlanning::Planned(Box::new(PlannedRelation::new(
+                    plan, alias,
+                ))))
             }
         }
-    }
-}
-
-/// Parse a SQL expression as a numeric value (supports basic arithmetic).
-fn parse_quantity<T>(expr: &ast::Expr) -> Result<T>
-where
-    T: FromStr + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T>,
-{
-    eval_numeric_expr(expr)
-        .ok_or_else(|| plan_datafusion_err!("invalid numeric expression: {:?}", expr))
-}
-
-/// Recursively evaluate numeric SQL expressions.
-fn eval_numeric_expr<T>(expr: &ast::Expr) -> Option<T>
-where
-    T: FromStr + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T>,
-{
-    match expr {
-        ast::Expr::Value(v) => match &v.value {
-            ast::Value::Number(n, _) => n.to_string().parse().ok(),
-            _ => None,
-        },
-        ast::Expr::BinaryOp { left, op, right } => {
-            let l = eval_numeric_expr::<T>(left)?;
-            let r = eval_numeric_expr::<T>(right)?;
-            match op {
-                ast::BinaryOperator::Plus => Some(l + r),
-                ast::BinaryOperator::Minus => Some(l - r),
-                ast::BinaryOperator::Multiply => Some(l * r),
-                ast::BinaryOperator::Divide => Some(l / r),
-                _ => None,
-            }
-        }
-        _ => None,
     }
 }
 
@@ -643,7 +617,7 @@ pub struct SampleExec {
     upper_bound: f64,
     seed: u64,
     metrics: ExecutionPlanMetricsSet,
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
 }
 
 impl SampleExec {
@@ -681,7 +655,7 @@ impl SampleExec {
             upper_bound,
             seed,
             metrics: ExecutionPlanMetricsSet::new(),
-            cache,
+            cache: Arc::new(cache),
         })
     }
 
@@ -707,11 +681,7 @@ impl ExecutionPlan for SampleExec {
         "SampleExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
@@ -752,8 +722,10 @@ impl ExecutionPlan for SampleExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
-        let mut stats = self.input.partition_statistics(partition)?;
+    fn statistics_with_args(&self, args: &StatisticsArgs) -> Result<Arc<Statistics>> {
+        let mut stats = Arc::unwrap_or_clone(
+            args.compute_child_statistics(&self.input, args.partition())?,
+        );
         let ratio = self.upper_bound - self.lower_bound;
 
         // Scale statistics by sampling ratio (inexact due to randomness)
@@ -766,7 +738,7 @@ impl ExecutionPlan for SampleExec {
             .map(|n| (n as f64 * ratio) as usize)
             .to_inexact();
 
-        Ok(stats)
+        Ok(Arc::new(stats))
     }
 }
 

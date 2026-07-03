@@ -30,6 +30,7 @@ use arrow::{
     record_batch::RecordBatch,
     util::pretty::pretty_format_batches,
 };
+use arrow_schema::SchemaRef;
 use chrono::{Datelike, Duration, TimeDelta};
 use datafusion::{
     datasource::{TableProvider, provider_as_source},
@@ -43,13 +44,16 @@ use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 
+mod content_defined_chunking;
 mod custom_reader;
+mod dynamic_row_group_pruning;
 #[cfg(feature = "parquet_encryption")]
 mod encryption;
 mod expr_adapter;
 mod external_access_plan;
 mod file_statistics;
 mod filter_pushdown;
+mod ordering;
 mod page_pruning;
 mod row_group_pruning;
 mod schema;
@@ -57,7 +61,7 @@ mod schema_coercion;
 mod utils;
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     // Enable RUST_LOG logging configuration for test
     let _ = env_logger::try_init();
@@ -96,6 +100,10 @@ enum Unit {
     RowGroup(usize),
     // pass max row per page in parquet writer
     Page(usize),
+    // pass max row per row_group AND max row per page. Use when a test
+    // needs both multi-RG layout AND multiple pages within each RG so the
+    // page index can prune at sub-RG granularity.
+    RowGroupAndPage(usize, usize),
 }
 
 /// Test fixture that has an execution context that has an external
@@ -107,6 +115,26 @@ struct ContextWithParquet {
     _file: NamedTempFile,
     provider: Arc<dyn TableProvider>,
     ctx: SessionContext,
+}
+
+struct PruningMetric {
+    total_pruned: usize,
+    total_matched: usize,
+    total_fully_matched: usize,
+}
+
+impl PruningMetric {
+    pub fn total_pruned(&self) -> usize {
+        self.total_pruned
+    }
+
+    pub fn total_matched(&self) -> usize {
+        self.total_matched
+    }
+
+    pub fn total_fully_matched(&self) -> usize {
+        self.total_fully_matched
+    }
 }
 
 /// The output of running one of the test cases
@@ -124,10 +152,16 @@ struct TestOutput {
 }
 
 impl TestOutput {
+    /// Pretty-printed result batches, useful for asserting concrete row
+    /// values in regression tests.
+    fn pretty_results(&self) -> &str {
+        &self.pretty_results
+    }
+
     /// retrieve the value of the named metric, if any
     fn metric_value(&self, metric_name: &str) -> Option<usize> {
-        if let Some((pruned, _matched)) = self.pruning_metric(metric_name) {
-            return Some(pruned);
+        if let Some(pm) = self.pruning_metric(metric_name) {
+            return Some(pm.total_pruned());
         }
 
         self.parquet_metrics
@@ -140,9 +174,10 @@ impl TestOutput {
             })
     }
 
-    fn pruning_metric(&self, metric_name: &str) -> Option<(usize, usize)> {
+    fn pruning_metric(&self, metric_name: &str) -> Option<PruningMetric> {
         let mut total_pruned = 0;
         let mut total_matched = 0;
+        let mut total_fully_matched = 0;
         let mut found = false;
 
         for metric in self.parquet_metrics.iter() {
@@ -154,12 +189,18 @@ impl TestOutput {
             {
                 total_pruned += pruning_metrics.pruned();
                 total_matched += pruning_metrics.matched();
+                total_fully_matched += pruning_metrics.fully_matched();
+
                 found = true;
             }
         }
 
         if found {
-            Some((total_pruned, total_matched))
+            Some(PruningMetric {
+                total_pruned,
+                total_matched,
+                total_fully_matched,
+            })
         } else {
             None
         }
@@ -171,27 +212,33 @@ impl TestOutput {
     }
 
     /// The number of row_groups pruned / matched by bloom filter
-    fn row_groups_bloom_filter(&self) -> Option<(usize, usize)> {
+    fn row_groups_bloom_filter(&self) -> Option<PruningMetric> {
         self.pruning_metric("row_groups_pruned_bloom_filter")
     }
 
     /// The number of row_groups matched by statistics
     fn row_groups_matched_statistics(&self) -> Option<usize> {
         self.pruning_metric("row_groups_pruned_statistics")
-            .map(|(_pruned, matched)| matched)
+            .map(|pm| pm.total_matched())
+    }
+
+    /// The number of row_groups fully matched by statistics
+    fn row_groups_fully_matched_statistics(&self) -> Option<usize> {
+        self.pruning_metric("row_groups_pruned_statistics")
+            .map(|pm| pm.total_fully_matched())
     }
 
     /// The number of row_groups pruned by statistics
     fn row_groups_pruned_statistics(&self) -> Option<usize> {
         self.pruning_metric("row_groups_pruned_statistics")
-            .map(|(pruned, _matched)| pruned)
+            .map(|pm| pm.total_pruned())
     }
 
     /// Metric `files_ranges_pruned_statistics` tracks both pruned and matched count,
     /// for testing purpose, here it only aggregate the `pruned` count.
     fn files_ranges_pruned_statistics(&self) -> Option<usize> {
         self.pruning_metric("files_ranges_pruned_statistics")
-            .map(|(pruned, _matched)| pruned)
+            .map(|pm| pm.total_pruned())
     }
 
     /// The number of row_groups matched by bloom filter or statistics
@@ -200,14 +247,13 @@ impl TestOutput {
     /// filter: 7 total -> 3 matched, this function returns 3 for the final matched
     /// count.
     fn row_groups_matched(&self) -> Option<usize> {
-        self.row_groups_bloom_filter()
-            .map(|(_pruned, matched)| matched)
+        self.row_groups_bloom_filter().map(|pm| pm.total_matched())
     }
 
     /// The number of row_groups pruned
     fn row_groups_pruned(&self) -> Option<usize> {
         self.row_groups_bloom_filter()
-            .map(|(pruned, _matched)| pruned)
+            .map(|pm| pm.total_pruned())
             .zip(self.row_groups_pruned_statistics())
             .map(|(a, b)| a + b)
     }
@@ -215,7 +261,20 @@ impl TestOutput {
     /// The number of row pages pruned
     fn row_pages_pruned(&self) -> Option<usize> {
         self.pruning_metric("page_index_rows_pruned")
-            .map(|(pruned, _matched)| pruned)
+            .map(|pm| pm.total_pruned())
+    }
+
+    /// The number of row groups pruned by limit pruning
+    fn limit_pruned_row_groups(&self) -> Option<usize> {
+        self.pruning_metric("limit_pruned_row_groups")
+            .map(|pm| pm.total_pruned())
+    }
+
+    /// The number of row groups pruned at runtime by the dynamic
+    /// row-group pruner (e.g. driven by a TopK `SortExec` threshold
+    /// pushed down via `DynamicFilterPhysicalExpr`).
+    fn row_groups_pruned_dynamic_filter(&self) -> Option<usize> {
+        self.metric_value("row_groups_pruned_dynamic_filter")
     }
 
     fn description(&self) -> String {
@@ -231,24 +290,64 @@ impl TestOutput {
 /// and the appropriate scenario
 impl ContextWithParquet {
     async fn new(scenario: Scenario, unit: Unit) -> Self {
-        Self::with_config(scenario, unit, SessionConfig::new()).await
+        Self::with_config(scenario, unit, SessionConfig::new(), None, None).await
+    }
+
+    /// Set custom schema and batches for the test
+    pub async fn with_custom_data(
+        scenario: Scenario,
+        unit: Unit,
+        schema: Arc<Schema>,
+        batches: Vec<RecordBatch>,
+    ) -> Self {
+        Self::with_config(
+            scenario,
+            unit,
+            SessionConfig::new(),
+            Some(schema),
+            Some(batches),
+        )
+        .await
     }
 
     async fn with_config(
         scenario: Scenario,
         unit: Unit,
         mut config: SessionConfig,
+        custom_schema: Option<SchemaRef>,
+        custom_batches: Option<Vec<RecordBatch>>,
     ) -> Self {
         // Use a single partition for deterministic results no matter how many CPUs the host has
         config = config.with_target_partitions(1);
         let file = match unit {
             Unit::RowGroup(row_per_group) => {
                 config = config.with_parquet_bloom_filter_pruning(true);
-                make_test_file_rg(scenario, row_per_group).await
+                config.options_mut().execution.parquet.pushdown_filters = true;
+                make_test_file_rg(
+                    scenario,
+                    row_per_group,
+                    None,
+                    custom_schema,
+                    custom_batches,
+                )
+                .await
             }
             Unit::Page(row_per_page) => {
                 config = config.with_parquet_page_index_pruning(true);
                 make_test_file_page(scenario, row_per_page).await
+            }
+            Unit::RowGroupAndPage(row_per_group, row_per_page) => {
+                config = config.with_parquet_bloom_filter_pruning(true);
+                config = config.with_parquet_page_index_pruning(true);
+                config.options_mut().execution.parquet.pushdown_filters = true;
+                make_test_file_rg(
+                    scenario,
+                    row_per_group,
+                    Some(row_per_page),
+                    custom_schema,
+                    custom_batches,
+                )
+                .await
             }
         };
         let parquet_path = file.path().to_string_lossy();
@@ -515,9 +614,9 @@ fn make_uint_batches(start: u8, end: u8) -> RecordBatch {
         Field::new("u64", DataType::UInt64, true),
     ]));
     let v8: Vec<u8> = (start..end).collect();
-    let v16: Vec<u16> = (start as _..end as _).collect();
-    let v32: Vec<u32> = (start as _..end as _).collect();
-    let v64: Vec<u64> = (start as _..end as _).collect();
+    let v16: Vec<u16> = (start as u16..end as u16).collect();
+    let v32: Vec<u32> = (start as u32..end as u32).collect();
+    let v64: Vec<u64> = (start as u64..end as u64).collect();
     RecordBatch::try_new(
         schema,
         vec![
@@ -664,11 +763,11 @@ fn make_bytearray_batch(
     let name: StringArray = std::iter::repeat_n(Some(name), num_rows).collect();
     let service_string: StringArray = string_values.iter().map(Some).collect();
     let service_binary: BinaryArray = binary_values.iter().map(Some).collect();
-    let service_fixedsize: FixedSizeBinaryArray = fixedsize_values
-        .iter()
-        .map(|value| Some(value.as_slice()))
-        .collect::<Vec<_>>()
-        .into();
+    let service_fixedsize = FixedSizeBinaryArray::try_from_sparse_iter_with_size(
+        fixedsize_values.iter().map(|value| Some(value.as_slice())),
+        3,
+    )
+    .unwrap();
     let service_large_binary: LargeBinaryArray =
         large_binary_values.iter().map(Some).collect();
 
@@ -1074,21 +1173,41 @@ fn create_data_batch(scenario: Scenario) -> Vec<RecordBatch> {
 }
 
 /// Create a test parquet file with various data types
-async fn make_test_file_rg(scenario: Scenario, row_per_group: usize) -> NamedTempFile {
+async fn make_test_file_rg(
+    scenario: Scenario,
+    row_per_group: usize,
+    row_per_page: Option<usize>,
+    custom_schema: Option<SchemaRef>,
+    custom_batches: Option<Vec<RecordBatch>>,
+) -> NamedTempFile {
     let mut output_file = tempfile::Builder::new()
         .prefix("parquet_pruning")
         .suffix(".parquet")
         .tempfile()
         .expect("tempfile creation");
 
-    let props = WriterProperties::builder()
-        .set_max_row_group_size(row_per_group)
+    let mut props_builder = WriterProperties::builder()
+        .set_max_row_group_row_count(Some(row_per_group))
         .set_bloom_filter_enabled(true)
-        .set_statistics_enabled(EnabledStatistics::Page)
-        .build();
+        .set_statistics_enabled(EnabledStatistics::Page);
+    if let Some(rpp) = row_per_page {
+        // Bound rows per page so the page index can prune at sub-RG
+        // granularity. `write_batch_size` must also be set so the writer
+        // does not buffer the whole RG into one page.
+        props_builder = props_builder
+            .set_data_page_row_count_limit(rpp)
+            .set_write_batch_size(rpp);
+    }
+    let props = props_builder.build();
 
-    let batches = create_data_batch(scenario);
-    let schema = batches[0].schema();
+    let (batches, schema) =
+        if let (Some(schema), Some(batches)) = (custom_schema, custom_batches) {
+            (batches, schema)
+        } else {
+            let batches = create_data_batch(scenario);
+            let schema = batches[0].schema();
+            (batches, schema)
+        };
 
     let mut writer = ArrowWriter::try_new(&mut output_file, schema, Some(props)).unwrap();
 

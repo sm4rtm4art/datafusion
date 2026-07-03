@@ -117,13 +117,7 @@ pub fn display_schema(schema: &Schema) -> impl fmt::Display + '_ {
                     write!(f, ", ")?;
                 }
                 let nullable_str = if field.is_nullable() { ";N" } else { "" };
-                write!(
-                    f,
-                    "{}:{:?}{}",
-                    field.name(),
-                    field.data_type(),
-                    nullable_str
-                )?;
+                write!(f, "{}:{}{}", field.name(), field.data_type(), nullable_str)?;
             }
             write!(f, "]")
         }
@@ -519,6 +513,23 @@ impl<'a, 'b> PgJsonVisitor<'a, 'b> {
                         "Partitioning Scheme": "Hash",
                         "Partition Count": n,
                         "Partitioning Key": hash_expr
+                    })
+                }
+                Partitioning::Range(range) => {
+                    let range_expr: Vec<String> =
+                        range.ordering().iter().map(|e| format!("{e}")).collect();
+                    let split_points: Vec<String> = range
+                        .split_points()
+                        .iter()
+                        .map(|e| format!("{e}"))
+                        .collect();
+
+                    json!({
+                        "Node Type": "Repartition",
+                        "Partitioning Scheme": "Range",
+                        "Partition Count": range.partition_count(),
+                        "Partitioning Key": range_expr,
+                        "Split Points": split_points
                     })
                 }
                 Partitioning::DistributeBy(expr) => {

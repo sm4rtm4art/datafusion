@@ -112,6 +112,7 @@ Here are some active projects using DataFusion:
 - [GreptimeDB] Open Source & Cloud Native Distributed Time Series Database
 - [hiop](https://hiop.io) Serverless Data Logistic Platform
 - [HoraeDB] Distributed Time-Series Database
+- [Hotdata](https://www.hotdata.dev) On-demand databases for AI agents with a unified query engine for vector, OLAP, and full-text search.
 - [Iceberg-rust](https://github.com/apache/iceberg-rust) Rust implementation of Apache Iceberg
 - [InfluxDB] Time Series Database
 - [Kamu] Planet-scale streaming data pipeline
@@ -137,6 +138,7 @@ Here are some active projects using DataFusion:
 - [Vortex] An extensible, state of the art columnar file format
 - [Telemetry](https://telemetry.sh/) Structured logging made easy
 - [Xorq](https://github.com/xorq-labs/xorq/) Xorq is a multi-engine batch transformation framework built on Ibis, DataFusion and Arrow
+- [KalamDB](https://github.com/jamals86/KalamDB) SQL-first realtime state database for AI agents, chat products, and multi-tenant SaaS.
 
 Here are some less active projects that used DataFusion:
 
@@ -147,13 +149,14 @@ Here are some less active projects that used DataFusion:
 - [Flock]
 - [Tensorbase]
 
+If you know of another project, please submit a PR to add a link!
+
 [ballista]: https://github.com/apache/datafusion-ballista
 [auron]: https://github.com/apache/auron
 [cloudfuse buzz]: https://github.com/cloudfuse-io/buzz-rust
 [cnosdb]: https://github.com/cnosdb/cnosdb
 [cube store]: https://github.com/cube-js/cube.js/tree/master/rust
 [dask sql]: https://github.com/dask-contrib/dask-sql
-[datafusion-tui]: https://github.com/datafusion-contrib/datafusion-tui
 [delta-rs]: https://github.com/delta-io/delta-rs
 [edb postgres lakehouse]: https://www.enterprisedb.com/products/analytics
 [exon]: https://github.com/wheretrue/exon
@@ -172,7 +175,7 @@ Here are some less active projects that used DataFusion:
 [synnada]: https://synnada.ai/
 [tensorbase]: https://github.com/tensorbase/tensorbase
 [vegafusion]: https://vegafusion.io/
-[vortex]: https://vortex.dev/ "if you know of another project, please submit a PR to add a link!"
+[vortex]: https://vortex.dev/
 
 ## Integrations and Extensions
 
@@ -184,7 +187,7 @@ provide integrations with other systems, some of which are described below:
 - [datafusion-c](https://github.com/datafusion-contrib/datafusion-c)
 - [datafusion-python](https://github.com/apache/datafusion-python)
 - [datafusion-ruby](https://github.com/datafusion-contrib/datafusion-ruby)
-- [datafusion-java](https://github.com/datafusion-contrib/datafusion-java)
+- [datafusion-java](https://github.com/apache/datafusion-java)
 
 ### Integrations
 

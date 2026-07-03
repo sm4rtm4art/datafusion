@@ -38,10 +38,10 @@ mod tests {
     use crate::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
     use crate::test::object_store::local_unpartitioned_file;
     use arrow::array::{
-        ArrayRef, AsArray, Date64Array, Int8Array, Int32Array, Int64Array, StringArray,
-        StringViewArray, StructArray, TimestampNanosecondArray,
+        ArrayRef, AsArray, Date64Array, DictionaryArray, Int8Array, Int32Array,
+        Int64Array, StringArray, StringViewArray, StructArray, TimestampNanosecondArray,
     };
-    use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder};
+    use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder, UInt16Type};
     use arrow::record_batch::RecordBatch;
     use arrow::util::pretty::pretty_format_batches;
     use arrow_schema::{SchemaRef, TimeUnit};
@@ -54,7 +54,7 @@ mod tests {
     use datafusion_datasource::source::DataSourceExec;
 
     use datafusion_datasource::file::FileSource;
-    use datafusion_datasource::{FileRange, PartitionedFile, TableSchema};
+    use datafusion_datasource::{PartitionedFile, TableSchemaBuilder};
     use datafusion_datasource_parquet::source::ParquetSource;
     use datafusion_datasource_parquet::{
         DefaultParquetFileReaderFactory, ParquetFileReaderFactory, ParquetFormat,
@@ -62,10 +62,10 @@ mod tests {
     use datafusion_execution::object_store::ObjectStoreUrl;
     use datafusion_expr::{Expr, col, lit, when};
     use datafusion_physical_expr::planner::logical2physical;
-    use datafusion_physical_plan::analyze::AnalyzeExec;
+    use datafusion_physical_plan::analyze::AnalyzeExecBuilder;
     use datafusion_physical_plan::collect;
     use datafusion_physical_plan::metrics::{
-        ExecutionPlanMetricsSet, MetricType, MetricValue, MetricsSet,
+        ExecutionPlanMetricsSet, MetricValue, MetricsSet,
     };
     use datafusion_physical_plan::{ExecutionPlan, ExecutionPlanProperties};
 
@@ -231,20 +231,22 @@ mod tests {
             let parquet_exec =
                 self.build_parquet_exec(file_group.clone(), Arc::clone(&parquet_source));
 
-            let analyze_exec = Arc::new(AnalyzeExec::new(
-                false,
-                false,
-                vec![MetricType::SUMMARY, MetricType::DEV],
-                // use a new ParquetSource to avoid sharing execution metrics
-                self.build_parquet_exec(
-                    file_group.clone(),
-                    self.build_file_source(Arc::clone(table_schema)),
-                ),
-                Arc::new(Schema::new(vec![
-                    Field::new("plan_type", DataType::Utf8, true),
-                    Field::new("plan", DataType::Utf8, true),
-                ])),
-            ));
+            let analyze_exec = Arc::new(
+                AnalyzeExecBuilder::new(
+                    false,
+                    false,
+                    // use a new ParquetSource to avoid sharing execution metrics
+                    self.build_parquet_exec(
+                        file_group.clone(),
+                        self.build_file_source(Arc::clone(table_schema)),
+                    ),
+                    Arc::new(Schema::new(vec![
+                        Field::new("plan_type", DataType::Utf8, true),
+                        Field::new("plan", DataType::Utf8, true),
+                    ])),
+                )
+                .build(),
+            );
 
             let session_ctx = SessionContext::new();
             let task_ctx = session_ctx.task_ctx();
@@ -995,6 +997,7 @@ mod tests {
         assert_eq!(read, 1, "Expected 1 rows to match the predicate");
         assert_eq!(get_value(&metrics, "row_groups_pruned_statistics"), 0);
         assert_eq!(get_value(&metrics, "page_index_rows_pruned"), 2);
+        assert_eq!(get_value(&metrics, "page_index_pages_pruned"), 1);
         assert_eq!(get_value(&metrics, "pushdown_rows_pruned"), 1);
         // If we filter with a value that is completely out of the range of the data
         // we prune at the row group level.
@@ -1168,10 +1171,16 @@ mod tests {
         // There are 4 rows pruned in each of batch2, batch3, and
         // batch4 for a total of 12. batch1 had no pruning as c2 was
         // filled in as null
-        let (page_index_pruned, page_index_matched) =
+        let (page_index_rows_pruned, page_index_rows_matched) =
             get_pruning_metric(&metrics, "page_index_rows_pruned");
-        assert_eq!(page_index_pruned, 12);
-        assert_eq!(page_index_matched, 6);
+        assert_eq!(page_index_rows_pruned, 12);
+        assert_eq!(page_index_rows_matched, 6);
+
+        // each page has 2 rows, so the num of pages is 1/2 the number of rows
+        let (page_index_pages_pruned, page_index_pages_matched) =
+            get_pruning_metric(&metrics, "page_index_pages_pruned");
+        assert_eq!(page_index_pages_pruned, 6);
+        assert_eq!(page_index_pages_matched, 3);
     }
 
     #[tokio::test]
@@ -1527,14 +1536,7 @@ mod tests {
     #[tokio::test]
     async fn parquet_exec_with_range() -> Result<()> {
         fn file_range(meta: &ObjectMeta, start: i64, end: i64) -> PartitionedFile {
-            PartitionedFile {
-                object_meta: meta.clone(),
-                partition_values: vec![],
-                range: Some(FileRange { start, end }),
-                statistics: None,
-                extensions: None,
-                metadata_size_hint: None,
-            }
+            PartitionedFile::new_from_meta(meta.clone()).with_range(start, end)
         }
 
         async fn assert_parquet_read(
@@ -1616,21 +1618,15 @@ mod tests {
             .await
             .unwrap();
 
-        let partitioned_file = PartitionedFile {
-            object_meta: meta,
-            partition_values: vec![
+        let partitioned_file = PartitionedFile::new_from_meta(meta)
+            .with_partition_values(vec![
                 ScalarValue::from("2021"),
                 ScalarValue::UInt8(Some(10)),
                 ScalarValue::Dictionary(
                     Box::new(DataType::UInt16),
                     Box::new(ScalarValue::from("26")),
                 ),
-            ],
-            range: None,
-            statistics: None,
-            extensions: None,
-            metadata_size_hint: None,
-        };
+            ]);
 
         let expected_schema = Schema::new(vec![
             Field::new("id", DataType::Int32, true),
@@ -1647,9 +1643,8 @@ mod tests {
             ),
         ]);
 
-        let table_schema = TableSchema::new(
-            Arc::clone(&schema),
-            vec![
+        let table_schema = TableSchemaBuilder::from(&schema)
+            .with_table_partition_cols(vec![
                 Arc::new(Field::new("year", DataType::Utf8, false)),
                 Arc::new(Field::new("month", DataType::UInt8, false)),
                 Arc::new(Field::new(
@@ -1660,8 +1655,8 @@ mod tests {
                     ),
                     false,
                 )),
-            ],
-        );
+            ])
+            .build();
         let source = Arc::new(ParquetSource::new(table_schema.clone()));
         let config = FileScanConfigBuilder::new(object_store_url, source)
             .with_file(partitioned_file)
@@ -1709,22 +1704,15 @@ mod tests {
         let state = session_ctx.state();
         let location = Path::from_filesystem_path(".")
             .unwrap()
-            .child("invalid.parquet");
+            .join("invalid.parquet");
 
-        let partitioned_file = PartitionedFile {
-            object_meta: ObjectMeta {
-                location,
-                last_modified: Utc.timestamp_nanos(0),
-                size: 1337,
-                e_tag: None,
-                version: None,
-            },
-            partition_values: vec![],
-            range: None,
-            statistics: None,
-            extensions: None,
-            metadata_size_hint: None,
-        };
+        let partitioned_file = PartitionedFile::new_from_meta(ObjectMeta {
+            location,
+            last_modified: Utc.timestamp_nanos(0),
+            size: 1337,
+            e_tag: None,
+            version: None,
+        });
 
         let file_schema = Arc::new(Schema::empty());
         let config = FileScanConfigBuilder::new(
@@ -1754,6 +1742,7 @@ mod tests {
             Some(3),
             Some(4),
             Some(5),
+            Some(6), // last page with only one row
         ]));
         let batch1 = create_batch(vec![("int", c1.clone())]);
 
@@ -1762,7 +1751,7 @@ mod tests {
         let rt = RoundTrip::new()
             .with_predicate(filter)
             .with_page_index_predicate()
-            .round_trip(vec![batch1])
+            .round_trip(vec![batch1.clone()])
             .await;
 
         let metrics = rt.parquet_exec.metrics().unwrap();
@@ -1775,14 +1764,107 @@ mod tests {
         | 5   |
         +-----+
         ");
-        let (page_index_pruned, page_index_matched) =
+        let (page_index_rows_pruned, page_index_rows_matched) =
             get_pruning_metric(&metrics, "page_index_rows_pruned");
-        assert_eq!(page_index_pruned, 4);
-        assert_eq!(page_index_matched, 2);
+        assert_eq!(page_index_rows_pruned, 5);
+        assert_eq!(page_index_rows_matched, 2);
         assert!(
             get_value(&metrics, "page_index_eval_time") > 0,
             "no eval time in metrics: {metrics:#?}"
         );
+
+        // each page has 2 rows, so the num of pages is 1/2 the number of rows
+        let (page_index_pages_pruned, page_index_pages_matched) =
+            get_pruning_metric(&metrics, "page_index_pages_pruned");
+        assert_eq!(page_index_pages_pruned, 3);
+        assert_eq!(page_index_pages_matched, 1);
+
+        // test with a filter that matches the page with one row
+        let filter = col("int").eq(lit(6_i32));
+        let rt = RoundTrip::new()
+            .with_predicate(filter)
+            .with_page_index_predicate()
+            .round_trip(vec![batch1])
+            .await;
+
+        let metrics = rt.parquet_exec.metrics().unwrap();
+
+        let (page_index_rows_pruned, page_index_rows_matched) =
+            get_pruning_metric(&metrics, "page_index_rows_pruned");
+        assert_eq!(page_index_rows_pruned, 6);
+        assert_eq!(page_index_rows_matched, 1);
+
+        let (page_index_pages_pruned, page_index_pages_matched) =
+            get_pruning_metric(&metrics, "page_index_pages_pruned");
+        assert_eq!(page_index_pages_pruned, 3);
+        assert_eq!(page_index_pages_matched, 1);
+    }
+
+    #[tokio::test]
+    async fn parquet_page_index_exec_metrics_multiple_predicates() {
+        let c1: ArrayRef =
+            Arc::new(Int32Array::from(vec![Some(1), Some(2), Some(3), Some(4)]));
+        let c2: ArrayRef = Arc::new(Int32Array::from(vec![
+            Some(11),
+            Some(12),
+            Some(13),
+            Some(14),
+        ]));
+        let batch = create_batch(vec![("a", c1), ("b", c2)]);
+
+        // matches the last page
+        let filter = col("a").gt_eq(lit(3)).and(col("b").lt_eq(lit(13)));
+        let rt = RoundTrip::new()
+            .with_predicate(filter)
+            .with_page_index_predicate()
+            .round_trip(vec![batch.clone()])
+            .await;
+        let metrics = rt.parquet_exec.metrics().unwrap();
+
+        let (page_index_rows_pruned, page_index_rows_matched) =
+            get_pruning_metric(&metrics, "page_index_rows_pruned");
+        assert_eq!(page_index_rows_pruned, 2);
+        assert_eq!(page_index_rows_matched, 2);
+        let (page_index_pages_pruned, page_index_pages_matched) =
+            get_pruning_metric(&metrics, "page_index_pages_pruned");
+        assert_eq!(page_index_pages_pruned, 1);
+        assert_eq!(page_index_pages_matched, 1);
+
+        // matches no pages
+        let filter = col("a").gt_eq(lit(3)).and(col("b").lt_eq(lit(12)));
+        let rt = RoundTrip::new()
+            .with_predicate(filter)
+            .with_page_index_predicate()
+            .round_trip(vec![batch.clone()])
+            .await;
+        let metrics = rt.parquet_exec.metrics().unwrap();
+
+        let (page_index_rows_pruned, page_index_rows_matched) =
+            get_pruning_metric(&metrics, "page_index_rows_pruned");
+        assert_eq!(page_index_rows_pruned, 4);
+        assert_eq!(page_index_rows_matched, 0);
+        let (page_index_pages_pruned, page_index_pages_matched) =
+            get_pruning_metric(&metrics, "page_index_pages_pruned");
+        assert_eq!(page_index_pages_pruned, 2);
+        assert_eq!(page_index_pages_matched, 0);
+
+        // matches both pages
+        let filter = col("a").gt_eq(lit(2)).and(col("b").lt_eq(lit(13)));
+        let rt = RoundTrip::new()
+            .with_predicate(filter)
+            .with_page_index_predicate()
+            .round_trip(vec![batch.clone()])
+            .await;
+        let metrics = rt.parquet_exec.metrics().unwrap();
+
+        let (page_index_rows_pruned, page_index_rows_matched) =
+            get_pruning_metric(&metrics, "page_index_rows_pruned");
+        assert_eq!(page_index_rows_pruned, 0);
+        assert_eq!(page_index_rows_matched, 4);
+        let (page_index_pages_pruned, page_index_pages_matched) =
+            get_pruning_metric(&metrics, "page_index_pages_pruned");
+        assert_eq!(page_index_pages_pruned, 0);
+        assert_eq!(page_index_pages_matched, 2);
     }
 
     /// Returns a string array with contents:
@@ -2249,6 +2331,48 @@ mod tests {
         Ok(())
     }
 
+    /// Tests that constant dictionary columns (where min == max in statistics)
+    /// are correctly handled. This reproduced a bug where the constant value
+    /// from statistics had type Utf8 but the schema expected Dictionary.
+    #[tokio::test]
+    async fn test_constant_dictionary_column_parquet() -> Result<()> {
+        let tmp_dir = TempDir::new()?;
+        let path = tmp_dir.path().to_str().unwrap().to_string() + "/test.parquet";
+
+        // Write parquet with dictionary column where all values are the same
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "status",
+            DataType::Dictionary(Box::new(DataType::UInt16), Box::new(DataType::Utf8)),
+            false,
+        )]));
+        let status: DictionaryArray<UInt16Type> =
+            vec!["active", "active"].into_iter().collect();
+        let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(status)])?;
+        let file = File::create(&path)?;
+        let props = WriterProperties::builder()
+            .set_statistics_enabled(parquet::file::properties::EnabledStatistics::Page)
+            .build();
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
+        writer.write(&batch)?;
+        writer.close()?;
+
+        // Query the constant dictionary column
+        let ctx = SessionContext::new();
+        ctx.register_parquet("t", &path, ParquetReadOptions::default())
+            .await?;
+        let result = ctx.sql("SELECT status FROM t").await?.collect().await?;
+
+        insta::assert_snapshot!(batches_to_string(&result),@r"
+        +--------+
+        | status |
+        +--------+
+        | active |
+        | active |
+        +--------+
+        ");
+        Ok(())
+    }
+
     fn write_file(file: &String) {
         let struct_fields = Fields::from(vec![
             Field::new("id", DataType::Int64, false),
@@ -2376,36 +2500,22 @@ mod tests {
         );
         let config = FileScanConfigBuilder::new(store_url, source)
             .with_file(
-                PartitionedFile {
-                    object_meta: ObjectMeta {
-                        location: Path::from(name_1),
-                        last_modified: Utc::now(),
-                        size: total_size_1,
-                        e_tag: None,
-                        version: None,
-                    },
-                    partition_values: vec![],
-                    range: None,
-                    statistics: None,
-                    extensions: None,
-                    metadata_size_hint: None,
-                }
-                .with_metadata_size_hint(123),
-            )
-            .with_file(PartitionedFile {
-                object_meta: ObjectMeta {
-                    location: Path::from(name_2),
+                PartitionedFile::new_from_meta(ObjectMeta {
+                    location: Path::from(name_1),
                     last_modified: Utc::now(),
-                    size: total_size_2,
+                    size: total_size_1,
                     e_tag: None,
                     version: None,
-                },
-                partition_values: vec![],
-                range: None,
-                statistics: None,
-                extensions: None,
-                metadata_size_hint: None,
-            })
+                })
+                .with_metadata_size_hint(123),
+            )
+            .with_file(PartitionedFile::new_from_meta(ObjectMeta {
+                location: Path::from(name_2),
+                last_modified: Utc::now(),
+                size: total_size_2,
+                e_tag: None,
+                version: None,
+            }))
             .build();
 
         let exec = DataSourceExec::from_data_source(config);

@@ -35,7 +35,7 @@ use datafusion_expr::expr::{
 };
 use datafusion_expr::utils::{expr_as_column_expr, find_column_exprs};
 use datafusion_expr::{
-    ColumnUnnestList, Expr, ExprSchemable, LogicalPlan, col, expr_vec_fmt,
+    ColumnUnnestList, Expr, ExprSchemable, LogicalPlan, SortExpr, col, expr_vec_fmt,
 };
 
 use indexmap::IndexMap;
@@ -98,6 +98,7 @@ pub(crate) enum CheckColumnsMustReferenceAggregatePurpose {
     Having,
     Qualify,
     OrderBy,
+    DistinctOn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +120,9 @@ impl CheckColumnsSatisfyExprsPurpose {
             }
             Self::Aggregate(CheckColumnsMustReferenceAggregatePurpose::OrderBy) => {
                 "Column in ORDER BY must be in GROUP BY or an aggregate function"
+            }
+            Self::Aggregate(CheckColumnsMustReferenceAggregatePurpose::DistinctOn) => {
+                "Column in DISTINCT ON must be in GROUP BY or an aggregate function"
             }
         }
     }
@@ -200,6 +204,42 @@ pub(crate) fn extract_aliases(exprs: &[Expr]) -> HashMap<String, Expr> {
             _ => None,
         })
         .collect::<HashMap<String, Expr>>()
+}
+
+/// If `expr` is a bare unqualified `Column` whose name matches a SELECT
+/// alias, swap it for the alias's underlying expression. Nested occurrences
+/// are left alone: PostgreSQL only resolves a top-level identifier as an
+/// output alias in clauses like ORDER BY and DISTINCT ON.
+pub(crate) fn substitute_top_level_alias(
+    expr: Expr,
+    aliases: &HashMap<String, Expr>,
+) -> Expr {
+    if let Expr::Column(col) = &expr
+        && col.relation.is_none()
+        && let Some(underlying) = aliases.get(&col.name)
+    {
+        return underlying.clone();
+    }
+
+    expr
+}
+
+/// Applies [`substitute_top_level_alias`] to each sort expression.
+pub(crate) fn substitute_top_level_aliases_in_sorts(
+    sort_exprs: Vec<SortExpr>,
+    aliases: &HashMap<String, Expr>,
+) -> Vec<SortExpr> {
+    if aliases.is_empty() {
+        return sort_exprs;
+    }
+
+    sort_exprs
+        .into_iter()
+        .map(|sort_expr| {
+            sort_expr
+                .with_expr(substitute_top_level_alias(sort_expr.expr.clone(), aliases))
+        })
+        .collect()
 }
 
 /// Given an expression that's literal int encoding position, lookup the corresponding expression
@@ -331,6 +371,8 @@ pub(crate) fn value_to_string(value: &Value) -> Option<String> {
         Value::Number(_, _) | Value::Boolean(_) => Some(value.to_string()),
         Value::UnicodeStringLiteral(s) => Some(s.to_string()),
         Value::EscapedStringLiteral(s) => Some(s.to_string()),
+        Value::QuoteDelimitedStringLiteral(s)
+        | Value::NationalQuoteDelimitedStringLiteral(s) => Some(s.value.to_string()),
         Value::DoubleQuotedString(_)
         | Value::NationalStringLiteral(_)
         | Value::SingleQuotedByteStringLiteral(_)
@@ -374,7 +416,7 @@ pub(crate) fn rewrite_recursive_unnests_bottom_up(
 pub const UNNEST_PLACEHOLDER: &str = "__unnest_placeholder";
 
 /*
-This is only usedful when used with transform down up
+This is only useful when used with transform down up
 A full example of how the transformation works:
  */
 struct RecursiveUnnestRewriter<'a> {
@@ -404,6 +446,24 @@ impl RecursiveUnnestRewriter<'_> {
             .cloned()
             .map(|item| item.unwrap())
             .collect()
+    }
+
+    /// Check if the current expression is at the root level for struct unnest purposes.
+    /// This is true if:
+    /// 1. The expression IS the root expression, OR
+    /// 2. The root expression is an Alias wrapping this expression
+    ///
+    /// This allows `unnest(struct_col) AS alias` to work, where the alias is simply
+    /// ignored for struct unnest (matching DuckDB behavior).
+    fn is_at_struct_allowed_root(&self, expr: &Expr) -> bool {
+        if expr == self.root_expr {
+            return true;
+        }
+        // Allow struct unnest when root is an alias wrapping the unnest
+        if let Expr::Alias(Alias { expr: inner, .. }) = self.root_expr {
+            return inner.as_ref() == expr;
+        }
+        false
     }
 
     fn transform(
@@ -446,7 +506,9 @@ impl RecursiveUnnestRewriter<'_> {
             }
             DataType::List(_)
             | DataType::FixedSizeList(_, _)
-            | DataType::LargeList(_) => {
+            | DataType::LargeList(_)
+            | DataType::ListView(_)
+            | DataType::LargeListView(_) => {
                 push_projection_dedupl(
                     self.inner_projection_exprs,
                     expr_in_unnest.clone().alias(placeholder_name.clone()),
@@ -478,7 +540,7 @@ impl TreeNodeRewriter for RecursiveUnnestRewriter<'_> {
     type Node = Expr;
 
     /// This downward traversal needs to keep track of:
-    /// - Whether or not some unnest expr has been visited from the top util the current node
+    /// - Whether or not some unnest expr has been visited from the top until the current node
     /// - If some unnest expr has been visited, maintain a stack of such information, this
     ///   is used to detect if some recursive unnest expr exists (e.g **unnest(unnest(unnest(3d column))))**
     fn f_down(&mut self, expr: Expr) -> Result<Transformed<Expr>> {
@@ -566,7 +628,8 @@ impl TreeNodeRewriter for RecursiveUnnestRewriter<'_> {
                 // instead of unnest(struct_arr_col, depth = 2)
 
                 let unnest_recursion = unnest_stack.len();
-                let struct_allowed = (&expr == self.root_expr) && unnest_recursion == 1;
+                let struct_allowed =
+                    self.is_at_struct_allowed_root(&expr) && unnest_recursion == 1;
 
                 let mut transformed_exprs = self.transform(
                     unnest_recursion,
@@ -574,7 +637,9 @@ impl TreeNodeRewriter for RecursiveUnnestRewriter<'_> {
                     inner_expr,
                     struct_allowed,
                 )?;
-                if struct_allowed {
+                // Only set transformed_root_exprs for struct unnest (which returns multiple expressions).
+                // For list unnest (single expression), we let the normal rewrite handle the alias.
+                if struct_allowed && transformed_exprs.len() > 1 {
                     self.transformed_root_exprs = Some(transformed_exprs.clone());
                 }
                 return Ok(Transformed::new(

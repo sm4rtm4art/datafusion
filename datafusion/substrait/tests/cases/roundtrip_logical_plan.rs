@@ -17,8 +17,13 @@
 
 use crate::utils::test::read_json;
 use datafusion::arrow::array::ArrayRef;
+use datafusion::config::Dialect;
 use datafusion::functions_nested::map::map;
-use datafusion::logical_expr::LogicalPlanBuilder;
+use datafusion::logical_expr::{
+    ColumnarValue, HigherOrderFunctionArgs, HigherOrderReturnFieldArgs,
+    HigherOrderSignature, HigherOrderUDF, HigherOrderUDFImpl, LambdaParametersProgress,
+    LogicalPlanBuilder, ValueOrLambda,
+};
 use datafusion::physical_plan::Accumulator;
 use datafusion::scalar::ScalarValue;
 use datafusion_substrait::logical_plan::{
@@ -27,16 +32,19 @@ use datafusion_substrait::logical_plan::{
 use std::cmp::Ordering;
 use std::mem::size_of_val;
 
-use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
+use datafusion::arrow::datatypes::{
+    DataType, Field, FieldRef, IntervalUnit, Schema, TimeUnit,
+};
 use datafusion::common::tree_node::Transformed;
-use datafusion::common::{DFSchema, DFSchemaRef, not_impl_err, plan_err};
+use datafusion::common::{DFSchema, DFSchemaRef, Spans, not_impl_err, plan_err};
 use datafusion::error::Result;
 use datafusion::execution::registry::SerializerRegistry;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::logical_expr::expr::{Exists, SetComparison, SetQuantifier};
 use datafusion::logical_expr::{
-    EmptyRelation, Extension, InvariantLevel, LogicalPlan, PartitionEvaluator,
-    Repartition, UserDefinedLogicalNode, Values, Volatility,
+    EmptyRelation, Extension, InvariantLevel, LogicalPlan, Operator, PartitionEvaluator,
+    Repartition, Subquery, UserDefinedLogicalNode, Values, Volatility,
 };
 use datafusion::optimizer::simplify_expressions::expr_simplifier::THRESHOLD_INLINE_INLIST;
 use datafusion::prelude::*;
@@ -567,7 +575,7 @@ async fn try_cast_decimal_to_int() -> Result<()> {
 
 #[tokio::test]
 async fn try_cast_decimal_to_string() -> Result<()> {
-    roundtrip("SELECT * FROM data WHERE a = TRY_CAST(b AS string)").await
+    roundtrip("SELECT * FROM data WHERE f = TRY_CAST(b AS string)").await
 }
 
 #[tokio::test]
@@ -689,6 +697,60 @@ async fn roundtrip_exists_filter() -> Result<()> {
     Ok(())
 }
 
+// assemble logical plan manually to ensure SetComparison expr is present (not rewrite away)
+#[tokio::test]
+async fn roundtrip_set_comparison_any_substrait() -> Result<()> {
+    let ctx = create_context().await?;
+    let plan = build_set_comparison_plan(&ctx, SetQuantifier::Any, Operator::Gt).await?;
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    let roundtrip_plan = from_substrait_plan(&ctx.state(), &proto).await?;
+    assert_set_comparison_predicate(&roundtrip_plan, Operator::Gt, SetQuantifier::Any);
+    Ok(())
+}
+
+// assemble logical plan manually to ensure SetComparison expr is present (not rewrite away)
+#[tokio::test]
+async fn roundtrip_set_comparison_all_substrait() -> Result<()> {
+    let ctx = create_context().await?;
+    let plan =
+        build_set_comparison_plan(&ctx, SetQuantifier::All, Operator::NotEq).await?;
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    let roundtrip_plan = from_substrait_plan(&ctx.state(), &proto).await?;
+    assert_set_comparison_predicate(&roundtrip_plan, Operator::NotEq, SetQuantifier::All);
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_scalar_subquery_substrait() -> Result<()> {
+    let ctx = create_context().await?;
+    let plan = build_scalar_subquery_projection_plan(&ctx).await?;
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    assert_root_project_has_scalar_subquery(proto.as_ref());
+    let roundtrip_plan = from_substrait_plan(&ctx.state(), &proto).await?;
+    assert_projection_contains_scalar_subquery(&roundtrip_plan);
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_exists_substrait() -> Result<()> {
+    let ctx = create_context().await?;
+    let plan = build_exists_filter_plan(&ctx, false).await?;
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    let roundtrip_plan = from_substrait_plan(&ctx.state(), &proto).await?;
+    assert_exists_predicate(&roundtrip_plan, false);
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_not_exists_substrait() -> Result<()> {
+    let ctx = create_context().await?;
+    let plan = build_exists_filter_plan(&ctx, true).await?;
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    let roundtrip_plan = from_substrait_plan(&ctx.state(), &proto).await?;
+    assert_exists_predicate(&roundtrip_plan, true);
+    Ok(())
+}
+
 #[tokio::test]
 async fn roundtrip_not_exists_filter_left_anti_join() -> Result<()> {
     let plan = generate_plan_from_sql(
@@ -789,17 +851,50 @@ async fn roundtrip_outer_join() -> Result<()> {
 async fn roundtrip_self_join() -> Result<()> {
     // Substrait does currently NOT maintain the alias of the tables.
     // Instead, when we consume Substrait, we add aliases before a join that'd otherwise collide.
-    // This roundtrip works because we set aliases to what the Substrait consumer will generate.
-    roundtrip("SELECT left.a as left_a, left.b, right.a as right_a, right.c FROM data AS left JOIN data AS right ON left.a = right.a").await?;
-    roundtrip("SELECT left.a as left_a, left.b, right.a as right_a, right.c FROM data AS left JOIN data AS right ON left.b = right.b").await
+    // The improved NameTracker now adds __temp__0 suffix to handle naming conflicts.
+    // We verify semantic equivalence rather than exact string match.
+    let ctx = create_context().await?;
+    let sql = "SELECT left.a as left_a, left.b, right.a as right_a, right.c FROM data AS left JOIN data AS right ON left.a = right.a";
+    let df = ctx.sql(sql).await?;
+    let plan = df.into_optimized_plan()?;
+    let plan2 = substrait_roundtrip(&plan, &ctx).await?;
+
+    // Verify schemas are equivalent
+    assert_eq!(plan.schema(), plan2.schema());
+
+    // Execute to ensure plan validity
+    DataFrame::new(ctx.state(), plan2).show().await?;
+
+    // Test second variant
+    let sql2 = "SELECT left.a as left_a, left.b, right.a as right_a, right.c FROM data AS left JOIN data AS right ON left.b = right.b";
+    let df2 = ctx.sql(sql2).await?;
+    let plan3 = df2.into_optimized_plan()?;
+    let plan4 = substrait_roundtrip(&plan3, &ctx).await?;
+    assert_eq!(plan3.schema(), plan4.schema());
+    DataFrame::new(ctx.state(), plan4).show().await?;
+
+    Ok(())
 }
 
 #[tokio::test]
 async fn roundtrip_self_implicit_cross_join() -> Result<()> {
     // Substrait does currently NOT maintain the alias of the tables.
     // Instead, when we consume Substrait, we add aliases before a join that'd otherwise collide.
-    // This roundtrip works because we set aliases to what the Substrait consumer will generate.
-    roundtrip("SELECT left.a left_a, left.b, right.a right_a, right.c FROM data AS left, data AS right").await
+    // The improved NameTracker now adds __temp__0 suffix to handle naming conflicts.
+    // We verify semantic equivalence rather than exact string match.
+    let ctx = create_context().await?;
+    let sql = "SELECT left.a left_a, left.b, right.a right_a, right.c FROM data AS left, data AS right";
+    let df = ctx.sql(sql).await?;
+    let plan = df.into_optimized_plan()?;
+    let plan2 = substrait_roundtrip(&plan, &ctx).await?;
+
+    // Verify schemas are equivalent
+    assert_eq!(plan.schema(), plan2.schema());
+
+    // Execute to ensure plan validity
+    DataFrame::new(ctx.state(), plan2).show().await?;
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -1025,6 +1120,27 @@ async fn aggregate_identical_grouping_expressions() -> Result<()> {
       TableScan: data projection=[]
     "
             );
+    Ok(())
+}
+
+#[tokio::test]
+async fn aggregate_identical_measures() -> Result<()> {
+    // Two identical aggregate measures share the same schema_name; without
+    // NameTracker dedup over measures, building the Aggregate's output
+    // DFSchema fails with "Schema contains duplicate unqualified field name".
+    let proto_plan = read_json(
+        "tests/testdata/test_plans/aggregate_identical_measures.substrait.json",
+    );
+
+    let plan = generate_plan_from_substrait(proto_plan).await?;
+    assert_snapshot!(
+        plan,
+        @r"
+    Projection: __common_expr_1 AS sum_a_1, __common_expr_1 AS sum(data.a)__temp__0 AS sum_a_2
+      Aggregate: groupBy=[[]], aggr=[[sum(data.a) AS __common_expr_1]]
+        TableScan: data projection=[a]
+    "
+    );
     Ok(())
 }
 
@@ -1353,7 +1469,7 @@ async fn roundtrip_literal_named_struct() -> Result<()> {
     assert_snapshot!(
     plan,
     @r#"
-    Projection: Struct({int_field:1,boolean_field:true,string_field:}) AS named_struct(Utf8("int_field"),Int64(1),Utf8("boolean_field"),Boolean(true),Utf8("string_field"),NULL)
+    Projection: CAST(Struct({c0:1,c1:true,c2:}) AS Struct("int_field": Int64, "boolean_field": Boolean, "string_field": Utf8View)) AS named_struct(Utf8("int_field"),Int64(1),Utf8("boolean_field"),Boolean(true),Utf8("string_field"),NULL)
       TableScan: data projection=[]
     "#
             );
@@ -1373,10 +1489,10 @@ async fn roundtrip_literal_renamed_struct() -> Result<()> {
 
     assert_snapshot!(
     plan,
-    @r"
-    Projection: Struct({int_field:1}) AS Struct({c0:1})
+    @r#"
+    Projection: CAST(Struct({c0:1}) AS Struct("int_field": Int32))
       TableScan: data projection=[]
-    "
+    "#
             );
     Ok(())
 }
@@ -1456,16 +1572,60 @@ async fn roundtrip_values_empty_relation() -> Result<()> {
 async fn roundtrip_values_duplicate_column_join() -> Result<()> {
     // Substrait does currently NOT maintain the alias of the tables.
     // Instead, when we consume Substrait, we add aliases before a join that'd otherwise collide.
-    // This roundtrip works because we set aliases to what the Substrait consumer will generate.
-    roundtrip(
-        "SELECT left.column1 as c1, right.column1 as c2 \
+    // The improved NameTracker now adds __temp__0 suffix to handle naming conflicts.
+    // We verify semantic equivalence rather than exact string match.
+    let ctx = create_context().await?;
+    let sql = "SELECT left.column1 as c1, right.column1 as c2 \
     FROM \
         (VALUES (1)) AS left \
     JOIN \
         (VALUES (2)) AS right \
-    ON left.column1 == right.column1",
-    )
-    .await
+    ON left.column1 == right.column1";
+    let df = ctx.sql(sql).await?;
+    let plan = df.into_optimized_plan()?;
+    let plan2 = substrait_roundtrip(&plan, &ctx).await?;
+
+    // Verify schemas are equivalent
+    assert_eq!(plan.schema(), plan2.schema());
+
+    // Execute to ensure plan validity
+    DataFrame::new(ctx.state(), plan2).show().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_preserves_field_nullability() -> Result<()> {
+    use datafusion::arrow::datatypes::Fields;
+
+    // Verify that required and nullable fields, including nested struct fields,
+    // preserve their nullability through a Substrait round-trip.
+    //
+    // List child nullability is intentionally omitted because it is not
+    // preserved today.
+    let ctx = create_context().await?;
+    let df_schema = DFSchema::try_from(Schema::new(vec![
+        Field::new("required_int", DataType::Int32, false),
+        Field::new("nullable_int", DataType::Int32, true),
+        Field::new(
+            "required_struct",
+            DataType::Struct(Fields::from(vec![
+                Field::new("required_inner", DataType::Boolean, false),
+                Field::new("nullable_inner", DataType::Utf8, true),
+            ])),
+            false,
+        ),
+    ]))?;
+    let plan = LogicalPlan::EmptyRelation(EmptyRelation {
+        produce_one_row: false,
+        schema: DFSchemaRef::new(df_schema),
+    });
+
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    let plan2 = from_substrait_plan(&ctx.state(), &proto).await?;
+
+    assert_eq!(plan.schema(), plan2.schema());
+    Ok(())
 }
 
 #[tokio::test]
@@ -1656,6 +1816,351 @@ async fn roundtrip_read_filter() -> Result<()> {
     roundtrip_verify_read_filter_count("SELECT a FROM data where a < 5", 1).await
 }
 
+#[tokio::test]
+async fn roundtrip_placeholder_sql_filter() -> Result<()> {
+    let plan = generate_plan_from_sql("SELECT a, b FROM data WHERE a > $1", false, false)
+        .await?;
+
+    assert_snapshot!(
+    plan,
+    @r"
+    Projection: data.a, data.b
+      Filter: data.a > $1
+        TableScan: data
+    "
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_placeholder_sql_projection() -> Result<()> {
+    let plan =
+        generate_plan_from_sql("SELECT a, $1 FROM data WHERE a > $2", false, false)
+            .await?;
+
+    assert_snapshot!(
+    plan,
+    @r"
+    Projection: data.a, $1
+      Filter: data.a > $2
+        TableScan: data
+    "
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_placeholder_typed_int64() -> Result<()> {
+    let ctx = create_context().await?;
+
+    let placeholder =
+        Expr::Placeholder(datafusion::logical_expr::expr::Placeholder::new_with_field(
+            "$1".into(),
+            Some(Arc::new(Field::new("$1", DataType::Int64, true))),
+        ));
+    let scan_plan = ctx.table("data").await?.into_optimized_plan()?;
+    let plan = LogicalPlanBuilder::from(scan_plan)
+        .filter(col("a").gt(placeholder))?
+        .build()?;
+
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+
+    // Verify the producer emits a DynamicParameter in the Substrait proto
+    let plan_rel = proto.relations.first().unwrap();
+    let plan_json = format!("{plan_rel:?}");
+    assert!(
+        plan_json.contains("DynamicParameter"),
+        "Substrait proto should contain DynamicParameter, got: {plan_json}"
+    );
+
+    let plan2 = from_substrait_plan(&ctx.state(), &proto).await?;
+
+    assert_snapshot!(
+    plan2,
+    @r"
+    Filter: data.a > $1
+      TableScan: data
+    "
+    );
+
+    assert_eq!(plan.schema(), plan2.schema());
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_placeholder_multiple_typed() -> Result<()> {
+    let ctx = create_context().await?;
+
+    let p1 =
+        Expr::Placeholder(datafusion::logical_expr::expr::Placeholder::new_with_field(
+            "$1".into(),
+            Some(Arc::new(Field::new("$1", DataType::Int64, true))),
+        ));
+    let p2 =
+        Expr::Placeholder(datafusion::logical_expr::expr::Placeholder::new_with_field(
+            "$2".into(),
+            Some(Arc::new(Field::new("$2", DataType::Decimal128(5, 2), true))),
+        ));
+    let scan_plan = ctx.table("data").await?.into_optimized_plan()?;
+    let plan = LogicalPlanBuilder::from(scan_plan)
+        .filter(col("a").gt(p1).and(col("b").lt(p2)))?
+        .build()?;
+
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    let plan2 = from_substrait_plan(&ctx.state(), &proto).await?;
+
+    assert_snapshot!(
+    plan2,
+    @r"
+    Filter: data.a > $1 AND data.b < $2
+      TableScan: data
+    "
+    );
+
+    assert_eq!(plan.schema(), plan2.schema());
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_placeholder_typed_utf8() -> Result<()> {
+    let ctx = create_context().await?;
+
+    let placeholder =
+        Expr::Placeholder(datafusion::logical_expr::expr::Placeholder::new_with_field(
+            "$1".into(),
+            Some(Arc::new(Field::new("$1", DataType::Utf8, true))),
+        ));
+    let scan_plan = ctx.table("data").await?.into_optimized_plan()?;
+    let plan = LogicalPlanBuilder::from(scan_plan)
+        .filter(col("f").eq(placeholder))?
+        .build()?;
+
+    let proto = to_substrait_plan(&plan, &ctx.state())?;
+    let plan2 = from_substrait_plan(&ctx.state(), &proto).await?;
+
+    assert_snapshot!(
+    plan2,
+    @r"
+    Filter: data.f = $1
+      TableScan: data
+    "
+    );
+
+    assert_eq!(plan.schema(), plan2.schema());
+    Ok(())
+}
+
+#[tokio::test]
+async fn roundtrip_array_transform_higher_order_function() -> Result<()> {
+    let ctx = higher_order_function_ctx().await?;
+
+    // simple
+    roundtrip_with_ctx(
+        "SELECT array_transform2([data3.p1], p0 -> p0 * 2) from data3",
+        ctx.clone(),
+    )
+    .await?;
+
+    // dont use the parameter
+    roundtrip_with_ctx(
+        "SELECT array_transform2([data3.p1], p0 -> 3) from data3",
+        ctx.clone(),
+    )
+    .await?;
+
+    // multiple parameters using both
+    roundtrip_with_ctx(
+        "SELECT array_transform2([data3.p1], (p0, p2) -> p0 * p2) from data3",
+        ctx.clone(),
+    )
+    .await?;
+
+    // multiple parameters only last
+    roundtrip_with_ctx(
+        "SELECT array_transform2([data3.p1], (p0, p2) -> 2 * p2) from data3",
+        ctx.clone(),
+    )
+    .await?;
+
+    // multiple parameters use none
+    roundtrip_with_ctx(
+        "SELECT array_transform2([data3.p1], (p0, p2) -> 3) from data3",
+        ctx.clone(),
+    )
+    .await?;
+
+    // nested without variable shadowing
+    roundtrip_with_ctx("SELECT array_transform2([[data3.p1]], p0 -> array_transform2(p0, p2 -> p2 * 2)) from data3", ctx.clone())
+        .await?;
+
+    // nested with multiple parameters without variable shadowing
+    roundtrip_with_ctx("SELECT array_transform2([[data3.p1]], (p0, p2) -> array_transform2(p0, (p3, p4) -> p2 * p3 * p4)) from data3", ctx.clone())
+        .await?;
+
+    // since substrait doesn't encode lambda parameters names, they got generated, non-conflicting names during consumption
+    // testing name shadowing requires to assert against the generated plan and check the correct parameter usage instead of round tripping
+
+    // nested with variable shadowing.
+    let plan = generate_plan_from_sql_with_ctx(
+        "SELECT array_transform2([[data3.p1]], v -> array_transform2(v, v -> v * 2)) from data3",
+        true,
+        true,
+        &ctx,
+    )
+    .await?;
+
+    assert_snapshot!(
+    plan,
+    @"
+    Projection: array_transform2(make_array(make_array(data3.p1)), (p0) -> array_transform2(p0, (p2) -> p2 * Int64(2))) AS array_transform2(make_array(make_array(data3.p1)),(v) -> array_transform2(v,(v) -> v * Int64(2)))
+      TableScan: data3 projection=[p1]
+    "
+    );
+
+    // nested with variable shadowing with multiple parameters
+    let plan = generate_plan_from_sql_with_ctx(
+        "SELECT array_transform2([[data3.p1]], (v, i) -> array_transform2(v, (v, i) -> v * i)) from data3",
+        true,
+        true,
+        &ctx,
+    )
+    .await?;
+
+    assert_snapshot!(
+    plan,
+    @"
+    Projection: array_transform2(make_array(make_array(data3.p1)), (p0, p2) -> array_transform2(p0, (p3, p4) -> p3 * p4)) AS array_transform2(make_array(make_array(data3.p1)),(v, i) -> array_transform2(v,(v, i) -> v * i))
+      TableScan: data3 projection=[p1]
+    "
+    );
+
+    // nested with variable shadowing and later reuse of the shadowed var after exiting the shadowing expression
+    let plan = generate_plan_from_sql_with_ctx(
+        "SELECT array_transform2(
+                [[data3.p1]],
+                v -> array_concat(
+                    -- when entering this expression, inner v is pushed into the producer and shadows outer v, but after exiting this,
+                    -- it should be removed and unshadow the outer v, so that it can be used in the next expression
+                    array_transform2(v, v -> v * 2),
+                    array_transform2(v, v -> v * 2)
+                )
+            ) from data3",
+        true,
+        true,
+        &ctx,
+    )
+    .await?;
+
+    assert_snapshot!(
+    plan,
+    @"
+    Projection: array_transform2(make_array(make_array(data3.p1)), (p0) -> array_concat(array_transform2(p0, (p2) -> p2 * Int64(2)), array_transform2(p0, (p3) -> p3 * Int64(2)))) AS array_transform2(make_array(make_array(data3.p1)),(v) -> array_concat(array_transform2(v,(v) -> v * Int64(2)),array_transform2(v,(v) -> v * Int64(2))))
+      TableScan: data3 projection=[p1]
+    "
+    );
+
+    Ok(())
+}
+
+pub(crate) async fn higher_order_function_ctx() -> Result<SessionContext> {
+    let ctx = create_context_with_dialect(Some(Dialect::Databricks)).await?;
+
+    ctx.register_higher_order_function(Arc::new(HigherOrderUDF::new_from_impl(
+        ArrayTransform::new(),
+    )));
+
+    let data3_fields = vec![
+        Field::new("p1", DataType::Int64, true), // lambda parameters should not conflict with this column
+    ];
+    let data3 = Schema::new(data3_fields);
+    let mut data3_options = CsvReadOptions::new();
+    data3_options.schema = Some(&data3);
+    data3_options.has_header = false;
+    ctx.register_csv("data3", "tests/testdata/empty.csv", data3_options)
+        .await?;
+
+    Ok(ctx)
+}
+
+// todo use core array_transform when it supports multiple lambda parameters
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct ArrayTransform {
+    signature: HigherOrderSignature,
+}
+
+impl ArrayTransform {
+    fn new() -> Self {
+        Self {
+            signature: HigherOrderSignature::variadic_any(Volatility::Immutable),
+        }
+    }
+}
+
+impl HigherOrderUDFImpl for ArrayTransform {
+    fn name(&self) -> &str {
+        "array_transform2"
+    }
+
+    fn aliases(&self) -> &[String] {
+        &[]
+    }
+
+    fn signature(&self) -> &HigherOrderSignature {
+        &self.signature
+    }
+
+    fn lambda_parameters(
+        &self,
+        _step: usize,
+        fields: &[ValueOrLambda<FieldRef, Option<FieldRef>>],
+    ) -> Result<LambdaParametersProgress> {
+        let [ValueOrLambda::Value(list), ValueOrLambda::Lambda(_)] = fields else {
+            unreachable!()
+        };
+
+        let field = match list.data_type() {
+            DataType::List(field) => field,
+            _ => unreachable!(),
+        };
+
+        Ok(LambdaParametersProgress::Complete(vec![vec![
+            Arc::clone(field),
+            Arc::new(Field::new("", DataType::Int64, true)),
+        ]]))
+    }
+
+    fn return_field_from_args(
+        &self,
+        args: HigherOrderReturnFieldArgs,
+    ) -> Result<FieldRef> {
+        let [ValueOrLambda::Value(list), ValueOrLambda::Lambda(lambda)] = args.arg_fields
+        else {
+            unreachable!()
+        };
+
+        let field = Arc::new(Field::new(
+            Field::LIST_FIELD_DEFAULT_NAME,
+            lambda.data_type().clone(),
+            lambda.is_nullable(),
+        ));
+
+        let return_type = match list.data_type() {
+            DataType::List(_) => DataType::List(field),
+            _ => unreachable!(),
+        };
+
+        Ok(Arc::new(Field::new("", return_type, list.is_nullable())))
+    }
+
+    fn invoke_with_args(&self, args: HigherOrderFunctionArgs) -> Result<ColumnarValue> {
+        // this function is only tested with roundtrip_with_ctx, which only prints the output
+        // and generate_plan_from_sql_with_ctx which doesn't execute nothing, so the output doesn't matter
+        Ok(ColumnarValue::Scalar(ScalarValue::new_default(
+            args.return_type(),
+        )?))
+    }
+}
+
 fn check_post_join_filters(rel: &Rel) -> Result<()> {
     // search for target_rel and field value in proto
     match &rel.rel_type {
@@ -1797,6 +2302,15 @@ async fn generate_plan_from_sql(
     optimized: bool,
 ) -> Result<LogicalPlan> {
     let ctx = create_context().await?;
+    generate_plan_from_sql_with_ctx(sql, assert_schema, optimized, &ctx).await
+}
+
+async fn generate_plan_from_sql_with_ctx(
+    sql: &str,
+    assert_schema: bool,
+    optimized: bool,
+    ctx: &SessionContext,
+) -> Result<LogicalPlan> {
     let df: DataFrame = ctx.sql(sql).await?;
 
     let plan = if optimized {
@@ -1863,6 +2377,188 @@ async fn assert_substrait_sql(substrait_plan: Plan, sql: &str) -> Result<()> {
     assert_eq!(planstr, expectedstr);
 
     Ok(())
+}
+
+async fn build_set_comparison_plan(
+    ctx: &SessionContext,
+    quantifier: SetQuantifier,
+    op: Operator,
+) -> Result<LogicalPlan> {
+    let base_scan = ctx.table("data").await?.into_unoptimized_plan();
+    let subquery_scan = ctx.table("data2").await?.into_unoptimized_plan();
+    let subquery_plan = LogicalPlanBuilder::from(subquery_scan)
+        .project(vec![col("data2.a")])?
+        .build()?;
+    let predicate = Expr::SetComparison(SetComparison::new(
+        Box::new(col("data.a")),
+        Subquery {
+            subquery: Arc::new(subquery_plan),
+            outer_ref_columns: vec![],
+            spans: Spans::new(),
+        },
+        op,
+        quantifier,
+    ));
+
+    LogicalPlanBuilder::from(base_scan)
+        .filter(predicate)?
+        .project(vec![col("data.a")])?
+        .build()
+}
+
+async fn build_scalar_subquery_projection_plan(
+    ctx: &SessionContext,
+) -> Result<LogicalPlan> {
+    let subquery_scan = ctx.table("data2").await?.into_unoptimized_plan();
+    let subquery_plan = LogicalPlanBuilder::from(subquery_scan)
+        .project(vec![col("a")])?
+        .limit(0, Some(1))?
+        .build()?;
+
+    let scalar_subquery = Expr::ScalarSubquery(Subquery {
+        subquery: Arc::new(subquery_plan),
+        outer_ref_columns: vec![],
+        spans: Spans::new(),
+    });
+
+    let outer_empty_relation = LogicalPlan::EmptyRelation(EmptyRelation {
+        produce_one_row: true,
+        schema: DFSchemaRef::new(DFSchema::empty()),
+    });
+
+    LogicalPlanBuilder::from(outer_empty_relation)
+        .project(vec![scalar_subquery.alias("sq")])?
+        .build()
+}
+
+async fn build_exists_filter_plan(
+    ctx: &SessionContext,
+    negated: bool,
+) -> Result<LogicalPlan> {
+    let base_scan = ctx.table("data").await?.into_unoptimized_plan();
+    let subquery_scan = ctx.table("data2").await?.into_unoptimized_plan();
+    let subquery_plan = LogicalPlanBuilder::from(subquery_scan)
+        .project(vec![col("data2.a")])?
+        .build()?;
+
+    let predicate = Expr::Exists(Exists::new(
+        Subquery {
+            subquery: Arc::new(subquery_plan),
+            outer_ref_columns: vec![],
+            spans: Spans::new(),
+        },
+        negated,
+    ));
+
+    LogicalPlanBuilder::from(base_scan)
+        .filter(predicate)?
+        .project(vec![col("data.a")])?
+        .build()
+}
+
+fn assert_set_comparison_predicate(
+    plan: &LogicalPlan,
+    expected_op: Operator,
+    expected_quantifier: SetQuantifier,
+) {
+    let predicate = match plan {
+        LogicalPlan::Projection(p) => match p.input.as_ref() {
+            LogicalPlan::Filter(filter) => &filter.predicate,
+            other => panic!("expected Filter inside Projection, got {other:?}"),
+        },
+        LogicalPlan::Filter(filter) => &filter.predicate,
+        other => panic!("expected Filter plan, got {other:?}"),
+    };
+
+    match predicate {
+        Expr::SetComparison(set_comparison) => {
+            assert_eq!(set_comparison.op, expected_op);
+            assert_eq!(set_comparison.quantifier, expected_quantifier);
+        }
+        other => panic!("expected SetComparison predicate, got {other:?}"),
+    }
+}
+
+fn assert_root_project_has_scalar_subquery(proto: &Plan) {
+    let relation = proto
+        .relations
+        .first()
+        .expect("expected Substrait plan to have at least one relation");
+
+    let root = match relation.rel_type.as_ref() {
+        Some(plan_rel::RelType::Root(root)) => root,
+        other => panic!("expected root relation, got {other:?}"),
+    };
+
+    let input = root.input.as_ref().expect("expected root input relation");
+    let project = match input.rel_type.as_ref() {
+        Some(RelType::Project(project)) => project,
+        other => panic!("expected Project relation at root input, got {other:?}"),
+    };
+
+    let expr = project
+        .expressions
+        .first()
+        .expect("expected at least one project expression");
+    let subquery = match expr.rex_type.as_ref() {
+        Some(substrait::proto::expression::RexType::Subquery(subquery)) => subquery,
+        other => panic!("expected Subquery expression, got {other:?}"),
+    };
+
+    assert!(
+        matches!(
+            subquery.subquery_type.as_ref(),
+            Some(substrait::proto::expression::subquery::SubqueryType::Scalar(_))
+        ),
+        "expected scalar subquery type"
+    );
+}
+
+fn assert_projection_contains_scalar_subquery(plan: &LogicalPlan) {
+    let projection = match plan {
+        LogicalPlan::Projection(projection) => projection,
+        other => panic!("expected Projection plan, got {other:?}"),
+    };
+
+    let found_scalar_subquery = projection.expr.iter().any(expr_contains_scalar_subquery);
+    assert!(
+        found_scalar_subquery,
+        "expected Projection to contain ScalarSubquery expression"
+    );
+}
+
+fn expr_contains_scalar_subquery(expr: &Expr) -> bool {
+    match expr {
+        Expr::ScalarSubquery(_) => true,
+        Expr::Alias(alias) => expr_contains_scalar_subquery(alias.expr.as_ref()),
+        _ => false,
+    }
+}
+
+fn assert_exists_predicate(plan: &LogicalPlan, expected_negated: bool) {
+    let predicate = match plan {
+        LogicalPlan::Projection(projection) => match projection.input.as_ref() {
+            LogicalPlan::Filter(filter) => &filter.predicate,
+            other => panic!("expected Filter inside Projection, got {other:?}"),
+        },
+        LogicalPlan::Filter(filter) => &filter.predicate,
+        other => panic!("expected Filter plan, got {other:?}"),
+    };
+
+    if expected_negated {
+        match predicate {
+            Expr::Not(inner) => match inner.as_ref() {
+                Expr::Exists(exists) => assert!(!exists.negated),
+                other => panic!("expected Exists inside NOT, got {other:?}"),
+            },
+            other => panic!("expected NOT EXISTS predicate, got {other:?}"),
+        }
+    } else {
+        match predicate {
+            Expr::Exists(exists) => assert!(!exists.negated),
+            other => panic!("expected EXISTS predicate, got {other:?}"),
+        }
+    }
 }
 
 async fn roundtrip_fill_na(sql: &str) -> Result<()> {
@@ -1968,8 +2664,18 @@ async fn roundtrip_all_types(sql: &str) -> Result<()> {
 }
 
 async fn create_context() -> Result<SessionContext> {
+    create_context_with_dialect(None).await
+}
+
+async fn create_context_with_dialect(dialect: Option<Dialect>) -> Result<SessionContext> {
+    let mut session_config = SessionConfig::default();
+
+    if let Some(dialect) = dialect {
+        session_config.options_mut().sql_parser.dialect = dialect;
+    }
+
     let mut state = SessionStateBuilder::new()
-        .with_config(SessionConfig::default())
+        .with_config(session_config)
         .with_runtime_env(Arc::new(RuntimeEnv::default()))
         .with_default_features()
         .with_serializer_registry(Arc::new(MockSerializerRegistry))

@@ -21,10 +21,10 @@
 //! Another `Sort` benchmark focus on single core execution. This benchmark
 //! runs end-to-end sort queries and test the performance on multiple CPU cores.
 
+use clap::Args;
 use futures::StreamExt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use structopt::StructOpt;
 
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::{
@@ -42,35 +42,35 @@ use datafusion_common::utils::get_available_parallelism;
 
 use crate::util::{BenchmarkRun, CommonOpt, QueryResult, print_memory_stats};
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Args)]
 pub struct RunOpt {
     /// Common options
-    #[structopt(flatten)]
+    #[command(flatten)]
     common: CommonOpt,
 
     /// Sort query number. If not specified, runs all queries
-    #[structopt(short, long)]
+    #[arg(short, long)]
     pub query: Option<usize>,
 
     /// Path to data files (lineitem). Only parquet format is supported
-    #[structopt(parse(from_os_str), required = true, short = "p", long = "path")]
+    #[arg(required = true, short = 'p', long = "path")]
     path: PathBuf,
 
     /// Path to JSON benchmark result to be compare using `compare.py`
-    #[structopt(parse(from_os_str), short = "o", long = "output")]
+    #[arg(short = 'o', long = "output")]
     output_path: Option<PathBuf>,
 
     /// Load the data into a MemTable before executing the query
-    #[structopt(short = "m", long = "mem-table")]
+    #[arg(short = 'm', long = "mem-table")]
     mem_table: bool,
 
-    /// Mark the first column of each table as sorted in ascending order.
-    /// The tables should have been created with the `--sort` option for this to have any effect.
-    #[structopt(short = "t", long = "sorted")]
+    /// Declare that the first column of the input table is already sorted in ascending order.
+    /// This flag only attaches ordering metadata; it does not sort the input files.
+    #[arg(short = 't', long = "sorted")]
     sorted: bool,
 
     /// Append a `LIMIT n` clause to the query
-    #[structopt(short = "l", long = "limit")]
+    #[arg(short = 'l', long = "limit")]
     limit: Option<usize>,
 }
 
@@ -209,10 +209,10 @@ impl RunOpt {
     /// Benchmark query `query_id` in `SORT_QUERIES`
     async fn benchmark_query(&self, query_id: usize) -> Result<Vec<QueryResult>> {
         let config = self.common.config()?;
-        let rt_builder = self.common.runtime_env_builder()?;
+        let rt = self.common.build_runtime()?;
         let state = SessionStateBuilder::new()
             .with_config(config)
-            .with_runtime_env(rt_builder.build_arc()?)
+            .with_runtime_env(rt)
             .with_default_features()
             .build();
         let ctx = SessionContext::from(state);
@@ -333,9 +333,7 @@ impl RunOpt {
         );
         let extension = DEFAULT_PARQUET_EXTENSION;
 
-        let options = ListingOptions::new(format)
-            .with_file_extension(extension)
-            .with_collect_stat(state.config().collect_statistics());
+        let options = ListingOptions::new(format).with_file_extension(extension);
 
         let table_path = ListingTableUrl::parse(path)?;
         let schema = options.infer_schema(&state, &table_path).await?;
@@ -351,7 +349,9 @@ impl RunOpt {
             .with_listing_options(options)
             .with_schema(schema);
 
-        Ok(Arc::new(ListingTable::try_new(config)?))
+        Ok(Arc::new(ListingTable::try_new(config)?.with_cache(
+            ctx.runtime_env().cache_manager.get_file_statistic_cache(),
+        )))
     }
 
     fn iterations(&self) -> usize {

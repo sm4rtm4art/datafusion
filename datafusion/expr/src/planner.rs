@@ -24,8 +24,8 @@ use crate::expr::NullTreatment;
 #[cfg(feature = "sql")]
 use crate::logical_plan::LogicalPlan;
 use crate::{
-    AggregateUDF, Expr, GetFieldAccess, ScalarUDF, SortExpr, TableSource, WindowFrame,
-    WindowFunctionDefinition, WindowUDF,
+    AggregateUDF, Expr, GetFieldAccess, HigherOrderUDF, ScalarUDF, SortExpr, TableSource,
+    WindowFrame, WindowFunctionDefinition, WindowUDF,
 };
 use arrow::datatypes::{DataType, Field, FieldRef, SchemaRef};
 use datafusion_common::datatype::DataTypeExt;
@@ -61,7 +61,8 @@ pub trait ContextProvider {
         not_impl_err!("Table Functions are not supported")
     }
 
-    /// Provides an intermediate table that is used to store the results of a CTE during execution
+    /// Provides an intermediate table that is used to expose a recursive CTE
+    /// self-reference during planning and execution.
     ///
     /// CTE stands for "Common Table Expression"
     ///
@@ -72,6 +73,9 @@ pub trait ContextProvider {
     /// of the sql crate (for example [`CteWorkTable`]).
     ///
     /// The [`ContextProvider`] provides a way to "hide" this dependency.
+    /// The schema argument is the schema to expose for scans of the recursive
+    /// self-reference, which may be more conservative than the final recursive
+    /// query output schema.
     ///
     /// [`SqlToRel`]: https://docs.rs/datafusion/latest/datafusion/sql/planner/struct.SqlToRel.html
     /// [`CteWorkTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/cte_worktable/struct.CteWorkTable.html
@@ -103,6 +107,9 @@ pub trait ContextProvider {
     /// Return the scalar function with a given name, if any
     fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>>;
 
+    /// Return the higher order function with a given name, if any
+    fn get_higher_order_meta(&self, name: &str) -> Option<Arc<HigherOrderUDF>>;
+
     /// Return the aggregate function with a given name, if any
     fn get_aggregate_meta(&self, name: &str) -> Option<Arc<AggregateUDF>>;
 
@@ -131,6 +138,9 @@ pub trait ContextProvider {
     /// Return all scalar function names
     fn udf_names(&self) -> Vec<String>;
 
+    /// Return all higher order function names
+    fn higher_order_function_names(&self) -> Vec<String>;
+
     /// Return all aggregate function names
     fn udaf_names(&self) -> Vec<String>;
 
@@ -139,6 +149,10 @@ pub trait ContextProvider {
 }
 
 /// Customize planning of SQL AST expressions to [`Expr`]s
+///
+/// For more background, please also see the [Extending SQL in DataFusion: from ->> to TABLESAMPLE blog]
+///
+/// [Extending SQL in DataFusion: from ->> to TABLESAMPLE blog]: https://datafusion.apache.org/blog/2026/01/12/extending-sql
 pub trait ExprPlanner: Debug + Send + Sync {
     /// Plan the binary operation between two expressions, returns original
     /// BinaryExpr if not possible
@@ -247,13 +261,6 @@ pub trait ExprPlanner: Debug + Send + Sync {
         not_impl_err!(
             "Default planner compound identifier hasn't been implemented for ExprPlanner"
         )
-    }
-
-    /// Plans `ANY` expression, such as `expr = ANY(array_expr)`
-    ///
-    /// Returns origin binary expression if not possible
-    fn plan_any(&self, expr: RawBinaryExpr) -> Result<PlannerResult<RawBinaryExpr>> {
-        Ok(PlannerResult::Original(expr))
     }
 
     /// Plans aggregate functions, such as `COUNT(<expr>)`
@@ -369,13 +376,16 @@ impl PlannedRelation {
 #[derive(Debug)]
 pub enum RelationPlanning {
     /// The relation was successfully planned by an extension planner
-    Planned(PlannedRelation),
+    Planned(Box<PlannedRelation>),
     /// No extension planner handled the relation, return it for default processing
-    Original(TableFactor),
+    Original(Box<TableFactor>),
 }
 
 /// Customize planning SQL table factors to [`LogicalPlan`]s.
 #[cfg(feature = "sql")]
+/// For more background, please also see the [Extending SQL in DataFusion: from ->> to TABLESAMPLE blog]
+///
+/// [Extending SQL in DataFusion: from ->> to TABLESAMPLE blog]: https://datafusion.apache.org/blog/2026/01/12/extending-sql
 pub trait RelationPlanner: Debug + Send + Sync {
     /// Plan a table factor into a [`LogicalPlan`].
     ///
@@ -427,14 +437,35 @@ pub trait RelationPlannerContext {
 
 /// Customize planning SQL types to DataFusion (Arrow) types.
 #[cfg(feature = "sql")]
+/// For more background, please also see the [Extending SQL in DataFusion: from ->> to TABLESAMPLE blog]
+///
+/// [Extending SQL in DataFusion: from ->> to TABLESAMPLE blog]: https://datafusion.apache.org/blog/2026/01/12/extending-sql
 pub trait TypePlanner: Debug + Send + Sync {
     /// Plan SQL [`sqlparser::ast::DataType`] to DataFusion [`DataType`]
     ///
     /// Returns None if not possible
+    #[deprecated(since = "53.0.0", note = "Use plan_type_field()")]
     fn plan_type(
         &self,
         _sql_type: &sqlparser::ast::DataType,
     ) -> Result<Option<DataType>> {
         Ok(None)
+    }
+
+    /// Plan SQL [`sqlparser::ast::DataType`] to DataFusion [`FieldRef`]
+    ///
+    /// Returns None if not possible. Unlike [`Self::plan_type`], `plan_type_field()`
+    /// makes it possible to express extension types (e.g., `arrow.uuid`) or otherwise
+    /// insert metadata into the DataFusion type representation. The default implementation
+    /// falls back on [`Self::plan_type`] for backward compatibility and wraps the result
+    /// in a nullable field reference.
+    fn plan_type_field(
+        &self,
+        sql_type: &sqlparser::ast::DataType,
+    ) -> Result<Option<FieldRef>> {
+        #[expect(deprecated)]
+        Ok(self
+            .plan_type(sql_type)?
+            .map(|data_type| data_type.into_nullable_field_ref()))
     }
 }

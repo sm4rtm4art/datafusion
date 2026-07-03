@@ -464,7 +464,7 @@ async fn main() -> Result<()> {
 [`register_table_provider()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table_provider
 [library users guide]: ../library-user-guide/using-the-dataframe-api.md
 [api reference on docs.rs]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[expressions reference]: expressions
+[expressions reference]: expressions.md
 
 ### Meet Your Data
 

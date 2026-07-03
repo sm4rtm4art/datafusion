@@ -17,7 +17,6 @@
 
 //! [`SortPreservingMergeExec`] merges multiple sorted streams into one sorted stream.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use crate::common::spawn_buffered;
@@ -25,9 +24,11 @@ use crate::limit::LimitStream;
 use crate::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use crate::projection::{ProjectionExec, make_with_child, update_ordering};
 use crate::sorts::streaming_merge::StreamingMergeBuilder;
+use crate::statistics::StatisticsArgs;
 use crate::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties,
     Partitioning, PlanProperties, SendableRecordBatchStream, Statistics,
+    check_if_same_properties,
 };
 
 use datafusion_common::{Result, assert_eq_or_internal_err, internal_err};
@@ -93,7 +94,7 @@ pub struct SortPreservingMergeExec {
     /// Optional number of rows to fetch. Stops producing rows after this fetch
     fetch: Option<usize>,
     /// Cache holding plan properties like equivalences, output partitioning etc.
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
     /// Use round-robin selection of tied winners of loser tree
     ///
     /// See [`Self::with_round_robin_repartition`] for more information.
@@ -109,7 +110,7 @@ impl SortPreservingMergeExec {
             expr,
             metrics: ExecutionPlanMetricsSet::new(),
             fetch: None,
-            cache,
+            cache: Arc::new(cache),
             enable_round_robin_repartition: true,
         }
     }
@@ -180,6 +181,17 @@ impl SortPreservingMergeExec {
         .with_evaluation_type(drive)
         .with_scheduling_type(scheduling)
     }
+
+    fn with_new_children_and_same_properties(
+        &self,
+        mut children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Self {
+        Self {
+            input: children.swap_remove(0),
+            metrics: ExecutionPlanMetricsSet::new(),
+            ..Self::clone(self)
+        }
+    }
 }
 
 impl DisplayAs for SortPreservingMergeExec {
@@ -221,11 +233,7 @@ impl ExecutionPlan for SortPreservingMergeExec {
     }
 
     /// Return a reference to Any that can be used for downcasting
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
@@ -240,9 +248,22 @@ impl ExecutionPlan for SortPreservingMergeExec {
             expr: self.expr.clone(),
             metrics: self.metrics.clone(),
             fetch: limit,
-            cache: self.cache.clone(),
-            enable_round_robin_repartition: true,
+            cache: Arc::clone(&self.cache),
+            enable_round_robin_repartition: self.enable_round_robin_repartition,
         }))
+    }
+
+    fn with_preserve_order(
+        &self,
+        preserve_order: bool,
+    ) -> Option<Arc<dyn ExecutionPlan>> {
+        self.input
+            .with_preserve_order(preserve_order)
+            .and_then(|new_input| {
+                Arc::new(self.clone())
+                    .with_new_children(vec![new_input])
+                    .ok()
+            })
     }
 
     fn required_input_distribution(&self) -> Vec<Distribution> {
@@ -267,10 +288,11 @@ impl ExecutionPlan for SortPreservingMergeExec {
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
+        mut children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
+        check_if_same_properties!(self, children);
         Ok(Arc::new(
-            SortPreservingMergeExec::new(self.expr.clone(), Arc::clone(&children[0]))
+            SortPreservingMergeExec::new(self.expr.clone(), children.swap_remove(0))
                 .with_fetch(self.fetch),
         ))
     }
@@ -359,12 +381,8 @@ impl ExecutionPlan for SortPreservingMergeExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        self.input.partition_statistics(None)
-    }
-
-    fn partition_statistics(&self, _partition: Option<usize>) -> Result<Statistics> {
-        self.input.partition_statistics(None)
+    fn statistics_with_args(&self, args: &StatisticsArgs) -> Result<Arc<Statistics>> {
+        args.compute_child_statistics(&self.input, None)
     }
 
     fn supports_limit_pushdown(&self) -> bool {
@@ -408,7 +426,6 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::coalesce_batches::CoalesceBatchesExec;
     use crate::coalesce_partitions::CoalescePartitionsExec;
     use crate::execution_plan::{Boundedness, EmissionType};
     use crate::expressions::col;
@@ -444,31 +461,34 @@ mod tests {
 
     // The number in the function is highly related to the memory limit we are testing
     // any change of the constant should be aware of
-    fn generate_task_ctx_for_round_robin_tie_breaker() -> Result<Arc<TaskContext>> {
+    fn generate_task_ctx_for_round_robin_tie_breaker(
+        target_batch_size: usize,
+    ) -> Result<Arc<TaskContext>> {
         let runtime = RuntimeEnvBuilder::new()
             .with_memory_limit(20_000_000, 1.0)
             .build_arc()?;
-        let config = SessionConfig::new();
+        let mut config = SessionConfig::new();
+        config.options_mut().execution.batch_size =
+            datafusion_common::config::ConfigNonZeroUsize::try_new(target_batch_size)?;
         let task_ctx = TaskContext::default()
             .with_runtime(runtime)
             .with_session_config(config);
         Ok(Arc::new(task_ctx))
     }
+
     // The number in the function is highly related to the memory limit we are testing,
     // any change of the constant should be aware of
     fn generate_spm_for_round_robin_tie_breaker(
         enable_round_robin_repartition: bool,
     ) -> Result<Arc<SortPreservingMergeExec>> {
-        let target_batch_size = 12500;
         let row_size = 12500;
         let a: ArrayRef = Arc::new(Int32Array::from(vec![1; row_size]));
         let b: ArrayRef = Arc::new(StringArray::from_iter(vec![Some("a"); row_size]));
         let c: ArrayRef = Arc::new(Int64Array::from_iter(vec![0; row_size]));
         let rb = RecordBatch::try_from_iter(vec![("a", a), ("b", b), ("c", c)])?;
-
-        let rbs = (0..1024).map(|_| rb.clone()).collect::<Vec<_>>();
-
         let schema = rb.schema();
+
+        let rbs = std::iter::repeat_n(rb, 1024).collect::<Vec<_>>();
         let sort = [
             PhysicalSortExpr {
                 expr: col("b", &schema)?,
@@ -485,9 +505,7 @@ mod tests {
             TestMemoryExec::try_new_exec(&[rbs], schema, None)?,
             Partitioning::RoundRobinBatch(2),
         )?;
-        let coalesce_batches_exec =
-            CoalesceBatchesExec::new(Arc::new(repartition_exec), target_batch_size);
-        let spm = SortPreservingMergeExec::new(sort, Arc::new(coalesce_batches_exec))
+        let spm = SortPreservingMergeExec::new(sort, Arc::new(repartition_exec))
             .with_round_robin_repartition(enable_round_robin_repartition);
         Ok(Arc::new(spm))
     }
@@ -499,7 +517,8 @@ mod tests {
     /// based on whether the tie breaker is enabled or disabled.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_round_robin_tie_breaker_success() -> Result<()> {
-        let task_ctx = generate_task_ctx_for_round_robin_tie_breaker()?;
+        let target_batch_size = 12500;
+        let task_ctx = generate_task_ctx_for_round_robin_tie_breaker(target_batch_size)?;
         let spm = generate_spm_for_round_robin_tie_breaker(true)?;
         let _collected = collect(spm, task_ctx).await?;
         Ok(())
@@ -512,7 +531,7 @@ mod tests {
     /// based on whether the tie breaker is enabled or disabled.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_round_robin_tie_breaker_fail() -> Result<()> {
-        let task_ctx = generate_task_ctx_for_round_robin_tie_breaker()?;
+        let task_ctx = generate_task_ctx_for_round_robin_tie_breaker(8192)?;
         let spm = generate_spm_for_round_robin_tie_breaker(false)?;
         let _err = collect(spm, task_ctx).await.unwrap_err();
         Ok(())
@@ -1350,7 +1369,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct CongestedExec {
         schema: Schema,
-        cache: PlanProperties,
+        cache: Arc<PlanProperties>,
         congestion: Arc<Congestion>,
     }
 
@@ -1383,10 +1402,7 @@ mod tests {
         fn name(&self) -> &'static str {
             Self::static_name()
         }
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-        fn properties(&self) -> &PlanProperties {
+        fn properties(&self) -> &Arc<PlanProperties> {
             &self.cache
         }
         fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
@@ -1472,14 +1488,10 @@ mod tests {
         let task_ctx = Arc::new(TaskContext::default());
         let schema = Schema::new(vec![Field::new("c1", DataType::UInt64, false)]);
         let properties = CongestedExec::compute_properties(Arc::new(schema.clone()));
-        let &partition_count = match properties.output_partitioning() {
-            Partitioning::RoundRobinBatch(partitions) => partitions,
-            Partitioning::Hash(_, partitions) => partitions,
-            Partitioning::UnknownPartitioning(partitions) => partitions,
-        };
+        let partition_count = properties.output_partitioning().partition_count();
         let source = CongestedExec {
             schema: schema.clone(),
-            cache: properties,
+            cache: Arc::new(properties),
             congestion: Arc::new(Congestion::new(partition_count)),
         };
         let spm = SortPreservingMergeExec::new(
@@ -1498,5 +1510,60 @@ mod tests {
             Ok(Err(_)) => exec_err!("SortPreservingMerge task panicked or was cancelled"),
             Err(_) => exec_err!("SortPreservingMerge caused a deadlock"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_sort_merge_stops_after_error_with_buffered_rows() -> Result<()> {
+        let task_ctx = Arc::new(TaskContext::default());
+        let schema = Arc::new(Schema::new(vec![Field::new("i", DataType::Int32, false)]));
+        let sort: LexOrdering = [PhysicalSortExpr::new_default(Arc::new(Column::new(
+            "i", 0,
+        ))
+            as Arc<dyn PhysicalExpr>)]
+        .into();
+
+        let mut stream0 = RecordBatchReceiverStream::builder(Arc::clone(&schema), 2);
+        let tx0 = stream0.tx();
+        let schema0 = Arc::clone(&schema);
+        stream0.spawn(async move {
+            let batch =
+                RecordBatch::try_new(schema0, vec![Arc::new(Int32Array::from(vec![1]))])?;
+            tx0.send(Ok(batch)).await.unwrap();
+            tx0.send(exec_err!("stream failure")).await.unwrap();
+            Ok(())
+        });
+
+        let mut stream1 = RecordBatchReceiverStream::builder(Arc::clone(&schema), 1);
+        let tx1 = stream1.tx();
+        let schema1 = Arc::clone(&schema);
+        stream1.spawn(async move {
+            let batch =
+                RecordBatch::try_new(schema1, vec![Arc::new(Int32Array::from(vec![2]))])?;
+            tx1.send(Ok(batch)).await.unwrap();
+            Ok(())
+        });
+
+        let metrics = ExecutionPlanMetricsSet::new();
+        let reservation =
+            MemoryConsumer::new("test").register(&task_ctx.runtime_env().memory_pool);
+
+        let mut merge_stream = StreamingMergeBuilder::new()
+            .with_streams(vec![stream0.build(), stream1.build()])
+            .with_schema(Arc::clone(&schema))
+            .with_expressions(&sort)
+            .with_metrics(BaselineMetrics::new(&metrics, 0))
+            .with_batch_size(task_ctx.session_config().batch_size())
+            .with_fetch(None)
+            .with_reservation(reservation)
+            .build()?;
+
+        let first = merge_stream.next().await.unwrap();
+        assert!(first.is_err(), "expected merge stream to surface the error");
+        assert!(
+            merge_stream.next().await.is_none(),
+            "merge stream yielded data after returning an error"
+        );
+
+        Ok(())
     }
 }

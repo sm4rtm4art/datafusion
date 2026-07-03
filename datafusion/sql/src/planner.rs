@@ -18,7 +18,7 @@
 //! [`SqlToRel`]: SQL Query Planner (produces [`LogicalPlan`] from SQL AST)
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::vec;
 
 use crate::utils::make_decimal_type;
@@ -32,10 +32,10 @@ use datafusion_common::{
     DFSchemaRef, Diagnostic, SchemaError, field_not_found, internal_err,
     plan_datafusion_err,
 };
+use datafusion_expr::Expr;
 use datafusion_expr::logical_plan::{LogicalPlan, LogicalPlanBuilder};
 pub use datafusion_expr::planner::ContextProvider;
 use datafusion_expr::utils::find_column_exprs;
-use datafusion_expr::{Expr, col};
 use sqlparser::ast::{ArrayElemTypeDef, ExactNumberInfo, TimezoneInfo};
 use sqlparser::ast::{ColumnDef as SQLColumnDef, ColumnOption};
 use sqlparser::ast::{DataType as SQLDataType, Ident, ObjectName, TableAlias};
@@ -257,17 +257,25 @@ impl IdentNormalizer {
 pub struct PlannerContext {
     /// Data types for numbered parameters ($1, $2, etc), if supplied
     /// in `PREPARE` statement
-    prepare_param_data_types: Arc<Vec<FieldRef>>,
+    prepare_param_data_types: Arc<Vec<Option<FieldRef>>>,
     /// Map of CTE name to logical plan of the WITH clause.
     /// Use `Arc<LogicalPlan>` to allow cheap cloning
     ctes: HashMap<String, Arc<LogicalPlan>>,
-    /// The query schema of the outer query plan, used to resolve the columns in subquery
-    outer_query_schema: Option<DFSchemaRef>,
+
+    /// The queries schemas of outer query relations, used to resolve the outer referenced
+    /// columns in subquery (recursive aware)
+    outer_queries_schemas_stack: Vec<DFSchemaRef>,
     /// The joined schemas of all FROM clauses planned so far. When planning LATERAL
     /// FROM clauses, this should become a suffix of the `outer_query_schema`.
     outer_from_schema: Option<DFSchemaRef>,
     /// The query schema defined by the table
     create_table_schema: Option<DFSchemaRef>,
+    /// When planning non-first queries in a set expression
+    /// (UNION/INTERSECT/EXCEPT), holds the schema of the left-most query.
+    /// Used to alias duplicate expressions to match the left side's field names.
+    set_expr_left_schema: Option<DFSchemaRef>,
+    /// The parameters of all lambdas seen so far
+    lambda_parameters: HashMap<String, FieldRef>,
 }
 
 impl Default for PlannerContext {
@@ -282,34 +290,59 @@ impl PlannerContext {
         Self {
             prepare_param_data_types: Arc::new(vec![]),
             ctes: HashMap::new(),
-            outer_query_schema: None,
+            outer_queries_schemas_stack: vec![],
             outer_from_schema: None,
             create_table_schema: None,
+            set_expr_left_schema: None,
+            lambda_parameters: HashMap::new(),
         }
     }
 
     /// Update the PlannerContext with provided prepare_param_data_types
     pub fn with_prepare_param_data_types(
         mut self,
-        prepare_param_data_types: Vec<FieldRef>,
+        prepare_param_data_types: Vec<Option<FieldRef>>,
     ) -> Self {
         self.prepare_param_data_types = prepare_param_data_types.into();
         self
     }
 
-    // Return a reference to the outer query's schema
-    pub fn outer_query_schema(&self) -> Option<&DFSchema> {
-        self.outer_query_schema.as_ref().map(|s| s.as_ref())
+    /// Return the stack of outer relations' schemas, the outer most
+    /// relation are at the first entry
+    pub fn outer_queries_schemas(&self) -> &[DFSchemaRef] {
+        &self.outer_queries_schemas_stack
+    }
+
+    /// Return an iterator of the subquery relations' schemas, innermost
+    /// relation is returned first.
+    ///
+    /// This order corresponds to the order of resolution when looking up column
+    /// references in subqueries, which start from the innermost relation and
+    /// then look up the outer relations one by one until a match is found or no
+    /// more outer relation exist.
+    ///
+    /// NOTE this is *REVERSED* order of [`Self::outer_queries_schemas`]
+    ///
+    /// This is useful to resolve the column reference in the subquery by
+    /// looking up the outer query schemas one by one.
+    pub fn outer_schemas_iter(&self) -> impl Iterator<Item = &DFSchemaRef> {
+        self.outer_queries_schemas_stack.iter().rev()
     }
 
     /// Sets the outer query schema, returning the existing one, if
     /// any
-    pub fn set_outer_query_schema(
-        &mut self,
-        mut schema: Option<DFSchemaRef>,
-    ) -> Option<DFSchemaRef> {
-        std::mem::swap(&mut self.outer_query_schema, &mut schema);
-        schema
+    pub fn append_outer_query_schema(&mut self, schema: DFSchemaRef) {
+        self.outer_queries_schemas_stack.push(schema);
+    }
+
+    /// The schema of the adjacent outer relation
+    pub fn latest_outer_query_schema(&self) -> Option<&DFSchemaRef> {
+        self.outer_queries_schemas_stack.last()
+    }
+
+    /// Remove the schema of the adjacent outer relation
+    pub fn pop_outer_query_schema(&mut self) -> Option<DFSchemaRef> {
+        self.outer_queries_schemas_stack.pop()
     }
 
     pub fn set_table_schema(
@@ -348,7 +381,7 @@ impl PlannerContext {
     }
 
     /// Return the types of parameters (`$1`, `$2`, etc) if known
-    pub fn prepare_param_data_types(&self) -> &[FieldRef] {
+    pub fn prepare_param_data_types(&self) -> &[Option<FieldRef>] {
         &self.prepare_param_data_types
     }
 
@@ -371,9 +404,31 @@ impl PlannerContext {
         self.ctes.get(cte_name).map(|cte| cte.as_ref())
     }
 
+    pub fn lambda_parameters(&self) -> &HashMap<String, FieldRef> {
+        &self.lambda_parameters
+    }
+
+    pub fn with_lambda_parameters(
+        mut self,
+        parameters: impl IntoIterator<Item = FieldRef>,
+    ) -> Self {
+        self.lambda_parameters
+            .extend(parameters.into_iter().map(|f| (f.name().clone(), f)));
+
+        self
+    }
+
     /// Remove the plan of CTE / Subquery for the specified name
     pub(super) fn remove_cte(&mut self, cte_name: &str) {
         self.ctes.remove(cte_name);
+    }
+
+    /// Sets the left-most set expression schema, returning the previous value
+    pub(super) fn set_set_expr_left_schema(
+        &mut self,
+        schema: Option<DFSchemaRef>,
+    ) -> Option<DFSchemaRef> {
+        std::mem::replace(&mut self.set_expr_left_schema, schema)
     }
 }
 
@@ -400,6 +455,7 @@ pub struct SqlToRel<'a, S: ContextProvider> {
     pub(crate) context_provider: &'a S,
     pub(crate) options: ParserOptions,
     pub(crate) ident_normalizer: IdentNormalizer,
+    warnings: Mutex<Vec<Diagnostic>>,
 }
 
 impl<'a, S: ContextProvider> SqlToRel<'a, S> {
@@ -422,7 +478,25 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             context_provider,
             options,
             ident_normalizer: IdentNormalizer::new(ident_normalize),
+            warnings: Mutex::new(vec![]),
         }
+    }
+
+    pub(crate) fn add_warning(&self, warning: Diagnostic) {
+        self.warnings
+            .lock()
+            .expect("warning diagnostic lock poisoned")
+            .push(warning);
+    }
+
+    /// Drain and return non-fatal warnings collected during SQL planning.
+    pub fn take_warnings(&self) -> Vec<Diagnostic> {
+        std::mem::take(
+            &mut self
+                .warnings
+                .lock()
+                .expect("warning diagnostic lock poisoned"),
+        )
     }
 
     pub fn build_schema(&self, columns: Vec<SQLColumnDef>) -> Result<Schema> {
@@ -517,10 +591,10 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 idents.len()
             )
         } else {
-            let fields = plan.schema().fields().clone();
+            let columns = plan.schema().columns();
             LogicalPlanBuilder::from(plan)
-                .project(fields.iter().zip(idents.into_iter()).map(|(field, ident)| {
-                    col(field.name()).alias(self.ident_normalizer.normalize(ident))
+                .project(columns.into_iter().zip(idents).map(|(col, ident)| {
+                    Expr::Column(col).alias(self.ident_normalizer.normalize(ident))
                 }))?
                 .build()
         }
@@ -596,9 +670,9 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
     ) -> Result<FieldRef> {
         // First check if any of the registered type_planner can handle this type
         if let Some(type_planner) = self.context_provider.get_type_planner()
-            && let Some(data_type) = type_planner.plan_type(sql_type)?
+            && let Some(data_type) = type_planner.plan_type_field(sql_type)?
         {
-            return Ok(data_type.into_nullable_field_ref());
+            return Ok(data_type);
         }
 
         // If no type_planner can handle this type, use the default conversion
@@ -688,8 +762,8 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             SQLDataType::Timestamp(precision, tz_info)
                 if precision.is_none() || [0, 3, 6, 9].contains(&precision.unwrap()) =>
             {
-                let tz = if matches!(tz_info, TimezoneInfo::Tz)
-                    || matches!(tz_info, TimezoneInfo::WithTimeZone)
+                let tz = if *tz_info == TimezoneInfo::Tz
+                    || *tz_info == TimezoneInfo::WithTimeZone
                 {
                     // Timestamp With Time Zone
                     // INPUT : [SQLDataType]   TimestampTz + [Config] Time Zone
@@ -710,8 +784,8 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             }
             SQLDataType::Date => Ok(DataType::Date32),
             SQLDataType::Time(None, tz_info) => {
-                if matches!(tz_info, TimezoneInfo::None)
-                    || matches!(tz_info, TimezoneInfo::WithoutTimeZone)
+                if *tz_info == TimezoneInfo::None
+                    || *tz_info == TimezoneInfo::WithoutTimeZone
                 {
                     Ok(DataType::Time64(TimeUnit::Nanosecond))
                 } else {
@@ -823,7 +897,7 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
             | SQLDataType::HugeInt
             | SQLDataType::UHugeInt
             | SQLDataType::UBigInt
-            | SQLDataType::TimestampNtz
+            | SQLDataType::TimestampNtz{..}
             | SQLDataType::NamedTable { .. }
             | SQLDataType::TsVector
             | SQLDataType::TsQuery

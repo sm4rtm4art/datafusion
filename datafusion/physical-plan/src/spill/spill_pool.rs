@@ -25,8 +25,7 @@ use parking_lot::Mutex;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion_common::Result;
-use datafusion_execution::disk_manager::RefCountedTempFile;
-use datafusion_execution::{RecordBatchStream, SendableRecordBatchStream};
+use datafusion_execution::{RecordBatchStream, SendableRecordBatchStream, SpillFile};
 
 use super::in_progress_spill_file::InProgressSpillFile;
 use super::spill_manager::SpillManager;
@@ -61,6 +60,10 @@ struct SpillPoolShared {
     /// Writer's reference to the current file (shared by all cloned writers).
     /// Has its own lock to allow I/O without blocking queue access.
     current_write_file: Option<Arc<Mutex<ActiveSpillFileShared>>>,
+    /// Number of active writer clones. Only when this reaches zero should
+    /// `writer_dropped` be set to true. This prevents premature EOF signaling
+    /// when one writer clone is dropped while others are still active.
+    active_writer_count: usize,
 }
 
 impl SpillPoolShared {
@@ -72,6 +75,7 @@ impl SpillPoolShared {
             waker: None,
             writer_dropped: false,
             current_write_file: None,
+            active_writer_count: 1,
         }
     }
 
@@ -97,13 +101,24 @@ impl SpillPoolShared {
 /// The writer automatically manages file rotation based on the `max_file_size_bytes`
 /// configured in [`channel`]. When the last writer clone is dropped, it finalizes the
 /// current file so readers can access all written data.
-#[derive(Clone)]
 pub struct SpillPoolWriter {
     /// Maximum size in bytes before rotating to a new file.
     /// Typically set from configuration `datafusion.execution.max_spill_file_size_bytes`.
     max_file_size_bytes: usize,
     /// Shared state with readers (includes current_write_file for coordination)
     shared: Arc<Mutex<SpillPoolShared>>,
+}
+
+impl Clone for SpillPoolWriter {
+    fn clone(&self) -> Self {
+        // Increment the active writer count so that `writer_dropped` is only
+        // set to true when the *last* clone is dropped.
+        self.shared.lock().active_writer_count += 1;
+        Self {
+            max_file_size_bytes: self.max_file_size_bytes,
+            shared: Arc::clone(&self.shared),
+        }
+    }
 }
 
 impl SpillPoolWriter {
@@ -163,7 +178,9 @@ impl SpillPoolWriter {
 
             let writer = spill_manager.create_in_progress_file("SpillPool")?;
             // Clone the file so readers can access it immediately
-            let file = writer.file().expect("InProgressSpillFile should always have a file when it is first created").clone();
+            let file = Arc::clone(writer.file().expect(
+                "InProgressSpillFile should always have a file when it is first created",
+            ));
 
             let file_shared = Arc::new(Mutex::new(ActiveSpillFileShared {
                 writer: Some(writer),
@@ -194,6 +211,8 @@ impl SpillPoolWriter {
             // Append the batch
             if let Some(ref mut writer) = file_shared.writer {
                 writer.append_batch(batch)?;
+                // make sure we flush the writer for readers
+                writer.flush()?;
                 file_shared.batches_written += 1;
                 file_shared.estimated_size += batch_size;
             }
@@ -230,6 +249,15 @@ impl SpillPoolWriter {
 impl Drop for SpillPoolWriter {
     fn drop(&mut self) {
         let mut shared = self.shared.lock();
+
+        shared.active_writer_count -= 1;
+        let is_last_writer = shared.active_writer_count == 0;
+
+        if !is_last_writer {
+            // Other writer clones are still active; do not finalize or
+            // signal EOF to readers.
+            return;
+        }
 
         // Finalize the current file when the last writer is dropped
         if let Some(current_file) = shared.current_write_file.take() {
@@ -455,7 +483,7 @@ struct ActiveSpillFileShared {
     writer: Option<InProgressSpillFile>,
     /// The spill file, set when the writer finishes.
     /// Taken by the reader when creating a stream (the file stays open via file handles).
-    file: Option<RefCountedTempFile>,
+    file: Option<Arc<dyn SpillFile>>,
     /// Total number of batches written to this file
     batches_written: usize,
     /// Estimated size in bytes of data written to this file
@@ -480,25 +508,25 @@ impl ActiveSpillFileShared {
     }
 }
 
-/// Reader state for a SpillFile (owned by individual SpillFile instances).
+/// Reader state for a SpillPoolFile (owned by individual SpillPoolFile instances).
 /// This is kept separate from the shared state to avoid holding locks during I/O.
-struct SpillFileReader {
+struct SpillPoolFileReader {
     /// The actual stream reading from disk
     stream: SendableRecordBatchStream,
     /// Number of batches this reader has consumed
     batches_read: usize,
 }
 
-struct SpillFile {
+struct SpillPoolFile {
     /// Shared coordination state (contains writer and batch counts)
     shared: Arc<Mutex<ActiveSpillFileShared>>,
-    /// Reader state (lazy-initialized, owned by this SpillFile)
-    reader: Option<SpillFileReader>,
+    /// Reader state (lazy-initialized, owned by this SpillPoolFile)
+    reader: Option<SpillPoolFileReader>,
     /// Spill manager for creating readers
     spill_manager: Arc<SpillManager>,
 }
 
-impl Stream for SpillFile {
+impl Stream for SpillPoolFile {
     type Item = Result<RecordBatch>;
 
     fn poll_next(
@@ -535,9 +563,13 @@ impl Stream for SpillFile {
         // Step 2: Lazy-create reader stream if needed
         if self.reader.is_none() && should_read {
             if let Some(file) = file {
-                match self.spill_manager.read_spill_as_stream(file, None) {
+                // we want this unbuffered because files are actively being written to
+                match self
+                    .spill_manager
+                    .read_spill_as_stream_unbuffered(file, None)
+                {
                     Ok(stream) => {
-                        self.reader = Some(SpillFileReader {
+                        self.reader = Some(SpillPoolFileReader {
                             stream,
                             batches_read: 0,
                         });
@@ -596,8 +628,8 @@ impl Stream for SpillFile {
 pub struct SpillPoolReader {
     /// Shared reference to the spill pool
     shared: Arc<Mutex<SpillPoolShared>>,
-    /// Current SpillFile we're reading from
-    current_file: Option<SpillFile>,
+    /// Current SpillPoolFile we're reading from
+    current_file: Option<SpillPoolFile>,
     /// Schema of the spilled data
     schema: SchemaRef,
 }
@@ -675,12 +707,12 @@ impl Stream for SpillPoolReader {
 
             // Peek at the front of the queue (don't pop yet)
             if let Some(file_shared) = shared.files.front() {
-                // Create a SpillFile from the shared state
+                // Create a SpillPoolFile from the shared state
                 let spill_manager = Arc::clone(&shared.spill_manager);
                 let file_shared = Arc::clone(file_shared);
-                drop(shared); // Release lock before creating SpillFile
+                drop(shared); // Release lock before creating SpillPoolFile
 
-                self.current_file = Some(SpillFile {
+                self.current_file = Some(SpillPoolFile {
                     shared: file_shared,
                     reader: None,
                     spill_manager,
@@ -717,7 +749,6 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use datafusion_common_runtime::SpawnedTask;
     use datafusion_execution::runtime_env::RuntimeEnv;
-    use futures::StreamExt;
 
     fn create_test_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![Field::new("a", DataType::Int32, false)]))
@@ -879,8 +910,8 @@ mod tests {
         );
         assert_eq!(
             metrics.spilled_bytes.value(),
-            0,
-            "Spilled bytes should be 0 before file finalization"
+            320,
+            "Spilled bytes should reflect data written (header + 1 batch)"
         );
         assert_eq!(
             metrics.spilled_rows.value(),
@@ -1300,11 +1331,11 @@ mod tests {
             writer.push_batch(&batch)?;
         }
 
-        // Check metrics before drop - spilled_bytes should be 0 since file isn't finalized yet
+        // Check metrics before drop - spilled_bytes already reflects written data
         let spilled_bytes_before = metrics.spilled_bytes.value();
         assert_eq!(
-            spilled_bytes_before, 0,
-            "Spilled bytes should be 0 before writer is dropped"
+            spilled_bytes_before, 1088,
+            "Spilled bytes should reflect data written (header + 5 batches)"
         );
 
         // Explicitly drop the writer - this should finalize the current file
@@ -1337,6 +1368,81 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that the reader stays alive as long as any writer clone exists.
+    ///
+    /// `SpillPoolWriter` is `Clone`, and in non-preserve-order repartitioning
+    /// mode multiple input partition tasks share clones of the same writer.
+    /// The reader must not see EOF until **all** clones have been dropped,
+    /// even if the queue is temporarily empty between writes from different
+    /// clones.
+    ///
+    /// The test sequence is:
+    ///
+    /// 1. writer1 writes a batch, then is dropped.
+    /// 2. The reader consumes that batch (queue is now empty).
+    /// 3. writer2 (still alive) writes a batch.
+    /// 4. The reader must see that batch.
+    /// 5. EOF is only signalled after writer2 is also dropped.
+    #[tokio::test]
+    async fn test_clone_drop_does_not_signal_eof_prematurely() -> Result<()> {
+        let (writer1, mut reader) = create_spill_channel(1024 * 1024);
+        let writer2 = writer1.clone();
+
+        // Synchronization: tell writer2 when it may proceed.
+        let (proceed_tx, proceed_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // Spawn writer2 — it waits for the signal before writing.
+        let writer2_handle = SpawnedTask::spawn(async move {
+            proceed_rx.await.unwrap();
+            writer2.push_batch(&create_test_batch(10, 10)).unwrap();
+            // writer2 is dropped here (last clone → true EOF)
+        });
+
+        // Writer1 writes one batch, then drops.
+        writer1.push_batch(&create_test_batch(0, 10))?;
+        drop(writer1);
+
+        // Read writer1's batch.
+        let batch1 = reader.next().await.unwrap()?;
+        assert_eq!(batch1.num_rows(), 10);
+        let col = batch1
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(col.value(0), 0);
+
+        // Signal writer2 to write its batch. It will execute when the
+        // current task yields (i.e. when reader.next() returns Pending).
+        proceed_tx.send(()).unwrap();
+
+        // The reader should wait (Pending) for writer2's data, not EOF.
+        let batch2 =
+            tokio::time::timeout(std::time::Duration::from_secs(5), reader.next())
+                .await
+                .expect("Reader timed out — should not hang");
+
+        assert!(
+            batch2.is_some(),
+            "Reader must not return EOF while a writer clone is still alive"
+        );
+        let batch2 = batch2.unwrap()?;
+        assert_eq!(batch2.num_rows(), 10);
+        let col = batch2
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(col.value(0), 10);
+
+        writer2_handle.await.unwrap();
+
+        // All writers dropped — reader should see real EOF now.
+        assert!(reader.next().await.is_none());
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_disk_usage_decreases_as_files_consumed() -> Result<()> {
         use datafusion_execution::runtime_env::RuntimeEnvBuilder;
@@ -1358,7 +1464,7 @@ mod tests {
         let schema = create_test_schema();
         let spill_manager = Arc::new(SpillManager::new(runtime, metrics.clone(), schema));
 
-        let (writer, mut reader) = channel(batch_size, spill_manager);
+        let (writer, mut reader) = channel(batch_size - 1, spill_manager);
 
         // Step 3: Write NUM_BATCHES batches to create approximately NUM_BATCHES files
         for i in 0..NUM_BATCHES {
@@ -1369,10 +1475,8 @@ mod tests {
         // Check how many files were created (should be at least a few due to file rotation)
         let file_count = metrics.spill_file_count.value();
         assert_eq!(
-            file_count,
-            NUM_BATCHES - 1,
-            "Expected at {} files with rotation, got {file_count}",
-            NUM_BATCHES - 1
+            file_count, NUM_BATCHES,
+            "Expected at {NUM_BATCHES} files with rotation, got {file_count}"
         );
 
         // Step 4: Verify initial disk usage reflects all files

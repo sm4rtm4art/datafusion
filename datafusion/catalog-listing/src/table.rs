@@ -16,37 +16,40 @@
 // under the License.
 
 use crate::config::SchemaSource;
-use crate::helpers::{expr_applicable_for_cols, pruned_partition_list};
+use crate::helpers::{
+    expr_applicable_for_cols, filter_partitioned_file, pruned_partition_list,
+};
 use crate::{ListingOptions, ListingTableConfig};
 use arrow::datatypes::{Field, Schema, SchemaBuilder, SchemaRef};
 use async_trait::async_trait;
 use datafusion_catalog::{ScanArgs, ScanResult, Session, TableProvider};
 use datafusion_common::stats::Precision;
 use datafusion_common::{
-    Constraints, SchemaExt, Statistics, internal_datafusion_err, plan_err, project_schema,
+    Constraints, DFSchema, SchemaExt, Statistics, internal_datafusion_err, plan_err,
+    project_schema,
 };
 use datafusion_datasource::file::FileSource;
 use datafusion_datasource::file_groups::FileGroup;
 use datafusion_datasource::file_scan_config::{FileScanConfig, FileScanConfigBuilder};
-use datafusion_datasource::file_sink_config::FileSinkConfig;
+use datafusion_datasource::file_sink_config::{FileOutputMode, FileSinkConfig};
 #[expect(deprecated)]
 use datafusion_datasource::schema_adapter::SchemaAdapterFactory;
 use datafusion_datasource::{
-    ListingTableUrl, PartitionedFile, TableSchema, compute_all_files_statistics,
+    ListingTableUrl, PartitionedFile, TableSchemaBuilder, compute_all_files_statistics,
 };
-use datafusion_execution::cache::cache_manager::FileStatisticsCache;
-use datafusion_execution::cache::cache_unit::DefaultFileStatisticsCache;
+use datafusion_execution::cache::cache_manager::{FileStatisticsCache, TableScopedPath};
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::execution_props::ExecutionProps;
-use datafusion_expr::{Expr, TableProviderFilterPushDown, TableType};
-use datafusion_physical_expr::create_lex_ordering;
+use datafusion_expr::{
+    Expr, Partitioning as LogicalPartitioning, TableProviderFilterPushDown, TableType,
+};
+use datafusion_physical_expr::{create_lex_ordering, create_physical_partitioning};
 use datafusion_physical_expr_adapter::PhysicalExprAdapterFactory;
 use datafusion_physical_expr_common::sort_expr::LexOrdering;
 use datafusion_physical_plan::ExecutionPlan;
 use datafusion_physical_plan::empty::EmptyExec;
 use futures::{Stream, StreamExt, TryStreamExt, future, stream};
 use object_store::ObjectStore;
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -187,7 +190,7 @@ pub struct ListingTable {
     /// The SQL definition for this table, if any
     definition: Option<String>,
     /// Cache for collected file statistics
-    collected_statistics: Arc<dyn FileStatisticsCache>,
+    collected_statistics: Option<Arc<FileStatisticsCache>>,
     /// Constraints applied to this table
     constraints: Constraints,
     /// Column default expressions for columns that are not physically present in the data files
@@ -231,7 +234,7 @@ impl ListingTable {
             schema_source,
             options,
             definition: None,
-            collected_statistics: Arc::new(DefaultFileStatisticsCache::default()),
+            collected_statistics: None,
             constraints: Constraints::default(),
             column_defaults: HashMap::new(),
             expr_adapter_factory: config.expr_adapter_factory,
@@ -260,11 +263,24 @@ impl ListingTable {
     /// Setting a statistics cache on the `SessionContext` can avoid refetching statistics
     /// multiple times in the same session.
     ///
-    /// If `None`, creates a new [`DefaultFileStatisticsCache`] scoped to this query.
-    pub fn with_cache(mut self, cache: Option<Arc<dyn FileStatisticsCache>>) -> Self {
-        self.collected_statistics =
-            cache.unwrap_or_else(|| Arc::new(DefaultFileStatisticsCache::default()));
+    pub fn with_cache(mut self, cache: Option<Arc<FileStatisticsCache>>) -> Self {
+        self.collected_statistics = cache;
         self
+    }
+
+    fn statistics_cache(
+        &self,
+        has_table_reference: bool,
+    ) -> Option<&Arc<FileStatisticsCache>> {
+        let shared_cache = self.collected_statistics.as_ref()?;
+        if has_table_reference || self.schema_source == SchemaSource::Inferred {
+            Some(shared_cache)
+        } else {
+            // Anonymous specified-schema reads can use the same file path with
+            // different logical schemas. File statistics are schema-dependent,
+            // so avoid reusing stats computed for a different read schema.
+            None
+        }
     }
 
     /// Specify the SQL definition for this table, if any
@@ -324,29 +340,131 @@ impl ListingTable {
 
     /// Creates a file source for this table
     fn create_file_source(&self) -> Arc<dyn FileSource> {
-        let table_schema = TableSchema::new(
-            Arc::clone(&self.file_schema),
-            self.options
-                .table_partition_cols
-                .iter()
-                .map(|(col, field)| Arc::new(Field::new(col, field.clone(), false)))
-                .collect(),
-        );
+        let table_schema = TableSchemaBuilder::from(&self.file_schema)
+            .with_table_partition_cols(
+                self.options
+                    .table_partition_cols
+                    .iter()
+                    .map(|(col, field)| Arc::new(Field::new(col, field.clone(), false)))
+                    .collect::<Vec<_>>(),
+            )
+            .build();
 
         self.options.format.file_source(table_schema)
     }
 
-    /// If file_sort_order is specified, creates the appropriate physical expressions
+    /// Creates output ordering from user-specified file_sort_order or derives
+    /// from file orderings when user doesn't specify.
+    ///
+    /// If user specified `file_sort_order`, that takes precedence.
+    /// Otherwise, attempts to derive common ordering from file orderings in
+    /// the provided file groups.
     pub fn try_create_output_ordering(
         &self,
         execution_props: &ExecutionProps,
+        file_groups: &[FileGroup],
     ) -> datafusion_common::Result<Vec<LexOrdering>> {
-        create_lex_ordering(
-            &self.table_schema,
-            &self.options.file_sort_order,
-            execution_props,
-        )
+        // If user specified sort order, use that
+        if !self.options.file_sort_order.is_empty() {
+            return create_lex_ordering(
+                &self.table_schema,
+                &self.options.file_sort_order,
+                execution_props,
+            );
+        }
+        if let Some(ordering) = derive_common_ordering_from_files(file_groups) {
+            return Ok(vec![ordering]);
+        }
+        Ok(vec![])
     }
+}
+
+/// Derives a common ordering from file orderings across all file groups.
+///
+/// Returns the common ordering if all files have compatible orderings,
+/// otherwise returns None.
+///
+/// The function finds the longest common prefix among all file orderings.
+/// For example, if files have orderings `[a, b, c]` and `[a, b]`, the common
+/// ordering is `[a, b]`.
+fn derive_common_ordering_from_files(file_groups: &[FileGroup]) -> Option<LexOrdering> {
+    enum CurrentOrderingState {
+        /// Initial state before processing any files
+        FirstFile,
+        /// Some common ordering found so far
+        SomeOrdering(LexOrdering),
+        /// No files have ordering
+        NoOrdering,
+    }
+    let mut state = CurrentOrderingState::FirstFile;
+
+    // Collect file orderings and track counts
+    for group in file_groups {
+        for file in group.iter() {
+            state = match (&state, &file.ordering) {
+                // If this is the first file with ordering, set it as current
+                (CurrentOrderingState::FirstFile, Some(ordering)) => {
+                    CurrentOrderingState::SomeOrdering(ordering.clone())
+                }
+                (CurrentOrderingState::FirstFile, None) => {
+                    CurrentOrderingState::NoOrdering
+                }
+                // If we have an existing ordering, find common prefix with new ordering
+                (CurrentOrderingState::SomeOrdering(current), Some(ordering)) => {
+                    // Find common prefix between current and new ordering
+                    let prefix_len = current
+                        .as_ref()
+                        .iter()
+                        .zip(ordering.as_ref().iter())
+                        .take_while(|(a, b)| a == b)
+                        .count();
+                    if prefix_len == 0 {
+                        log::trace!(
+                            "Cannot derive common ordering: no common prefix between orderings {current:?} and {ordering:?}"
+                        );
+                        return None;
+                    } else {
+                        let ordering =
+                            LexOrdering::new(current.as_ref()[..prefix_len].to_vec())
+                                .expect("prefix_len > 0, so ordering must be valid");
+                        CurrentOrderingState::SomeOrdering(ordering)
+                    }
+                }
+                // If one file has ordering and another doesn't, no common ordering
+                // Return None and log a trace message explaining why
+                (CurrentOrderingState::SomeOrdering(ordering), None)
+                | (CurrentOrderingState::NoOrdering, Some(ordering)) => {
+                    log::trace!(
+                        "Cannot derive common ordering: some files have ordering {ordering:?}, others don't"
+                    );
+                    return None;
+                }
+                // Both have no ordering, remain in NoOrdering state
+                (CurrentOrderingState::NoOrdering, None) => {
+                    CurrentOrderingState::NoOrdering
+                }
+            };
+        }
+    }
+
+    match state {
+        CurrentOrderingState::SomeOrdering(ordering) => Some(ordering),
+        _ => None,
+    }
+}
+
+fn filter_file_group_by_partition_filters(
+    file_group: FileGroup,
+    filters: &[Expr],
+    df_schema: &DFSchema,
+) -> datafusion_common::Result<FileGroup> {
+    let files = file_group
+        .into_inner()
+        .into_iter()
+        .map(|file| filter_partitioned_file(file, filters, df_schema))
+        .filter_map(Result::transpose)
+        .collect::<datafusion_common::Result<Vec<_>>>()?;
+    Ok(FileGroup::new(files))
 }
 
 // Expressions can be used for partition pruning if they can be evaluated using
@@ -361,10 +479,6 @@ fn can_be_evaluated_for_partition_pruning(
 
 #[async_trait]
 impl TableProvider for ListingTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         Arc::clone(&self.table_schema)
     }
@@ -420,9 +534,19 @@ impl TableProvider for ListingTable {
                 can_be_evaluated_for_partition_pruning(&table_partition_col_names, filter)
             });
 
-        // We should not limit the number of partitioned files to scan if there are filters and limit
-        // at the same time. This is because the limit should be applied after the filters are applied.
-        let statistic_file_limit = if filters.is_empty() { limit } else { None };
+        let declared_output_partitioning = self.options.output_partitioning.as_ref();
+
+        // We should not limit files before assigning declared output partitions
+        // or before applying non-partition filters.
+        let statistic_file_limit =
+            if filters.is_empty() && declared_output_partitioning.is_none() {
+                limit
+            } else {
+                None
+            };
+        let file_group_count = declared_output_partitioning
+            .and_then(LogicalPartitioning::partition_count)
+            .unwrap_or_else(|| state.config().target_partitions());
 
         let ListFilesResult {
             file_groups: mut partitioned_file_lists,
@@ -438,18 +562,23 @@ impl TableProvider for ListingTable {
             return Ok(ScanResult::new(Arc::new(EmptyExec::new(projected_schema))));
         }
 
-        let output_ordering = self.try_create_output_ordering(state.execution_props())?;
-        match state
-            .config_options()
-            .execution
-            .split_file_groups_by_statistics
+        let output_ordering = self.try_create_output_ordering(
+            state.execution_props(),
+            &partitioned_file_lists,
+        )?;
+        let split_file_groups_by_statistics = declared_output_partitioning.is_none()
+            && state
+                .config_options()
+                .execution
+                .split_file_groups_by_statistics;
+        match split_file_groups_by_statistics
             .then(|| {
                 output_ordering.first().map(|output_ordering| {
                     FileScanConfig::split_groups_by_statistics_with_target_partitions(
                         &self.table_schema,
                         &partitioned_file_lists,
                         output_ordering,
-                        self.options.target_partitions,
+                        file_group_count,
                     )
                 })
             })
@@ -457,7 +586,7 @@ impl TableProvider for ListingTable {
         {
             Some(Err(e)) => log::debug!("failed to split file groups by statistics: {e}"),
             Some(Ok(new_groups)) => {
-                if new_groups.len() <= self.options.target_partitions {
+                if new_groups.len() <= file_group_count {
                     partitioned_file_lists = new_groups;
                 } else {
                     log::debug!(
@@ -466,6 +595,41 @@ impl TableProvider for ListingTable {
                 }
             }
             None => {} // no ordering required
+        };
+
+        let output_partitioning = if let Some(output_partitioning) =
+            declared_output_partitioning
+        {
+            let output_partitioning = match output_partitioning {
+                LogicalPartitioning::RoundRobinBatch(_) => {
+                    return datafusion_common::not_impl_err!(
+                        "RoundRobinBatch output partitioning is not supported for ListingTable"
+                    );
+                }
+                LogicalPartitioning::DistributeBy(_) => {
+                    return datafusion_common::not_impl_err!(
+                        "DistributeBy output partitioning is not supported for ListingTable"
+                    );
+                }
+                LogicalPartitioning::Hash(_, _) | LogicalPartitioning::Range(_) => {
+                    let df_schema = DFSchema::try_from(Arc::clone(&self.table_schema))?;
+                    create_physical_partitioning(
+                        output_partitioning,
+                        &df_schema,
+                        state.execution_props(),
+                    )?
+                }
+            };
+            let partition_count = output_partitioning.partition_count();
+            if partitioned_file_lists.len() != partition_count {
+                return plan_err!(
+                    "ListingTable output_partitioning has {partition_count} partitions, but the scan has {} file groups",
+                    partitioned_file_lists.len()
+                );
+            }
+            Some(output_partitioning)
+        } else {
+            None
         };
 
         let Some(object_store_url) =
@@ -477,24 +641,23 @@ impl TableProvider for ListingTable {
         };
 
         let file_source = self.create_file_source();
+        let scan_config = FileScanConfigBuilder::new(object_store_url, file_source)
+            .with_file_groups(partitioned_file_lists)
+            .with_constraints(self.constraints.clone())
+            .with_statistics(statistics)
+            .with_projection_indices(projection)?
+            .with_limit(limit)
+            .with_output_ordering(output_ordering)
+            .with_output_partitioning(output_partitioning)
+            .with_expr_adapter(self.expr_adapter_factory.clone())
+            .with_partitioned_by_file_group(partitioned_by_file_group)
+            .build();
 
         // create the execution plan
         let plan = self
             .options
             .format
-            .create_physical_plan(
-                state,
-                FileScanConfigBuilder::new(object_store_url, file_source)
-                    .with_file_groups(partitioned_file_lists)
-                    .with_constraints(self.constraints.clone())
-                    .with_statistics(statistics)
-                    .with_projection_indices(projection)?
-                    .with_limit(limit)
-                    .with_output_ordering(output_ordering)
-                    .with_expr_adapter(self.expr_adapter_factory.clone())
-                    .with_partitioned_by_file_group(partitioned_by_file_group)
-                    .build(),
-            )
+            .create_physical_plan(state, scan_config)
             .await?;
 
         Ok(ScanResult::new(plan))
@@ -565,7 +728,11 @@ impl TableProvider for ListingTable {
 
         // Invalidate cache entries for this table if they exist
         if let Some(lfc) = state.runtime_env().cache_manager.get_list_files_cache() {
-            let _ = lfc.remove(table_path.prefix());
+            let key = TableScopedPath {
+                table: table_path.get_table_ref().clone(),
+                path: table_path.prefix().clone(),
+            };
+            let _ = lfc.remove(&key);
         }
 
         // Sink related option, apart from format
@@ -579,9 +746,11 @@ impl TableProvider for ListingTable {
             insert_op,
             keep_partition_by_columns,
             file_extension: self.options().format.get_ext(),
+            file_output_mode: FileOutputMode::Automatic,
         };
 
-        let orderings = self.try_create_output_ordering(state.execution_props())?;
+        // For writes, we only use user-specified ordering (no file groups to derive from)
+        let orderings = self.try_create_output_ordering(state.execution_props(), &[])?;
         // It is sufficient to pass only one of the equivalent orderings:
         let order_requirements = orderings.into_iter().next().map(Into::into);
 
@@ -600,12 +769,82 @@ impl ListingTable {
     /// Get the list of files for a scan as well as the file level statistics.
     /// The list is grouped to let the execution plan know how the files should
     /// be distributed to different threads / executors.
+    ///
+    /// If [`ListingOptions::output_partitioning`] is set, returns one file
+    /// group per declared partition, including empty trailing groups.
     pub async fn list_files_for_scan<'a>(
         &'a self,
         ctx: &'a dyn Session,
         filters: &'a [Expr],
         limit: Option<usize>,
     ) -> datafusion_common::Result<ListFilesResult> {
+        if let Some(output_partitioning) = self.options.output_partitioning.as_ref() {
+            self.list_files_for_declared_output_partitioning(
+                ctx,
+                output_partitioning,
+                filters,
+            )
+            .await
+        } else {
+            self.list_files_for_regular_scan(ctx, filters, limit).await
+        }
+    }
+
+    async fn collect_files_for_scan<'a>(
+        &'a self,
+        ctx: &'a dyn Session,
+        store: &'a Arc<dyn ObjectStore>,
+        listing_time_filters: &'a [Expr],
+        file_limit: Option<usize>,
+    ) -> datafusion_common::Result<(FileGroup, bool)> {
+        // list files (with partitions)
+        let file_list = future::try_join_all(self.table_paths.iter().map(|table_path| {
+            pruned_partition_list(
+                ctx,
+                store.as_ref(),
+                table_path,
+                listing_time_filters,
+                &self.options.file_extension,
+                &self.options.table_partition_cols,
+            )
+        }))
+        .await?;
+        let meta_fetch_concurrency =
+            ctx.config_options().execution.meta_fetch_concurrency;
+        let file_list = stream::iter(file_list).flatten_unordered(meta_fetch_concurrency);
+        // collect the statistics and ordering if required by the config
+        let files = file_list
+            .map(|part_file| async {
+                let part_file = part_file?;
+                let (statistics, ordering) = if ctx.config().collect_statistics() {
+                    self.do_collect_statistics_and_ordering(ctx, store, &part_file)
+                        .await?
+                } else {
+                    (Arc::new(Statistics::new_unknown(&self.file_schema)), None)
+                };
+                Ok(part_file
+                    .with_statistics(statistics)
+                    .with_ordering(ordering))
+            })
+            .boxed()
+            .buffer_unordered(ctx.config_options().execution.meta_fetch_concurrency);
+
+        get_files_with_limit(files, file_limit, ctx.config().collect_statistics()).await
+    }
+
+    async fn list_files_for_regular_scan<'a>(
+        &'a self,
+        ctx: &'a dyn Session,
+        filters: &'a [Expr],
+        limit: Option<usize>,
+    ) -> datafusion_common::Result<ListFilesResult> {
+        let file_group_count = ctx.config().target_partitions();
+        if file_group_count == 0 {
+            return plan_err!(
+                "ListingTable requires target_partitions to be greater than zero"
+            );
+        }
+
         let store = if let Some(url) = self.table_paths.first() {
             ctx.runtime_env().object_store(url)?
         } else {
@@ -615,37 +854,9 @@ impl ListingTable {
                 grouped_by_partition: false,
             });
         };
-        // list files (with partitions)
-        let file_list = future::try_join_all(self.table_paths.iter().map(|table_path| {
-            pruned_partition_list(
-                ctx,
-                store.as_ref(),
-                table_path,
-                filters,
-                &self.options.file_extension,
-                &self.options.table_partition_cols,
-            )
-        }))
-        .await?;
-        let meta_fetch_concurrency =
-            ctx.config_options().execution.meta_fetch_concurrency;
-        let file_list = stream::iter(file_list).flatten_unordered(meta_fetch_concurrency);
-        // collect the statistics if required by the config
-        let files = file_list
-            .map(|part_file| async {
-                let part_file = part_file?;
-                let statistics = if self.options.collect_stat {
-                    self.do_collect_statistics(ctx, &store, &part_file).await?
-                } else {
-                    Arc::new(Statistics::new_unknown(&self.file_schema))
-                };
-                Ok(part_file.with_statistics(statistics))
-            })
-            .boxed()
-            .buffer_unordered(ctx.config_options().execution.meta_fetch_concurrency);
-
-        let (file_group, inexact_stats) =
-            get_files_with_limit(files, limit, self.options.collect_stat).await?;
+        let (file_group, inexact_stats) = self
+            .collect_files_for_scan(ctx, &store, filters, limit)
+            .await?;
 
         // Threshold: 0 = disabled, N > 0 = enabled when distinct_keys >= N
         //
@@ -654,32 +865,106 @@ impl ListingTable {
         // hash repartitioning for aggregates and joins on partition columns.
         let threshold = ctx.config_options().optimizer.preserve_file_partitions;
 
-        let (file_groups, grouped_by_partition) = if threshold > 0
-            && !self.options.table_partition_cols.is_empty()
-        {
-            let grouped =
-                file_group.group_by_partition_values(self.options.target_partitions);
-            if grouped.len() >= threshold {
-                (grouped, true)
+        let (file_groups, grouped_by_partition) =
+            if threshold > 0 && !self.options.table_partition_cols.is_empty() {
+                let grouped = file_group.group_by_partition_values(file_group_count);
+                if grouped.len() >= threshold {
+                    (grouped, true)
+                } else {
+                    let all_files: Vec<_> =
+                        grouped.into_iter().flat_map(|g| g.into_inner()).collect();
+                    (
+                        FileGroup::new(all_files).split_files(file_group_count),
+                        false,
+                    )
+                }
             } else {
-                let all_files: Vec<_> =
-                    grouped.into_iter().flat_map(|g| g.into_inner()).collect();
-                (
-                    FileGroup::new(all_files).split_files(self.options.target_partitions),
-                    false,
-                )
-            }
-        } else {
-            (
-                file_group.split_files(self.options.target_partitions),
-                false,
-            )
-        };
+                (file_group.split_files(file_group_count), false)
+            };
 
+        self.list_files_result_from_groups(
+            ctx,
+            file_groups,
+            inexact_stats,
+            grouped_by_partition,
+        )
+    }
+
+    async fn list_files_for_declared_output_partitioning<'a>(
+        &'a self,
+        ctx: &'a dyn Session,
+        output_partitioning: &LogicalPartitioning,
+        filters: &'a [Expr],
+    ) -> datafusion_common::Result<ListFilesResult> {
+        let Some(file_group_count) = output_partitioning.partition_count() else {
+            return datafusion_common::not_impl_err!(
+                "DistributeBy output partitioning is not supported for ListingTable"
+            );
+        };
+        if file_group_count == 0 {
+            return plan_err!(
+                "ListingTable output_partitioning requires at least one partition"
+            );
+        }
+
+        let store = if let Some(url) = self.table_paths.first() {
+            ctx.runtime_env().object_store(url)?
+        } else {
+            return Ok(ListFilesResult {
+                file_groups: vec![],
+                statistics: Statistics::new_unknown(&self.file_schema),
+                grouped_by_partition: false,
+            });
+        };
+        let (file_group, inexact_stats) =
+            self.collect_files_for_scan(ctx, &store, &[], None).await?;
+        let mut file_groups = file_group.split_files(file_group_count);
+        if !file_groups.is_empty() {
+            file_groups.resize_with(file_group_count, || FileGroup::new(vec![]));
+        }
+        let file_groups =
+            self.filter_declared_file_groups_by_partition_filters(file_groups, filters)?;
+
+        self.list_files_result_from_groups(ctx, file_groups, inexact_stats, false)
+    }
+
+    fn filter_declared_file_groups_by_partition_filters(
+        &self,
+        file_groups: Vec<FileGroup>,
+        filters: &[Expr],
+    ) -> datafusion_common::Result<Vec<FileGroup>> {
+        if filters.is_empty() {
+            return Ok(file_groups);
+        }
+
+        let df_schema = DFSchema::from_unqualified_fields(
+            self.options
+                .table_partition_cols
+                .iter()
+                .map(|(name, data_type)| Field::new(name, data_type.clone(), true))
+                .collect(),
+            Default::default(),
+        )?;
+
+        file_groups
+            .into_iter()
+            .map(|file_group| {
+                filter_file_group_by_partition_filters(file_group, filters, &df_schema)
+            })
+            .collect::<datafusion_common::Result<Vec<_>>>()
+    }
+
+    fn list_files_result_from_groups(
+        &self,
+        ctx: &dyn Session,
+        file_groups: Vec<FileGroup>,
+        inexact_stats: bool,
+        grouped_by_partition: bool,
+    ) -> datafusion_common::Result<ListFilesResult> {
         let (file_groups, stats) = compute_all_files_statistics(
             file_groups,
             self.schema(),
-            self.options.collect_stat,
+            ctx.config().collect_statistics(),
             inexact_stats,
         )?;
 
@@ -694,42 +979,56 @@ impl ListingTable {
         })
     }
 
-    /// Collects statistics for a given partitioned file.
+    /// Collects statistics and ordering for a given partitioned file.
     ///
-    /// This method first checks if the statistics for the given file are already cached.
-    /// If they are, it returns the cached statistics.
-    /// If they are not, it infers the statistics from the file and stores them in the cache.
-    async fn do_collect_statistics(
+    /// This method checks if statistics are cached. If cached, it returns the
+    /// cached statistics and infers ordering separately. If not cached, it infers
+    /// both statistics and ordering in a single metadata read for efficiency.
+    async fn do_collect_statistics_and_ordering(
         &self,
         ctx: &dyn Session,
         store: &Arc<dyn ObjectStore>,
         part_file: &PartitionedFile,
-    ) -> datafusion_common::Result<Arc<Statistics>> {
-        match self
-            .collected_statistics
-            .get_with_extra(&part_file.object_meta.location, &part_file.object_meta)
+    ) -> datafusion_common::Result<(Arc<Statistics>, Option<LexOrdering>)> {
+        use datafusion_execution::cache::cache_manager::CachedFileMetadata;
+
+        let path = TableScopedPath {
+            table: part_file.table_reference.clone(),
+            path: part_file.object_meta.location.clone(),
+        };
+        let meta = &part_file.object_meta;
+
+        // Check cache first - if we have valid cached statistics and ordering
+        if let Some(cache) = self.statistics_cache(path.table.is_some())
+            && let Some(cached) = cache.get(&path)
+            && cached.is_valid_for(meta)
         {
-            Some(statistics) => Ok(statistics),
-            None => {
-                let statistics = self
-                    .options
-                    .format
-                    .infer_stats(
-                        ctx,
-                        store,
-                        Arc::clone(&self.file_schema),
-                        &part_file.object_meta,
-                    )
-                    .await?;
-                let statistics = Arc::new(statistics);
-                self.collected_statistics.put_with_extra(
-                    &part_file.object_meta.location,
-                    Arc::clone(&statistics),
-                    &part_file.object_meta,
-                );
-                Ok(statistics)
-            }
+            // Return cached statistics and ordering
+            return Ok((Arc::clone(&cached.statistics), cached.ordering.clone()));
         }
+
+        // Cache miss or invalid: fetch both statistics and ordering in a single metadata read
+        let file_meta = self
+            .options
+            .format
+            .infer_stats_and_ordering(ctx, store, Arc::clone(&self.file_schema), meta)
+            .await?;
+
+        let statistics = Arc::new(file_meta.statistics);
+
+        // Store in cache
+        if let Some(cache) = self.statistics_cache(path.table.is_some()) {
+            cache.put(
+                &path,
+                CachedFileMetadata::new(
+                    meta.clone(),
+                    Arc::clone(&statistics),
+                    file_meta.ordering.clone(),
+                ),
+            );
+        }
+
+        Ok((statistics, file_meta.ordering))
     }
 }
 
@@ -804,4 +1103,146 @@ async fn get_files_with_limit(
     // files in a different order.
     let inexact_stats = all_files.next().await.is_some();
     Ok((file_group, inexact_stats))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::compute::SortOptions;
+    use datafusion_physical_expr::expressions::Column;
+    use datafusion_physical_expr_common::sort_expr::PhysicalSortExpr;
+
+    /// Helper to create a PhysicalSortExpr
+    fn sort_expr(
+        name: &str,
+        idx: usize,
+        descending: bool,
+        nulls_first: bool,
+    ) -> PhysicalSortExpr {
+        PhysicalSortExpr::new(
+            Arc::new(Column::new(name, idx)),
+            SortOptions {
+                descending,
+                nulls_first,
+            },
+        )
+    }
+
+    /// Helper to create a LexOrdering (unwraps the Option)
+    fn lex_ordering(exprs: Vec<PhysicalSortExpr>) -> LexOrdering {
+        LexOrdering::new(exprs).expect("expected non-empty ordering")
+    }
+
+    /// Helper to create a PartitionedFile with optional ordering
+    fn create_file(name: &str, ordering: Option<LexOrdering>) -> PartitionedFile {
+        PartitionedFile::new(name.to_string(), 1024).with_ordering(ordering)
+    }
+
+    #[test]
+    fn test_derive_common_ordering_all_files_same_ordering() {
+        // All files have the same ordering -> returns that ordering
+        let ordering = lex_ordering(vec![
+            sort_expr("a", 0, false, true),
+            sort_expr("b", 1, true, false),
+        ]);
+
+        let file_groups = vec![
+            FileGroup::new(vec![
+                create_file("f1.parquet", Some(ordering.clone())),
+                create_file("f2.parquet", Some(ordering.clone())),
+            ]),
+            FileGroup::new(vec![create_file("f3.parquet", Some(ordering.clone()))]),
+        ];
+
+        let result = derive_common_ordering_from_files(&file_groups);
+        assert_eq!(result, Some(ordering));
+    }
+
+    #[test]
+    fn test_derive_common_ordering_common_prefix() {
+        // Files have different orderings but share a common prefix
+        let ordering_abc = lex_ordering(vec![
+            sort_expr("a", 0, false, true),
+            sort_expr("b", 1, false, true),
+            sort_expr("c", 2, false, true),
+        ]);
+        let ordering_ab = lex_ordering(vec![
+            sort_expr("a", 0, false, true),
+            sort_expr("b", 1, false, true),
+        ]);
+
+        let file_groups = vec![FileGroup::new(vec![
+            create_file("f1.parquet", Some(ordering_abc)),
+            create_file("f2.parquet", Some(ordering_ab.clone())),
+        ])];
+
+        let result = derive_common_ordering_from_files(&file_groups);
+        assert_eq!(result, Some(ordering_ab));
+    }
+
+    #[test]
+    fn test_derive_common_ordering_no_common_prefix() {
+        // Files have completely different orderings -> returns None
+        let ordering_a = lex_ordering(vec![sort_expr("a", 0, false, true)]);
+        let ordering_b = lex_ordering(vec![sort_expr("b", 1, false, true)]);
+
+        let file_groups = vec![FileGroup::new(vec![
+            create_file("f1.parquet", Some(ordering_a)),
+            create_file("f2.parquet", Some(ordering_b)),
+        ])];
+
+        let result = derive_common_ordering_from_files(&file_groups);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_derive_common_ordering_mixed_with_none() {
+        // Some files have ordering, some don't -> returns None
+        let ordering = lex_ordering(vec![sort_expr("a", 0, false, true)]);
+
+        let file_groups = vec![FileGroup::new(vec![
+            create_file("f1.parquet", Some(ordering)),
+            create_file("f2.parquet", None),
+        ])];
+
+        let result = derive_common_ordering_from_files(&file_groups);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_derive_common_ordering_all_none() {
+        // No files have ordering -> returns None
+        let file_groups = vec![FileGroup::new(vec![
+            create_file("f1.parquet", None),
+            create_file("f2.parquet", None),
+        ])];
+
+        let result = derive_common_ordering_from_files(&file_groups);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_derive_common_ordering_empty_groups() {
+        // Empty file groups -> returns None
+        let file_groups: Vec<FileGroup> = vec![];
+        let result = derive_common_ordering_from_files(&file_groups);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_derive_common_ordering_single_file() {
+        // Single file with ordering -> returns that ordering
+        let ordering = lex_ordering(vec![
+            sort_expr("a", 0, false, true),
+            sort_expr("b", 1, true, false),
+        ]);
+
+        let file_groups = vec![FileGroup::new(vec![create_file(
+            "f1.parquet",
+            Some(ordering.clone()),
+        )])];
+
+        let result = derive_common_ordering_from_files(&file_groups);
+        assert_eq!(result, Some(ordering));
+    }
 }

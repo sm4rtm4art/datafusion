@@ -24,8 +24,6 @@
 // https://github.com/apache/datafusion/issues/11143
 #![deny(clippy::clone_on_ref_ptr)]
 #![cfg_attr(test, allow(clippy::needless_pass_by_value))]
-// https://github.com/apache/datafusion/issues/18881
-#![deny(clippy::allow_attributes)]
 
 //! Function packages for [DataFusion].
 //!
@@ -143,6 +141,7 @@ make_stub_package!(unicode, "unicode_expressions");
 #[cfg(any(feature = "datetime_expressions", feature = "unicode_expressions"))]
 pub mod planner;
 
+pub mod binaries;
 pub mod strings;
 
 pub mod utils;
@@ -195,7 +194,7 @@ pub fn register_all(registry: &mut dyn FunctionRegistry) -> Result<()> {
 }
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     // Enable RUST_LOG logging configuration for test
     let _ = env_logger::try_init();

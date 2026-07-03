@@ -43,6 +43,7 @@ use datafusion_functions_nested::make_array::make_array_udf;
 use datafusion_functions_window::expr_fn::{first_value, lead, row_number};
 use insta::assert_snapshot;
 use object_store::local::LocalFileSystem;
+use rstest::rstest;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -56,9 +57,7 @@ use datafusion::error::Result;
 use datafusion::execution::context::SessionContext;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{ColumnarValue, Volatility};
-use datafusion::prelude::{
-    CsvReadOptions, JoinType, NdJsonReadOptions, ParquetReadOptions,
-};
+use datafusion::prelude::{CsvReadOptions, JoinType, ParquetReadOptions};
 use datafusion::test_util::{
     parquet_test_data, populate_csv_partitions, register_aggregate_csv, test_table,
     test_table_with_cache_factory, test_table_with_name,
@@ -76,10 +75,11 @@ use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_expr::expr::{GroupingSet, NullTreatment, Sort, WindowFunction};
 use datafusion_expr::var_provider::{VarProvider, VarType};
 use datafusion_expr::{
-    Expr, ExprFunctionExt, ExprSchemable, LogicalPlan, LogicalPlanBuilder,
-    ScalarFunctionImplementation, SortExpr, TableType, WindowFrame, WindowFrameBound,
-    WindowFrameUnits, WindowFunctionDefinition, cast, col, create_udf, exists,
-    in_subquery, lit, out_ref_col, placeholder, scalar_subquery, when, wildcard,
+    CreateMemoryTable, CreateView, DdlStatement, Expr, ExprFunctionExt, ExprSchemable,
+    LogicalPlan, LogicalPlanBuilder, ScalarFunctionImplementation, SortExpr, TableType,
+    WindowFrame, WindowFrameBound, WindowFrameUnits, WindowFunctionDefinition, cast, col,
+    create_udf, exists, in_subquery, lit, out_ref_col, placeholder, scalar_subquery,
+    when, wildcard,
 };
 use datafusion_physical_expr::Partitioning;
 use datafusion_physical_expr::aggregate::AggregateExprBuilder;
@@ -93,6 +93,7 @@ use datafusion_physical_plan::empty::EmptyExec;
 use datafusion_physical_plan::{ExecutionPlan, ExecutionPlanProperties, displayable};
 
 use datafusion::error::Result as DataFusionResult;
+use datafusion::execution::options::JsonReadOptions;
 use datafusion_functions_window::expr_fn::lag;
 
 // Get string representation of the plan
@@ -534,7 +535,8 @@ async fn drop_columns_with_nonexistent_columns() -> Result<()> {
 async fn drop_columns_with_empty_array() -> Result<()> {
     // build plan using Table API
     let t = test_table().await?;
-    let t2 = t.drop_columns(&[])?;
+    let drop_columns = vec![] as Vec<&str>;
+    let t2 = t.drop_columns(&drop_columns)?;
     let plan = t2.logical_plan().clone();
 
     // build query using SQL
@@ -545,6 +547,107 @@ async fn drop_columns_with_empty_array() -> Result<()> {
 
     // the two plans should be identical
     assert_same_plan(&plan, &sql_plan);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn drop_columns_qualified() -> Result<()> {
+    // build plan using Table API
+    let mut t = test_table().await?;
+    t = t.select_columns(&["c1", "c2", "c11"])?;
+    let mut t2 = test_table_with_name("another_table").await?;
+    t2 = t2.select_columns(&["c1", "c2", "c11"])?;
+    let mut t3 = t.join_on(
+        t2,
+        JoinType::Inner,
+        [col("aggregate_test_100.c1").eq(col("another_table.c1"))],
+    )?;
+    t3 = t3.drop_columns(&["another_table.c2", "another_table.c11"])?;
+
+    let plan = t3.logical_plan().clone();
+
+    let sql = "SELECT aggregate_test_100.c1, aggregate_test_100.c2, aggregate_test_100.c11, another_table.c1 FROM (SELECT c1, c2, c11 FROM aggregate_test_100) INNER JOIN (SELECT c1, c2, c11 FROM another_table) ON aggregate_test_100.c1 = another_table.c1";
+    let ctx = SessionContext::new();
+    register_aggregate_csv(&ctx, "aggregate_test_100").await?;
+    register_aggregate_csv(&ctx, "another_table").await?;
+    let sql_plan = ctx.sql(sql).await?.into_unoptimized_plan();
+
+    // the two plans should be identical
+    assert_same_plan(&plan, &sql_plan);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn drop_columns_qualified_find_qualified() -> Result<()> {
+    // build plan using Table API
+    let mut t = test_table().await?;
+    t = t.select_columns(&["c1", "c2", "c11"])?;
+    let mut t2 = test_table_with_name("another_table").await?;
+    t2 = t2.select_columns(&["c1", "c2", "c11"])?;
+    let mut t3 = t.join_on(
+        t2.clone(),
+        JoinType::Inner,
+        [col("aggregate_test_100.c1").eq(col("another_table.c1"))],
+    )?;
+    t3 = t3.drop_columns(&t2.find_qualified_columns(&["c2", "c11"])?)?;
+
+    let plan = t3.logical_plan().clone();
+
+    let sql = "SELECT aggregate_test_100.c1, aggregate_test_100.c2, aggregate_test_100.c11, another_table.c1 FROM (SELECT c1, c2, c11 FROM aggregate_test_100) INNER JOIN (SELECT c1, c2, c11 FROM another_table) ON aggregate_test_100.c1 = another_table.c1";
+    let ctx = SessionContext::new();
+    register_aggregate_csv(&ctx, "aggregate_test_100").await?;
+    register_aggregate_csv(&ctx, "another_table").await?;
+    let sql_plan = ctx.sql(sql).await?.into_unoptimized_plan();
+
+    // the two plans should be identical
+    assert_same_plan(&plan, &sql_plan);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_find_qualified_names() -> Result<()> {
+    let t = test_table().await?;
+    let column_names = ["c1", "c2", "c3"];
+    let columns = t.find_qualified_columns(&column_names)?;
+
+    // Expected results for each column
+    let binding = TableReference::bare("aggregate_test_100");
+    let expected = [
+        (Some(&binding), "c1"),
+        (Some(&binding), "c2"),
+        (Some(&binding), "c3"),
+    ];
+
+    // Verify we got the expected number of results
+    assert_eq!(
+        columns.len(),
+        expected.len(),
+        "Expected {} columns, got {}",
+        expected.len(),
+        columns.len()
+    );
+
+    // Iterate over the results and check each one individually
+    for (i, (actual, expected)) in columns.iter().zip(expected.iter()).enumerate() {
+        let (actual_table_ref, actual_field_ref) = actual;
+        let (expected_table_ref, expected_field_name) = expected;
+
+        // Check table reference
+        assert_eq!(
+            actual_table_ref, expected_table_ref,
+            "Column {i}: expected table reference {expected_table_ref:?}, got {actual_table_ref:?}"
+        );
+
+        // Check field name
+        assert_eq!(
+            actual_field_ref.name(),
+            *expected_field_name,
+            "Column {i}: expected field name '{expected_field_name}', got '{actual_field_ref}'"
+        );
+    }
 
     Ok(())
 }
@@ -594,7 +697,7 @@ async fn drop_with_periods() -> Result<()> {
     let ctx = SessionContext::new();
     ctx.register_batch("t", batch)?;
 
-    let df = ctx.table("t").await?.drop_columns(&["f.c1"])?;
+    let df = ctx.table("t").await?.drop_columns(&["\"f.c1\""])?;
 
     let df_results = df.collect().await?;
 
@@ -737,7 +840,7 @@ async fn test_aggregate_with_pk() -> Result<()> {
     let aggr_expr = vec![];
     let df = df.aggregate(group_expr, aggr_expr)?;
 
-    // Since id and name are functionally dependant, we can use name among
+    // Since id and name are functionally dependent, we can use name among
     // expression even if it is not part of the group by expression and can
     // select "name" column even though it wasn't explicitly grouped
     let df = df.select(vec![col("id"), col("name")])?;
@@ -792,7 +895,7 @@ async fn test_aggregate_with_pk2() -> Result<()> {
     "
     );
 
-    // Since id and name are functionally dependant, we can use name among expression
+    // Since id and name are functionally dependent, we can use name among expression
     // even if it is not part of the group by expression.
     let df_results = df.collect().await?;
 
@@ -840,7 +943,7 @@ async fn test_aggregate_with_pk3() -> Result<()> {
     "
     );
 
-    // Since id and name are functionally dependant, we can use name among expression
+    // Since id and name are functionally dependent, we can use name among expression
     // even if it is not part of the group by expression.
     let df_results = df.collect().await?;
 
@@ -1038,7 +1141,13 @@ async fn test_aggregate_name_collision() -> Result<()> {
         // The select expr has the same display_name as the group_expr,
         // but since they are different expressions, it should fail.
         .expect_err("Expected error");
-    assert_snapshot!(df.strip_backtrace(), @r#"Schema error: No field named aggregate_test_100.c2. Valid fields are "aggregate_test_100.c2 + aggregate_test_100.c3"."#);
+    assert_snapshot!(
+        df.strip_backtrace(),
+        @r#"
+Schema error: No field named aggregate_test_100.c2.
+Valid fields are "aggregate_test_100.c2 + aggregate_test_100.c3".
+"#
+    );
 
     Ok(())
 }
@@ -1101,27 +1210,27 @@ async fn window_using_aggregates() -> Result<()> {
     +-------------+----------+-----------------+---------------+--------+-----+------+----+------+
     | first_value | last_val | approx_distinct | approx_median | median | max | min  | c2 | c3   |
     +-------------+----------+-----------------+---------------+--------+-----+------+----+------+
-    |             |          |                 |               |        |     |      | 1  | -85  |
-    | -85         | -101     | 14              | -12           | -12    | 83  | -101 | 4  | -54  |
-    | -85         | -101     | 17              | -25           | -25    | 83  | -101 | 5  | -31  |
-    | -85         | -12      | 10              | -32           | -34    | 83  | -85  | 3  | 13   |
-    | -85         | -25      | 3               | -56           | -56    | -25 | -85  | 1  | -5   |
-    | -85         | -31      | 18              | -29           | -28    | 83  | -101 | 5  | 36   |
-    | -85         | -38      | 16              | -25           | -25    | 83  | -101 | 4  | 65   |
-    | -85         | -43      | 7               | -43           | -43    | 83  | -85  | 2  | 45   |
-    | -85         | -48      | 6               | -35           | -36    | 83  | -85  | 2  | -43  |
-    | -85         | -5       | 4               | -37           | -40    | -5  | -85  | 1  | 83   |
-    | -85         | -54      | 15              | -17           | -18    | 83  | -101 | 4  | -38  |
-    | -85         | -56      | 2               | -70           | -70    | -56 | -85  | 1  | -25  |
-    | -85         | -72      | 9               | -43           | -43    | 83  | -85  | 3  | -12  |
-    | -85         | -85      | 1               | -85           | -85    | -85 | -85  | 1  | -56  |
-    | -85         | 13       | 11              | -17           | -18    | 83  | -85  | 3  | 14   |
-    | -85         | 13       | 11              | -25           | -25    | 83  | -85  | 3  | 13   |
-    | -85         | 14       | 12              | -12           | -12    | 83  | -85  | 3  | 17   |
-    | -85         | 17       | 13              | -11           | -8     | 83  | -85  | 4  | -101 |
-    | -85         | 45       | 8               | -34           | -34    | 83  | -85  | 3  | -72  |
-    | -85         | 65       | 17              | -17           | -18    | 83  | -101 | 5  | -101 |
-    | -85         | 83       | 5               | -25           | -25    | 83  | -85  | 2  | -48  |
+    |             |          | 0               |               |        |     |      | 1  | -85  |
+    | -85         | -101     | 14              | -12.0         | -12.0  | 83  | -101 | 4  | -54  |
+    | -85         | -101     | 17              | -25.0         | -25.0  | 83  | -101 | 5  | -31  |
+    | -85         | -12      | 10              | -32.75        | -34.0  | 83  | -85  | 3  | 13   |
+    | -85         | -25      | 3               | -56.0         | -56.0  | -25 | -85  | 1  | -5   |
+    | -85         | -31      | 18              | -29.75        | -28.0  | 83  | -101 | 5  | 36   |
+    | -85         | -38      | 16              | -25.0         | -25.0  | 83  | -101 | 4  | 65   |
+    | -85         | -43      | 7               | -43.0         | -43.0  | 83  | -85  | 2  | 45   |
+    | -85         | -48      | 6               | -35.75        | -36.5  | 83  | -85  | 2  | -43  |
+    | -85         | -5       | 4               | -37.75        | -40.5  | -5  | -85  | 1  | 83   |
+    | -85         | -54      | 15              | -17.0         | -18.5  | 83  | -101 | 4  | -38  |
+    | -85         | -56      | 2               | -70.5         | -70.5  | -56 | -85  | 1  | -25  |
+    | -85         | -72      | 9               | -43.0         | -43.0  | 83  | -85  | 3  | -12  |
+    | -85         | -85      | 1               | -85.0         | -85.0  | -85 | -85  | 1  | -56  |
+    | -85         | 13       | 11              | -17.0         | -18.5  | 83  | -85  | 3  | 14   |
+    | -85         | 13       | 11              | -25.0         | -25.0  | 83  | -85  | 3  | 13   |
+    | -85         | 14       | 12              | -12.0         | -12.0  | 83  | -85  | 3  | 17   |
+    | -85         | 17       | 13              | -11.25        | -8.5   | 83  | -85  | 4  | -101 |
+    | -85         | 45       | 8               | -34.5         | -34.0  | 83  | -85  | 3  | -72  |
+    | -85         | 65       | 17              | -17.0         | -18.5  | 83  | -101 | 5  | -101 |
+    | -85         | 83       | 5               | -25.0         | -25.0  | 83  | -85  | 2  | -48  |
     +-------------+----------+-----------------+---------------+--------+-----+------+----+------+
     "
     );
@@ -2356,9 +2465,8 @@ async fn cache_producer_test() -> Result<()> {
         @r"
     CacheNode
       Projection: aggregate_test_100.c2, aggregate_test_100.c3, CAST(CAST(aggregate_test_100.c2 AS Int64) + CAST(aggregate_test_100.c3 AS Int64) AS Int64) AS sum
-        Projection: aggregate_test_100.c2, aggregate_test_100.c3
-          Limit: skip=0, fetch=1
-            TableScan: aggregate_test_100, fetch=1
+        Limit: skip=0, fetch=1
+          TableScan: aggregate_test_100 projection=[c2, c3], fetch=1
     "
     );
     Ok(())
@@ -2793,7 +2901,7 @@ async fn write_json_with_order() -> Result<()> {
     ctx.register_json(
         "data",
         test_path.to_str().unwrap(),
-        NdJsonReadOptions::default().schema(&schema),
+        JsonReadOptions::default().schema(&schema),
     )
     .await?;
 
@@ -2899,44 +3007,42 @@ async fn test_count_wildcard_on_sort() -> Result<()> {
     assert_snapshot!(
         pretty_format_batches(&sql_results).unwrap(),
         @r"
-    +---------------+------------------------------------------------------------------------------------------------------------+
-    | plan_type     | plan                                                                                                       |
-    +---------------+------------------------------------------------------------------------------------------------------------+
-    | logical_plan  | Projection: t1.b, count(*)                                                                                 |
-    |               |   Sort: count(Int64(1)) AS count(*) AS count(*) ASC NULLS LAST                                             |
-    |               |     Projection: t1.b, count(Int64(1)) AS count(*), count(Int64(1))                                         |
-    |               |       Aggregate: groupBy=[[t1.b]], aggr=[[count(Int64(1))]]                                                |
-    |               |         TableScan: t1 projection=[b]                                                                       |
-    | physical_plan | ProjectionExec: expr=[b@0 as b, count(*)@1 as count(*)]                                                    |
-    |               |   SortPreservingMergeExec: [count(Int64(1))@2 ASC NULLS LAST]                                              |
-    |               |     SortExec: expr=[count(*)@1 ASC NULLS LAST], preserve_partitioning=[true]                               |
-    |               |       ProjectionExec: expr=[b@0 as b, count(Int64(1))@1 as count(*), count(Int64(1))@1 as count(Int64(1))] |
-    |               |         AggregateExec: mode=FinalPartitioned, gby=[b@0 as b], aggr=[count(Int64(1))]                       |
-    |               |           RepartitionExec: partitioning=Hash([b@0], 4), input_partitions=1                                 |
-    |               |             AggregateExec: mode=Partial, gby=[b@0 as b], aggr=[count(Int64(1))]                            |
-    |               |               DataSourceExec: partitions=1, partition_sizes=[1]                                            |
-    |               |                                                                                                            |
-    +---------------+------------------------------------------------------------------------------------------------------------+
+    +---------------+------------------------------------------------------------------------------------+
+    | plan_type     | plan                                                                               |
+    +---------------+------------------------------------------------------------------------------------+
+    | logical_plan  | Sort: count(*) ASC NULLS LAST                                                      |
+    |               |   Projection: t1.b, count(Int64(1)) AS count(*)                                    |
+    |               |     Aggregate: groupBy=[[t1.b]], aggr=[[count(Int64(1))]]                          |
+    |               |       TableScan: t1 projection=[b]                                                 |
+    | physical_plan | SortPreservingMergeExec: [count(*)@1 ASC NULLS LAST]                               |
+    |               |   SortExec: expr=[count(*)@1 ASC NULLS LAST], preserve_partitioning=[true]         |
+    |               |     ProjectionExec: expr=[b@0 as b, count(Int64(1))@1 as count(*)]                 |
+    |               |       AggregateExec: mode=FinalPartitioned, gby=[b@0 as b], aggr=[count(Int64(1))] |
+    |               |         RepartitionExec: partitioning=Hash([b@0], 4), input_partitions=1           |
+    |               |           AggregateExec: mode=Partial, gby=[b@0 as b], aggr=[count(Int64(1))]      |
+    |               |             DataSourceExec: partitions=1, partition_sizes=[1]                      |
+    |               |                                                                                    |
+    +---------------+------------------------------------------------------------------------------------+
     "
     );
 
     assert_snapshot!(
         pretty_format_batches(&df_results).unwrap(),
         @r"
-    +---------------+----------------------------------------------------------------------------+
-    | plan_type     | plan                                                                       |
-    +---------------+----------------------------------------------------------------------------+
-    | logical_plan  | Sort: count(*) ASC NULLS LAST                                              |
-    |               |   Aggregate: groupBy=[[t1.b]], aggr=[[count(Int64(1)) AS count(*)]]        |
-    |               |     TableScan: t1 projection=[b]                                           |
-    | physical_plan | SortPreservingMergeExec: [count(*)@1 ASC NULLS LAST]                       |
-    |               |   SortExec: expr=[count(*)@1 ASC NULLS LAST], preserve_partitioning=[true] |
-    |               |     AggregateExec: mode=FinalPartitioned, gby=[b@0 as b], aggr=[count(*)]  |
-    |               |       RepartitionExec: partitioning=Hash([b@0], 4), input_partitions=1     |
-    |               |         AggregateExec: mode=Partial, gby=[b@0 as b], aggr=[count(*)]       |
-    |               |           DataSourceExec: partitions=1, partition_sizes=[1]                |
-    |               |                                                                            |
-    +---------------+----------------------------------------------------------------------------+
+    +---------------+---------------------------------------------------------------------------------------+
+    | plan_type     | plan                                                                                  |
+    +---------------+---------------------------------------------------------------------------------------+
+    | logical_plan  | Sort: count(*) AS count(*) ASC NULLS LAST                                             |
+    |               |   Aggregate: groupBy=[[t1.b]], aggr=[[count(Int64(1)) AS count(*)]]                   |
+    |               |     TableScan: t1 projection=[b]                                                      |
+    | physical_plan | SortPreservingMergeExec: [count(*)@1 ASC NULLS LAST]                                  |
+    |               |   SortExec: expr=[count(*)@1 ASC NULLS LAST], preserve_partitioning=[true]            |
+    |               |     AggregateExec: mode=FinalPartitioned, gby=[b@0 as b], aggr=[count(1) as count(*)] |
+    |               |       RepartitionExec: partitioning=Hash([b@0], 4), input_partitions=1                |
+    |               |         AggregateExec: mode=Partial, gby=[b@0 as b], aggr=[count(1) as count(*)]      |
+    |               |           DataSourceExec: partitions=1, partition_sizes=[1]                           |
+    |               |                                                                                       |
+    +---------------+---------------------------------------------------------------------------------------+
     "
     );
     Ok(())
@@ -3169,7 +3275,7 @@ async fn union_with_mix_of_presorted_and_explicitly_resorted_inputs_with_reparti
           UnionExec
             DataSourceExec: file_groups={1 group: [[{testdata}/alltypes_tiny_pages.parquet]]}, projection=[id], output_ordering=[id@0 ASC NULLS LAST], file_type=parquet
             SortExec: expr=[id@0 ASC NULLS LAST], preserve_partitioning=[false]
-              DataSourceExec: file_groups={1 group: [[{testdata}/alltypes_tiny_pages.parquet]]}, projection=[id], file_type=parquet
+              DataSourceExec: file_groups={1 group: [[{testdata}/alltypes_tiny_pages.parquet]]}, projection=[id], file_type=parquet, sort_order_for_reorder=[id@0 ASC NULLS LAST]
     ");
     Ok(())
 }
@@ -3187,7 +3293,7 @@ async fn union_with_mix_of_presorted_and_explicitly_resorted_inputs_with_reparti
           UnionExec
             DataSourceExec: file_groups={1 group: [[{testdata}/alltypes_tiny_pages.parquet]]}, projection=[id], output_ordering=[id@0 ASC NULLS LAST], file_type=parquet
             SortExec: expr=[id@0 ASC NULLS LAST], preserve_partitioning=[false]
-              DataSourceExec: file_groups={1 group: [[{testdata}/alltypes_tiny_pages.parquet]]}, projection=[id], file_type=parquet
+              DataSourceExec: file_groups={1 group: [[{testdata}/alltypes_tiny_pages.parquet]]}, projection=[id], file_type=parquet, sort_order_for_reorder=[id@0 ASC NULLS LAST]
     ");
 
     Ok(())
@@ -3245,7 +3351,11 @@ async fn union_with_mix_of_presorted_and_explicitly_resorted_inputs_impl(
 
     // To be able to remove user specific paths from the plan, for stable assertions
     let testdata_clean = Path::new(&testdata).canonicalize()?.display().to_string();
-    let testdata_clean = testdata_clean.strip_prefix("/").unwrap_or(&testdata_clean);
+    let testdata_clean = testdata_clean.replace("\\", "/");
+    let testdata_clean = testdata_clean
+        .strip_prefix("//?/")
+        .or_else(|| testdata_clean.strip_prefix("/"))
+        .unwrap_or(&testdata_clean);
 
     // Use displayable() rather than explain().collect() to avoid table formatting issues. We need
     // to replace machine-specific paths with variable lengths, which breaks table alignment and
@@ -3329,31 +3439,30 @@ async fn test_count_wildcard_on_where_scalar_subquery() -> Result<()> {
     assert_snapshot!(
         pretty_format_batches(&sql_results).unwrap(),
         @r"
-    +---------------+----------------------------------------------------------------------------------------------------------------------------+
-    | plan_type     | plan                                                                                                                       |
-    +---------------+----------------------------------------------------------------------------------------------------------------------------+
-    | logical_plan  | Projection: t1.a, t1.b                                                                                                     |
-    |               |   Filter: CASE WHEN __scalar_sq_1.__always_true IS NULL THEN Int64(0) ELSE __scalar_sq_1.count(*) END > Int64(0)           |
-    |               |     Projection: t1.a, t1.b, __scalar_sq_1.count(*), __scalar_sq_1.__always_true                                            |
-    |               |       Left Join: t1.a = __scalar_sq_1.a                                                                                    |
-    |               |         TableScan: t1 projection=[a, b]                                                                                    |
-    |               |         SubqueryAlias: __scalar_sq_1                                                                                       |
-    |               |           Projection: count(Int64(1)) AS count(*), t2.a, Boolean(true) AS __always_true                                    |
-    |               |             Aggregate: groupBy=[[t2.a]], aggr=[[count(Int64(1))]]                                                          |
-    |               |               TableScan: t2 projection=[a]                                                                                 |
-    | physical_plan | FilterExec: CASE WHEN __always_true@3 IS NULL THEN 0 ELSE count(*)@2 END > 0, projection=[a@0, b@1]                        |
-    |               |   RepartitionExec: partitioning=RoundRobinBatch(4), input_partitions=1                                                     |
-    |               |     ProjectionExec: expr=[a@2 as a, b@3 as b, count(*)@0 as count(*), __always_true@1 as __always_true]                    |
-    |               |       HashJoinExec: mode=CollectLeft, join_type=Right, on=[(a@1, a@0)], projection=[count(*)@0, __always_true@2, a@3, b@4] |
-    |               |         CoalescePartitionsExec                                                                                             |
-    |               |           ProjectionExec: expr=[count(Int64(1))@1 as count(*), a@0 as a, true as __always_true]                            |
-    |               |             AggregateExec: mode=FinalPartitioned, gby=[a@0 as a], aggr=[count(Int64(1))]                                   |
-    |               |               RepartitionExec: partitioning=Hash([a@0], 4), input_partitions=1                                             |
-    |               |                 AggregateExec: mode=Partial, gby=[a@0 as a], aggr=[count(Int64(1))]                                        |
-    |               |                   DataSourceExec: partitions=1, partition_sizes=[1]                                                        |
-    |               |         DataSourceExec: partitions=1, partition_sizes=[1]                                                                  |
-    |               |                                                                                                                            |
-    +---------------+----------------------------------------------------------------------------------------------------------------------------+
+    +---------------+--------------------------------------------------------------------------------------------------------------------------+
+    | plan_type     | plan                                                                                                                     |
+    +---------------+--------------------------------------------------------------------------------------------------------------------------+
+    | logical_plan  | Projection: t1.a, t1.b                                                                                                   |
+    |               |   Filter: CASE WHEN __scalar_sq_1.__always_true IS NULL THEN Int64(0) ELSE __scalar_sq_1.count(*) END > Int64(0)         |
+    |               |     Projection: t1.a, t1.b, __scalar_sq_1.count(*), __scalar_sq_1.__always_true                                          |
+    |               |       Left Join: t1.a = __scalar_sq_1.a                                                                                  |
+    |               |         TableScan: t1 projection=[a, b]                                                                                  |
+    |               |         SubqueryAlias: __scalar_sq_1                                                                                     |
+    |               |           Projection: count(Int64(1)) AS count(*), t2.a, Boolean(true) AS __always_true                                  |
+    |               |             Aggregate: groupBy=[[t2.a]], aggr=[[count(Int64(1))]]                                                        |
+    |               |               TableScan: t2 projection=[a]                                                                               |
+    | physical_plan | FilterExec: CASE WHEN __always_true@3 IS NULL THEN 0 ELSE count(*)@2 END > 0, projection=[a@0, b@1]                      |
+    |               |   RepartitionExec: partitioning=RoundRobinBatch(4), input_partitions=1                                                   |
+    |               |     HashJoinExec: mode=CollectLeft, join_type=Right, on=[(a@1, a@0)], projection=[a@3, b@4, count(*)@0, __always_true@2] |
+    |               |       CoalescePartitionsExec                                                                                             |
+    |               |         ProjectionExec: expr=[count(Int64(1))@1 as count(*), a@0 as a, true as __always_true]                            |
+    |               |           AggregateExec: mode=FinalPartitioned, gby=[a@0 as a], aggr=[count(Int64(1))]                                   |
+    |               |             RepartitionExec: partitioning=Hash([a@0], 4), input_partitions=1                                             |
+    |               |               AggregateExec: mode=Partial, gby=[a@0 as a], aggr=[count(Int64(1))]                                        |
+    |               |                 DataSourceExec: partitions=1, partition_sizes=[1]                                                        |
+    |               |       DataSourceExec: partitions=1, partition_sizes=[1]                                                                  |
+    |               |                                                                                                                          |
+    +---------------+--------------------------------------------------------------------------------------------------------------------------+
     "
     );
 
@@ -3385,31 +3494,30 @@ async fn test_count_wildcard_on_where_scalar_subquery() -> Result<()> {
     assert_snapshot!(
         pretty_format_batches(&df_results).unwrap(),
         @r"
-    +---------------+----------------------------------------------------------------------------------------------------------------------------+
-    | plan_type     | plan                                                                                                                       |
-    +---------------+----------------------------------------------------------------------------------------------------------------------------+
-    | logical_plan  | Projection: t1.a, t1.b                                                                                                     |
-    |               |   Filter: CASE WHEN __scalar_sq_1.__always_true IS NULL THEN Int64(0) ELSE __scalar_sq_1.count(*) END > Int64(0)           |
-    |               |     Projection: t1.a, t1.b, __scalar_sq_1.count(*), __scalar_sq_1.__always_true                                            |
-    |               |       Left Join: t1.a = __scalar_sq_1.a                                                                                    |
-    |               |         TableScan: t1 projection=[a, b]                                                                                    |
-    |               |         SubqueryAlias: __scalar_sq_1                                                                                       |
-    |               |           Projection: count(*), t2.a, Boolean(true) AS __always_true                                                       |
-    |               |             Aggregate: groupBy=[[t2.a]], aggr=[[count(Int64(1)) AS count(*)]]                                              |
-    |               |               TableScan: t2 projection=[a]                                                                                 |
-    | physical_plan | FilterExec: CASE WHEN __always_true@3 IS NULL THEN 0 ELSE count(*)@2 END > 0, projection=[a@0, b@1]                        |
-    |               |   RepartitionExec: partitioning=RoundRobinBatch(4), input_partitions=1                                                     |
-    |               |     ProjectionExec: expr=[a@2 as a, b@3 as b, count(*)@0 as count(*), __always_true@1 as __always_true]                    |
-    |               |       HashJoinExec: mode=CollectLeft, join_type=Right, on=[(a@1, a@0)], projection=[count(*)@0, __always_true@2, a@3, b@4] |
-    |               |         CoalescePartitionsExec                                                                                             |
-    |               |           ProjectionExec: expr=[count(*)@1 as count(*), a@0 as a, true as __always_true]                                   |
-    |               |             AggregateExec: mode=FinalPartitioned, gby=[a@0 as a], aggr=[count(*)]                                          |
-    |               |               RepartitionExec: partitioning=Hash([a@0], 4), input_partitions=1                                             |
-    |               |                 AggregateExec: mode=Partial, gby=[a@0 as a], aggr=[count(*)]                                               |
-    |               |                   DataSourceExec: partitions=1, partition_sizes=[1]                                                        |
-    |               |         DataSourceExec: partitions=1, partition_sizes=[1]                                                                  |
-    |               |                                                                                                                            |
-    +---------------+----------------------------------------------------------------------------------------------------------------------------+
+    +---------------+--------------------------------------------------------------------------------------------------------------------------+
+    | plan_type     | plan                                                                                                                     |
+    +---------------+--------------------------------------------------------------------------------------------------------------------------+
+    | logical_plan  | Projection: t1.a, t1.b                                                                                                   |
+    |               |   Filter: CASE WHEN __scalar_sq_1.__always_true IS NULL THEN Int64(0) ELSE __scalar_sq_1.count(*) END > Int64(0)         |
+    |               |     Projection: t1.a, t1.b, __scalar_sq_1.count(*), __scalar_sq_1.__always_true                                          |
+    |               |       Left Join: t1.a = __scalar_sq_1.a                                                                                  |
+    |               |         TableScan: t1 projection=[a, b]                                                                                  |
+    |               |         SubqueryAlias: __scalar_sq_1                                                                                     |
+    |               |           Projection: count(*), t2.a, Boolean(true) AS __always_true                                                     |
+    |               |             Aggregate: groupBy=[[t2.a]], aggr=[[count(Int64(1)) AS count(*)]]                                            |
+    |               |               TableScan: t2 projection=[a]                                                                               |
+    | physical_plan | FilterExec: CASE WHEN __always_true@3 IS NULL THEN 0 ELSE count(*)@2 END > 0, projection=[a@0, b@1]                      |
+    |               |   RepartitionExec: partitioning=RoundRobinBatch(4), input_partitions=1                                                   |
+    |               |     HashJoinExec: mode=CollectLeft, join_type=Right, on=[(a@1, a@0)], projection=[a@3, b@4, count(*)@0, __always_true@2] |
+    |               |       CoalescePartitionsExec                                                                                             |
+    |               |         ProjectionExec: expr=[count(*)@1 as count(*), a@0 as a, true as __always_true]                                   |
+    |               |           AggregateExec: mode=FinalPartitioned, gby=[a@0 as a], aggr=[count(1) as count(*)]                              |
+    |               |             RepartitionExec: partitioning=Hash([a@0], 4), input_partitions=1                                             |
+    |               |               AggregateExec: mode=Partial, gby=[a@0 as a], aggr=[count(1) as count(*)]                                   |
+    |               |                 DataSourceExec: partitions=1, partition_sizes=[1]                                                        |
+    |               |       DataSourceExec: partitions=1, partition_sizes=[1]                                                                  |
+    |               |                                                                                                                          |
+    +---------------+--------------------------------------------------------------------------------------------------------------------------+
     "
     );
 
@@ -4699,7 +4807,7 @@ async fn unnest_with_redundant_columns() -> Result<()> {
         @r"
     Projection: shapes.shape_id [shape_id:UInt32]
       Unnest: lists[shape_id2|depth=1] structs[] [shape_id:UInt32, shape_id2:UInt32;N]
-        Aggregate: groupBy=[[shapes.shape_id]], aggr=[[array_agg(shapes.shape_id) AS shape_id2]] [shape_id:UInt32, shape_id2:List(Field { data_type: UInt32, nullable: true });N]
+        Aggregate: groupBy=[[shapes.shape_id]], aggr=[[array_agg(shapes.shape_id) AS shape_id2]] [shape_id:UInt32, shape_id2:List(UInt32);N]
           TableScan: shapes projection=[shape_id] [shape_id:UInt32]
     "
     );
@@ -5513,30 +5621,33 @@ async fn test_dataframe_placeholder_like_expression() -> Result<()> {
     Ok(())
 }
 
+#[rstest]
+#[case(DataType::Utf8)]
+#[case(DataType::LargeUtf8)]
+#[case(DataType::Utf8View)]
 #[tokio::test]
-async fn write_partitioned_parquet_results() -> Result<()> {
-    // create partitioned input file and context
-    let tmp_dir = TempDir::new()?;
-
-    let ctx = SessionContext::new();
-
+async fn write_partitioned_parquet_results(#[case] string_type: DataType) -> Result<()> {
     // Create an in memory table with schema C1 and C2, both strings
     let schema = Arc::new(Schema::new(vec![
-        Field::new("c1", DataType::Utf8, false),
-        Field::new("c2", DataType::Utf8, false),
+        Field::new("c1", string_type.clone(), false),
+        Field::new("c2", string_type.clone(), false),
     ]));
 
-    let record_batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![
-            Arc::new(StringArray::from(vec!["abc", "def"])),
-            Arc::new(StringArray::from(vec!["123", "456"])),
-        ],
-    )?;
+    let columns = [
+        Arc::new(StringArray::from(vec!["abc", "def"])) as ArrayRef,
+        Arc::new(StringArray::from(vec!["123", "456"])) as ArrayRef,
+    ]
+    .map(|col| arrow::compute::cast(&col, &string_type).unwrap())
+    .to_vec();
+
+    let record_batch = RecordBatch::try_new(schema.clone(), columns)?;
 
     let mem_table = Arc::new(MemTable::try_new(schema, vec![vec![record_batch]])?);
 
     // Register the table in the context
+    // create partitioned input file and context
+    let tmp_dir = TempDir::new()?;
+    let ctx = SessionContext::new();
     ctx.register_table("test", mem_table)?;
 
     let local = Arc::new(LocalFileSystem::new_with_prefix(&tmp_dir)?);
@@ -5563,6 +5674,7 @@ async fn write_partitioned_parquet_results() -> Result<()> {
 
     // Check that the c2 column is gone and that c1 is abc.
     let results = filter_df.collect().await?;
+    insta::allow_duplicates! {
     assert_snapshot!(
        batches_to_string(&results),
         @r"
@@ -5572,7 +5684,7 @@ async fn write_partitioned_parquet_results() -> Result<()> {
     | abc |
     +-----+
     "
-    );
+    )};
 
     // Read the entire set of parquet files
     let df = ctx
@@ -5585,9 +5697,10 @@ async fn write_partitioned_parquet_results() -> Result<()> {
 
     // Check that the df has the entire set of data
     let results = df.collect().await?;
-    assert_snapshot!(
-        batches_to_sort_string(&results),
-        @r"
+    insta::allow_duplicates! {
+        assert_snapshot!(
+            batches_to_sort_string(&results),
+            @r"
     +-----+-----+
     | c1  | c2  |
     +-----+-----+
@@ -5595,7 +5708,8 @@ async fn write_partitioned_parquet_results() -> Result<()> {
     | def | 456 |
     +-----+-----+
     "
-    );
+        )
+    };
 
     Ok(())
 }
@@ -6201,7 +6315,10 @@ async fn test_alias_nested() -> Result<()> {
     let select2 = df.select(vec![col("alias1.a")]);
     assert_snapshot!(
         select2.unwrap_err().strip_backtrace(),
-        @"Schema error: No field named alias1.a. Valid fields are alias2.a, alias2.b, alias2.one."
+        @r#"
+Schema error: No field named alias1.a. Did you mean 'alias2.a'?
+Valid fields are alias2.a, alias2.b, alias2.one.
+"#
     );
     Ok(())
 }
@@ -6213,7 +6330,7 @@ async fn register_non_json_file() {
         .register_json(
             "data",
             "tests/data/test_binary.parquet",
-            NdJsonReadOptions::default(),
+            JsonReadOptions::default(),
         )
         .await;
     assert_contains!(
@@ -6422,11 +6539,178 @@ async fn test_fill_null_all_columns() -> Result<()> {
     Ok(())
 }
 
+async fn create_nan_table() -> Result<DataFrame> {
+    // create a DataFrame with a NaN value in a float column "a" and a
+    // non-float column "b" that must stay untouched by fill_nan.
+    //    "+-----+---+",
+    //    "| a   | b |",
+    //    "+-----+---+",
+    //    "| 1.0 | 1 |",
+    //    "| NaN | 2 |",
+    //    "| 3.0 | 3 |",
+    //    "+-----+---+",
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("a", DataType::Float64, true),
+        Field::new("b", DataType::Int32, true),
+    ]));
+    let a_values = Float64Array::from(vec![Some(1.0), Some(f64::NAN), Some(3.0)]);
+    let b_values = Int32Array::from(vec![Some(1), Some(2), Some(3)]);
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(a_values), Arc::new(b_values)],
+    )?;
+
+    let ctx = SessionContext::new();
+    let table = MemTable::try_new(schema.clone(), vec![vec![batch]])?;
+    ctx.register_table("t_nan", Arc::new(table))?;
+    let df = ctx.table("t_nan").await?;
+    Ok(df)
+}
+
+#[tokio::test]
+async fn test_fill_nan() -> Result<()> {
+    let df = create_nan_table().await?;
+
+    // Fill NaNs in the float column "a" with 0.0.
+    let df_filled = df.fill_nan(&ScalarValue::Float64(Some(0.0)), &["a"])?;
+
+    let results = df_filled.collect().await?;
+    assert_snapshot!(
+        batches_to_sort_string(&results),
+        @r"
+    +-----+---+
+    | a   | b |
+    +-----+---+
+    | 0.0 | 2 |
+    | 1.0 | 1 |
+    | 3.0 | 3 |
+    +-----+---+
+    "
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_fill_nan_all_columns() -> Result<()> {
+    let df = create_nan_table().await?;
+
+    // Fill NaNs across all columns. Only the float column "a" is affected;
+    // the non-float column "b" is left unchanged since NaN only exists for
+    // floating-point types.
+    let df_filled = df.fill_nan(&ScalarValue::Float64(Some(0.0)), &[])?;
+
+    let results = df_filled.collect().await?;
+    assert_snapshot!(
+        batches_to_sort_string(&results),
+        @r"
+    +-----+---+
+    | a   | b |
+    +-----+---+
+    | 0.0 | 2 |
+    | 1.0 | 1 |
+    | 3.0 | 3 |
+    +-----+---+
+    "
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_fill_nan_non_float_column() -> Result<()> {
+    let df = create_nan_table().await?;
+
+    // Explicitly naming a non-float column is a no-op, not an error: NaN does
+    // not exist for Int32, so column "b" (and the un-targeted "a") are unchanged.
+    let df_filled = df.fill_nan(&ScalarValue::Float64(Some(0.0)), &["b"])?;
+
+    let results = df_filled.collect().await?;
+    assert_snapshot!(
+        batches_to_sort_string(&results),
+        @r"
+    +-----+---+
+    | a   | b |
+    +-----+---+
+    | 1.0 | 1 |
+    | 3.0 | 3 |
+    | NaN | 2 |
+    +-----+---+
+    "
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_fill_nan_unknown_column() -> Result<()> {
+    let df = create_nan_table().await?;
+
+    // A column name that is not in the schema is propagated as an error.
+    let err = df
+        .fill_nan(&ScalarValue::Float64(Some(0.0)), &["does_not_exist"])
+        .unwrap_err();
+
+    assert_snapshot!(err.strip_backtrace(), @"Error during planning: Column 'does_not_exist' not found");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_fill_nan_casts_fill_value() -> Result<()> {
+    let df = create_nan_table().await?;
+
+    // Int32(0) is not the column's type (Float64) but can be cast to it, so the
+    // NaN is replaced with 0.0. Exercises the cross-type cast path — the other
+    // positive tests pass a Float64 value, which skips the actual cast.
+    let df_filled = df.fill_nan(&ScalarValue::Int32(Some(0)), &["a"])?;
+
+    let results = df_filled.collect().await?;
+    assert_snapshot!(
+        batches_to_sort_string(&results),
+        @r"
+    +-----+---+
+    | a   | b |
+    +-----+---+
+    | 0.0 | 2 |
+    | 1.0 | 1 |
+    | 3.0 | 3 |
+    +-----+---+
+    "
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_fill_nan_uncastable_value() -> Result<()> {
+    let df = create_nan_table().await?;
+
+    // The float column "a" is targeted, but "abc" cannot be cast to Float64, so
+    // the fill is skipped and column "a" keeps its original NaN value.
+    let df_filled = df.fill_nan(&ScalarValue::Utf8(Some("abc".to_string())), &["a"])?;
+
+    let results = df_filled.collect().await?;
+    assert_snapshot!(
+        batches_to_sort_string(&results),
+        @r"
+    +-----+---+
+    | a   | b |
+    +-----+---+
+    | 1.0 | 1 |
+    | 3.0 | 3 |
+    | NaN | 2 |
+    +-----+---+
+    "
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_insert_into_casting_support() -> Result<()> {
     // Testing case1:
     // Inserting query schema mismatch: Expected table field 'a' with type Float16, but got 'a' with type Utf8.
-    // And the cast is not supported from Utf8 to Float16.
+    // And the cast is not supported from Binary to Float16.
 
     // Create a new schema with one field called "a" of type Float16, and setting nullable to false
     let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Float16, false)]));
@@ -6437,7 +6721,10 @@ async fn test_insert_into_casting_support() -> Result<()> {
     let initial_table = Arc::new(MemTable::try_new(schema.clone(), vec![vec![]])?);
     session_ctx.register_table("t", initial_table.clone())?;
 
-    let mut write_df = session_ctx.sql("values ('a123'), ('b456')").await.unwrap();
+    let mut write_df = session_ctx
+        .sql("values (x'a123'), (x'b456')")
+        .await
+        .unwrap();
 
     write_df = write_df
         .clone()
@@ -6451,7 +6738,7 @@ async fn test_insert_into_casting_support() -> Result<()> {
 
     assert_contains!(
         e.to_string(),
-        "Inserting query schema mismatch: Expected table field 'a' with type Float16, but got 'a' with type Utf8."
+        "Inserting query schema mismatch: Expected table field 'a' with type Float16, but got 'a' with type Binary."
     );
 
     // Testing case2:
@@ -6644,6 +6931,169 @@ async fn test_copy_to_preserves_order() -> Result<()> {
     Ok(())
 }
 
+fn duplicate_unqualified_name_batch() -> Result<RecordBatch> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("a", DataType::Utf8, false),
+        Field::new("b", DataType::Int32, false),
+    ]));
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(vec![
+                "abcDEF",
+                "abc123",
+                "CBAdef",
+                "123AbcDef",
+            ])),
+            Arc::new(Int32Array::from(vec![1, 10, 10, 100])),
+        ],
+    )
+    .map_err(Into::into)
+}
+
+async fn duplicate_unqualified_name_input(
+    ctx: &SessionContext,
+    name: &str,
+) -> Result<LogicalPlan> {
+    ctx.register_batch(name, duplicate_unqualified_name_batch()?)?;
+
+    let left = ctx.table(name).await?;
+    let right = left.clone().alias("t2")?;
+    Ok(left
+        .join(right, JoinType::Inner, &["b"], &["b"], None)?
+        .into_unoptimized_plan())
+}
+
+#[tokio::test]
+async fn execute_logical_plan_rejects_duplicate_unqualified_names_in_create_memory_table()
+-> Result<()> {
+    let ctx = SessionContext::new();
+    let input = duplicate_unqualified_name_input(&ctx, "t1").await?;
+
+    let plan = LogicalPlan::Ddl(DdlStatement::CreateMemoryTable(CreateMemoryTable {
+        name: TableReference::bare("dup_out"),
+        constraints: Constraints::default(),
+        input: Arc::new(input),
+        if_not_exists: false,
+        or_replace: false,
+        temporary: false,
+        column_defaults: vec![],
+    }));
+
+    let err = ctx.execute_logical_plan(plan).await.unwrap_err();
+    assert_contains!(
+        err.to_string(),
+        "Schema contains duplicate unqualified field name a"
+    );
+    assert!(ctx.table("dup_out").await.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn execute_logical_plan_rejects_duplicate_unqualified_names_in_replace_table()
+-> Result<()> {
+    let ctx = SessionContext::new();
+    ctx.sql("CREATE TABLE dup_out AS VALUES ('seed', 0)")
+        .await?
+        .collect()
+        .await?;
+
+    let input = duplicate_unqualified_name_input(&ctx, "t1").await?;
+    let plan = LogicalPlan::Ddl(DdlStatement::CreateMemoryTable(CreateMemoryTable {
+        name: TableReference::bare("dup_out"),
+        constraints: Constraints::default(),
+        input: Arc::new(input),
+        if_not_exists: false,
+        or_replace: true,
+        temporary: false,
+        column_defaults: vec![],
+    }));
+
+    let err = ctx.execute_logical_plan(plan).await.unwrap_err();
+    assert_contains!(
+        err.to_string(),
+        "Schema contains duplicate unqualified field name a"
+    );
+
+    let rows = ctx.sql("SELECT * FROM dup_out").await?.collect().await?;
+    assert_batches_eq!(
+        [
+            "+---------+---------+",
+            "| column1 | column2 |",
+            "+---------+---------+",
+            "| seed    | 0       |",
+            "+---------+---------+",
+        ],
+        &rows
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn execute_logical_plan_rejects_duplicate_unqualified_names_in_create_view()
+-> Result<()> {
+    let ctx = SessionContext::new();
+    let input = duplicate_unqualified_name_input(&ctx, "t1").await?;
+    let plan = LogicalPlan::Ddl(DdlStatement::CreateView(CreateView {
+        name: TableReference::bare("dup_view"),
+        input: Arc::new(input),
+        or_replace: false,
+        definition: None,
+        temporary: false,
+    }));
+
+    let err = ctx.execute_logical_plan(plan).await.unwrap_err();
+    assert_contains!(
+        err.to_string(),
+        "Schema contains duplicate unqualified field name a"
+    );
+    assert!(ctx.table("dup_view").await.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn execute_logical_plan_rejects_duplicate_unqualified_names_in_replace_view()
+-> Result<()> {
+    let ctx = SessionContext::new();
+    ctx.sql("CREATE VIEW dup_view AS SELECT 'seed' AS column1, 0 AS column2")
+        .await?
+        .collect()
+        .await?;
+
+    let input = duplicate_unqualified_name_input(&ctx, "t1").await?;
+    let plan = LogicalPlan::Ddl(DdlStatement::CreateView(CreateView {
+        name: TableReference::bare("dup_view"),
+        input: Arc::new(input),
+        or_replace: true,
+        definition: None,
+        temporary: false,
+    }));
+
+    let err = ctx.execute_logical_plan(plan).await.unwrap_err();
+    assert_contains!(
+        err.to_string(),
+        "Schema contains duplicate unqualified field name a"
+    );
+
+    let rows = ctx.sql("SELECT * FROM dup_view").await?.collect().await?;
+    assert_batches_eq!(
+        [
+            "+---------+---------+",
+            "| column1 | column2 |",
+            "+---------+---------+",
+            "| seed    | 0       |",
+            "+---------+---------+",
+        ],
+        &rows
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_duplicate_state_fields_for_dfschema_construct() -> Result<()> {
     let ctx = SessionContext::new();
@@ -6742,6 +7192,53 @@ async fn test_duplicate_state_fields_for_dfschema_construct() -> Result<()> {
         partial_agg_exec_schema.is_ok(),
         "Expected get AggregateExec schema to succeed with duplicate state fields"
     );
+
+    Ok(())
+}
+
+/// Regression test for https://github.com/apache/datafusion/issues/21411
+/// grouping() should work when wrapped in an alias via the DataFrame API.
+///
+/// This bug only manifests through the DataFrame API because `.alias()` wraps
+/// the `grouping()` call in an `Expr::Alias` node at the aggregate expression
+/// level. The SQL planner handles aliasing separately (via projection), so the
+/// `ResolveGroupingFunction` analyzer rule never sees an `Expr::Alias` wrapper
+/// around the aggregate function in SQL queries — making SQL-based tests
+/// insufficient to cover this case.
+#[tokio::test]
+async fn test_grouping_with_alias() -> Result<()> {
+    use datafusion_functions_aggregate::expr_fn::grouping;
+
+    let df = create_test_table("test")
+        .await?
+        .aggregate(vec![col("a")], vec![grouping(col("a")).alias("g")])?
+        .sort(vec![Sort::new(col("a"), true, false)])?;
+
+    let results = df.collect().await?;
+
+    let expected = [
+        "+-----------+---+",
+        "| a         | g |",
+        "+-----------+---+",
+        "| 123AbcDef | 0 |",
+        "| CBAdef    | 0 |",
+        "| abc123    | 0 |",
+        "| abcDEF    | 0 |",
+        "+-----------+---+",
+    ];
+    assert_batches_eq!(expected, &results);
+
+    // Also verify that nested aliases (e.g. .alias("x").alias("g")) work correctly
+    let df = create_test_table("test")
+        .await?
+        .aggregate(
+            vec![col("a")],
+            vec![grouping(col("a")).alias("x").alias("g")],
+        )?
+        .sort(vec![Sort::new(col("a"), true, false)])?;
+
+    let results = df.collect().await?;
+    assert_batches_eq!(expected, &results);
 
     Ok(())
 }

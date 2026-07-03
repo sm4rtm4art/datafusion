@@ -24,13 +24,13 @@
 // https://github.com/apache/datafusion/issues/11143
 #![deny(clippy::clone_on_ref_ptr)]
 #![cfg_attr(test, allow(clippy::needless_pass_by_value))]
-#![deny(clippy::allow_attributes)]
 
 mod column;
 mod dfschema;
 mod functional_dependencies;
 mod join_type;
 mod param_value;
+mod partitioning;
 mod schema_reference;
 mod table_reference;
 mod unnest;
@@ -44,13 +44,16 @@ pub mod diagnostic;
 pub mod display;
 pub mod encryption;
 pub mod error;
+pub mod extensions;
 pub mod file_options;
 pub mod format;
 pub mod hash_utils;
+pub mod heap_size;
 pub mod instant;
 pub mod metadata;
 pub mod nested_struct;
 mod null_equality;
+pub mod parquet_config;
 pub mod parsers;
 pub mod pruning;
 pub mod rounding;
@@ -83,13 +86,14 @@ pub use file_options::file_type::{
 pub use functional_dependencies::{
     Constraint, Constraints, Dependency, FunctionalDependence, FunctionalDependencies,
     aggregate_functional_dependencies, get_required_group_by_exprs_indices,
-    get_target_functional_dependencies,
+    get_required_sort_exprs_indices, get_target_functional_dependencies,
 };
-use hashbrown::hash_map::DefaultHashBuilder;
+use hashbrown::DefaultHashBuilder;
 pub use join_type::{JoinConstraint, JoinSide, JoinType};
 pub use nested_struct::cast_column;
 pub use null_equality::NullEquality;
 pub use param_value::ParamValues;
+pub use partitioning::{SplitPoint, validate_range_split_points};
 pub use scalar::{ScalarType, ScalarValue};
 pub use schema_reference::SchemaReference;
 pub use spans::{Location, Span, Spans};
@@ -115,6 +119,7 @@ pub type HashMap<K, V, S = DefaultHashBuilder> = hashbrown::HashMap<K, V, S>;
 pub type HashSet<T, S = DefaultHashBuilder> = hashbrown::HashSet<T, S>;
 pub mod hash_map {
     pub use hashbrown::hash_map::Entry;
+    pub use hashbrown::hash_map::EntryRef;
 }
 pub mod hash_set {
     pub use hashbrown::hash_set::Entry;
