@@ -65,7 +65,7 @@ In this document, code elements follow a consistent pattern:
 
 The schemas built in [Creating Schemas](schema-creation.md) become useful when a reader or table provider uses them to create a `DataFrame`. DataFusion accepts an Arrow [`Schema`] through format-specific read options, resolves that source schema, builds a [`LogicalPlan`], and exposes the resulting [`DFSchema`] through `df.schema()`.
 
-If a source value cannot be parsed into the declared type, DataFusion fails instead of silently changing the contract. Once a `DataFrame` exists, later schema changes come from new lazy plans: `.select()` builds a plan with a different column order or aliases, `.cast_to()` adds type conversions, and methods such as `.with_column()` add projected fields. Those transformation patterns belong in [Transforming Schemas](schema-transformation.md) and [Schema Management with DataFrame methods](schema-methods.md). This document stays at the boundary where a schema is attached to input data and then normalized for downstream work.
+If a source value cannot be parsed into the declared type, DataFusion fails instead of silently changing the contract. Once a `DataFrame` exists, later schema changes come from new lazy plans: `.select()` builds a plan with a different column order or aliases, `.cast_to()` adds type conversions, and methods such as `.with_column()` add projected fields. Those transformation patterns belong in [Transforming Schemas](schema-transformation.md) and [Schema Management with DataFrame methods](schema-dataframe-methods.md). This document stays at the boundary where a schema is attached to input data and then normalized for downstream work.
 
 :::{admonition} Normalization after read is lazy
 :class: note

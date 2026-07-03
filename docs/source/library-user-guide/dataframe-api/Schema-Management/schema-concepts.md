@@ -346,7 +346,7 @@ Aggregate(group=[region], agg=[sum(amount)])
 
 Schema validation happens at plan-build time — `.filter(col("nonexistent").gt(lit(100)))` fails immediately with a "Column not found" error, before any data is scanned. For the full list of contract violations and error types, see [Contract Violations](#contract-violations--fail-fast-at-plan-build-time).
 
-For detailed transformation patterns (qualifiers, combining schemas, nullability handling), see [Schema Transformation](schema-transformation.md). For the specific DataFrame methods that change schema, see [DataFrame Methods](schema-methods.md).
+For detailed transformation patterns (qualifiers, combining schemas, nullability handling), see [Schema Transformation](schema-transformation.md). For the specific DataFrame methods that change schema, see [DataFrame Methods](schema-dataframe-methods.md).
 
 ---
 
@@ -366,7 +366,7 @@ These differences are handled transparently by the physical plan — the core in
 
 ---
 
-## Conclusion
+## Conclusion & Further Reading
 
 **The schema is the contract that makes DataFusion's fail-fast behavior, type safety, and query optimization possible.**
 
@@ -376,23 +376,43 @@ SQL queries in DataFusion follow the same schema lifecycle — parsing produces 
 
 The next step is to explore the internal structure of [`DFSchema`] in detail — see [Anatomy of a Schema](schema-anatomy.md) for the field-level deep dive into names, types, nullability, and metadata.
 
+**Further reading** — external specifications and DataFusion references for Arrow's type system, schema metadata, and coercion rules, useful when debugging schema mismatches, unexpected casts, or expensive conversions:
+
+| Resource                                                                                                             | Description                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)                                   | Physical memory layout, validity bitmaps, and variable-size views (for example, `StringView`) — why some casts cost.      |
+| [Arrow Schema IPC Message](https://arrow.apache.org/docs/format/Columnar.html#schema-message)                        | How fields, metadata, and nullability are serialized — helpful when diagnosing "schema mismatch" errors.                  |
+| [Parquet Logical Types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md)                        | How Parquet logical types (`DECIMAL`, timestamps, etc.) map into Arrow types.                                             |
+| [DataFusion Type Coercion Rules](https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/index.html) | The exact rules DataFusion uses to reconcile type differences (for example, joining or unioning `Int32` with `Int64`).    |
+| [DataFusion Optimizer Rules](https://docs.rs/datafusion/latest/datafusion/optimizer/index.html)                      | How the optimizer rewrites plans (it may insert implicit `CAST`s); start with `type_coercion` and `simplify_expressions`. |
+
+**Foundational books** on data modeling and query-engine internals:
+
+| Resource                                                 | Description                                                                                                                                                                                                                                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The Data Model Resource Book (Vol 1–3) — Len Silverston  | Universal data models for common domains (Vol [1](https://www.oreilly.com/library/view/the-data-model/9780471380238/), [2](https://www.oreilly.com/library/view/the-data-model/9780471353485/), [3](https://www.oreilly.com/library/view/the-data-model/9780470178454/)). |
+| Patterns of Data Modeling — David Hay                    | Conceptual modeling patterns that translate well to analytical schemas ([O'Reilly](https://www.oreilly.com/library/view/patterns-of-data/9781439819906/)).                                                                                                                |
+| The Data Warehouse Toolkit — Kimball & Ross              | Dimensional modeling (star schemas) for analytics ([O'Reilly](https://www.oreilly.com/library/view/the-data-warehouse/9781118530801/)).                                                                                                                                   |
+| Designing Data-Intensive Applications — Martin Kleppmann | Schema evolution and encoding trade-offs ([O'Reilly](https://www.oreilly.com/library/view/designing-data-intensive-applications/9781491903063/)).                                                                                                                         |
+| How Query Engines Work — Andy Grove                      | Query engine internals (DataFusion's creator) ([Leanpub](https://leanpub.com/how-query-engines-work)).                                                                                                                                                                    |
+
 ---
 
 <!-- Link references -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
-[`Schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[`SchemaRef`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
-[`SchemaProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
-[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`LogicalPlanBuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`schemaref`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
+[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
+[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
 [`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
 [`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.inner
 [`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.as_arrow
-[Parquet]: https://parquet.apache.org/
+[parquet]: https://parquet.apache.org/

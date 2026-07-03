@@ -71,7 +71,7 @@ DataFusion spreads those changes across distinct layers: most ride along with or
 
 | Desired Change                                      | Layer            | Find It In                                                                                                                                                                                    |
 | --------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add, rename, project, or unnest columns             | [`DataFrame`]    | [Schema Methods](schema-methods.md) — separate page                                                                                                                                           |
+| Add, rename, project, or unnest columns             | [`DataFrame`]    | [Schema Methods](schema-dataframe-methods.md) — separate page                                                                                                                                 |
 | Combine independently evolving DataFrames by name   | [`DataFrame`]    | [Unioning DataFrames by Column Name](#unioning-dataframes-by-column-name) — below                                                                                                             |
 | Requalify, combine, or annotate the schema directly | [`DFSchema`]     | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution), [Combining Schemas](#joining-and-merging-schemas), [Functional Dependencies](#annotating-functional-dependencies) |
 | Hand a schema to Arrow and bring it back            | Arrow [`Schema`] | [Handling Schema Transformation at the Arrow Interop Layer](#handling-schema-transformation-at-the-arrow-interop-layer) — below                                                               |
@@ -298,7 +298,7 @@ For normal table scans, declare primary-key and unique constraints on the [`Tabl
 
 **At the DataFrame layer, the [`DFSchema`] is reshaped in the background — schema changes ride along with the row-producing operations you call, and the engine derives the new contract.**
 
-Transforming data at the DataFrame layer still moves the [`DFSchema`]. [`.union_by_name()`] is the clearest case: it reconciles two inputs by column name, and that reconciliation reshapes the output schema — adding columns, relaxing nullability, and dropping functional dependencies. Those changes surface as NULLs, which the second half of this section addresses. Single-DataFrame column edits such as [`.select()`] and [`.with_column()`] stay in [Schema Methods](schema-methods.md); here the inputs are plural.
+Transforming data at the DataFrame layer still moves the [`DFSchema`]. [`.union_by_name()`] is the clearest case: it reconciles two inputs by column name, and that reconciliation reshapes the output schema — adding columns, relaxing nullability, and dropping functional dependencies. Those changes surface as NULLs, which the second half of this section addresses. Single-DataFrame column edits such as [`.select()`] and [`.with_column()`] stay in [Schema Methods](schema-dataframe-methods.md); here the inputs are plural.
 
 ### Unioning DataFrames by Column Name
 
@@ -448,7 +448,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-For expression-level NULL handling (`coalesce`, `CASE`), see [Handling Null Values](../Concepts/null-handling.md). For nullability flags and widening, see [Anatomy of a Schema — Nullability](schema-anatomy.md#nullability).
+For filling a single DataFrame's NULLs in one call — and the nullability change that fill implies — see [`.fill_null()`](schema-dataframe-methods.md#normalizing-types-and-nulls). For expression-level NULL handling (`coalesce`, `CASE`), see [Handling Null Values](../Concepts/null-handling.md). For nullability flags and widening, see [Anatomy of a Schema — Nullability](schema-anatomy.md#nullability).
 
 ---
 
@@ -508,7 +508,7 @@ To build a [`DFSchema`] from Arrow from scratch rather than recovering one, see 
 
 **You now have a layer for every schema change: reshape rows with DataFrame methods, rewrite planning context on the [`DFSchema`], and treat Arrow as a physical-only boundary whose context you rebuild on return.**
 
-On the [`DFSchema`] layer, requalification controls how DataFusion resolves columns and [`.join()`] / [`.merge()`] build a planning contract without touching rows. At the DataFrame layer, [`.union_by_name()`] evolves independently growing inputs by aligning columns on name and filling the gaps with NULL. Across both, qualifiers and functional dependencies are DataFusion-only metadata that no Arrow conversion preserves — carry them deliberately and rebuild them after the Arrow layer drops them. For the everyday DataFrame methods that add, remove, rename, or reshape columns on a single frame, continue with [Schema Methods](schema-methods.md).
+On the [`DFSchema`] layer, requalification controls how DataFusion resolves columns and [`.join()`] / [`.merge()`] build a planning contract without touching rows. At the DataFrame layer, [`.union_by_name()`] evolves independently growing inputs by aligning columns on name and filling the gaps with NULL. Across both, qualifiers and functional dependencies are DataFusion-only metadata that no Arrow conversion preserves — carry them deliberately and rebuild them after the Arrow layer drops them. For the everyday DataFrame methods that add, remove, rename, or reshape columns on a single frame, continue with [Schema Methods](schema-dataframe-methods.md).
 
 :::{admonition} Related documents
 :class: seealso
@@ -517,7 +517,7 @@ On the [`DFSchema`] layer, requalification controls how DataFusion resolves colu
 - [Creating Schemas](schema-creation.md) — Arrow and [`DFSchema`] construction from scratch
 - [Inspecting and Validating Schemas](schema-inspection.md) — display, access, validation, and basic Arrow interop
 - [Anatomy of a Schema](schema-anatomy.md) — field-level properties, qualifiers, nullability, and metadata
-- [Schema Methods](schema-methods.md) — DataFrame methods that add, remove, rename, or reshape columns
+- [Schema Methods](schema-dataframe-methods.md) — DataFrame methods that add, remove, rename, or reshape columns
   :::
 
 ---

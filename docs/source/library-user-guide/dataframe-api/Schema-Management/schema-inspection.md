@@ -690,7 +690,7 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 - [Schema Inference](schema-inference.md) — why inferred schemas should be checked before production use
 - [Type Coercion](type-coercion.md) — automatic type alignment and explicit casting
 - [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, nullability handling
-- [DataFrame Methods](schema-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
+- [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
   ::::
 
 ---

@@ -431,7 +431,7 @@ Automatic coercion widens within type families and parses literals to match thei
 - [Anatomy of a Schema](schema-anatomy.md) — per-column field properties (`name`, `data_type`, `nullable`, `metadata`)
 - [Inspecting and Validating Schemas](schema-inspection.md) — display, access, and programmatic field inspection
 - [Schema Transformation](schema-transformation.md) — qualifier manipulation, combining schemas, nullability handling
-- [DataFrame Methods](schema-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
+- [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
 - [Handling Null Values](../Concepts/null-handling.md) — NULL behavior in expressions, filters, and joins
   :::
 
