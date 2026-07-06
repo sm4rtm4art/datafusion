@@ -17,10 +17,18 @@
   under the License.
 -->
 
-<!--TODO
+<!--TODO (restructuring notes, agreed 2026-07-06)
 
 1. ABSTRACT
 2. INTRODUCTION
+3. ORPHAN HEADING — "Summary: Shared Transformations" is a monolith-split
+   artifact (summary of the old "Shared Transformations" part); rewrite as
+   this page's own conclusion.
+4. LATERAL — cross-link the lateral-join note in joins.md: a LATERAL join is
+   conceptually a correlated subquery in the FROM clause; SQL-only today
+   (no DataFrame API method), hybrid route via `ctx.sql()`.
+5. TRANSITION — this page closes the analytical part; hand off to
+   hybrid-sql.md (the bridge chapter).
 -->
 
 # Subqueries

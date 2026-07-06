@@ -18,10 +18,27 @@
 -->
 
 
-<!--TODO
+<!--TODO (restructuring map, agreed 2026-07-06)
 
 1. ABSTRACT
 2. INTRODUCTION
+3. DISSOLUTION CANDIDATE — this file is a monolith-split artifact: it holds
+   the intro + hub table of the old "Advanced DataFrame Patterns". The body
+   redistribution is now DONE (2026-07-06; see set-operations.md TODO for
+   the map) — the hub-table anchors are stale and must point cross-file:
+   hybrid methods → hybrid-sql.md, describe → data-quality.md, unnest →
+   reshaping.md, fill_null → Concepts/null-handling.md, cache/execution →
+   Writing-DataFrames/executing-dataframes.md, from_columns →
+   Creating-DataFrames/inline-data.md. Decide: keep as a short "what's
+   unique" reference page opening the DataFrame-native part, or fold into
+   transformation-concepts.md.
+4. OWNERSHIP — "Schema Manipulation" (`.with_column()`, `.with_column_renamed()`,
+   `.drop_columns()`) overlaps selection.md (which absorbs the "enrich" verb)
+   and Schema-Management/schema-dataframe-methods.md. Resolve: Transformations
+   owns enrichment usage, Schema-Management owns schema effects.
+5. HUB TABLE — after redistribution, repair anchors to cross-file links
+   (hybrid-sql.md, reshaping.md, data-quality.md, Writing-DataFrames/,
+   Creating-DataFrames/).
 -->
 
 # DataFrame-Unique Methods

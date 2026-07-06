@@ -1442,6 +1442,90 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/transformation-concepts.md",
+    dataframe_api_transformations_transformation_concepts
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/selection.md",
+    dataframe_api_transformations_selection
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/filtering.md",
+    dataframe_api_transformations_filtering
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/sorting-limiting.md",
+    dataframe_api_transformations_sorting_limiting
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins.md",
+    dataframe_api_transformations_joins
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/set-operations.md",
+    dataframe_api_transformations_set_operations
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/aggregations.md",
+    dataframe_api_transformations_aggregations
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/window-functions.md",
+    dataframe_api_transformations_window_functions
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/subqueries.md",
+    dataframe_api_transformations_subqueries
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/hybrid-sql.md",
+    dataframe_api_transformations_hybrid_sql
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/reshaping.md",
+    dataframe_api_transformations_reshaping
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/data-quality.md",
+    dataframe_api_transformations_data_quality
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/dataframe-specifics.md",
+    dataframe_api_transformations_dataframe_specifics
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/builder-patterns.md",
+    dataframe_api_transformations_builder_patterns
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
     "../../../docs/source/library-user-guide/dataframe-api/transformations.md",
     dataframe_api_transformations
 );

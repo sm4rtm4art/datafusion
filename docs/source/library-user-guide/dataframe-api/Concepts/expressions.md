@@ -17,6 +17,17 @@
   under the License.
 -->
 
+<!--TODO (relocated from Transformations/index.md, 2026-07-06)
+
+FUNCTION LIBRARIES — this page covers the `Expr` model but not the practical
+function vocabulary. Consider a section (or onward links) covering:
+- encoding functions: https://docs.rs/datafusion/latest/datafusion/functions/encoding/index.html
+- nested/array functions: https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html
+- datetime functions: https://docs.rs/datafusion/latest/datafusion/functions/datetime/index.html
+Transformations/transformation-concepts.md (§Expressions) recaps and links
+here; decide owner vs. pointer-to-docs.rs during rework.
+-->
+
 # Expressions: The Building Blocks of Queries
 
 **If `DataFrame` is the Framework and `LogicalPlan` holds the relational operators (Filter, Join, Projection), then `Expr` represents the row-level logic _inside_ those operators.**

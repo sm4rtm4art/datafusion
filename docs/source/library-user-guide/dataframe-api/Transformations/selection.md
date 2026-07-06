@@ -17,10 +17,21 @@
   under the License.
 -->
 
-<!--TODO
+<!--TODO (restructuring notes, agreed 2026-07-06)
 
 1. ABSTRACT
 2. INTRODUCTION
+3. SCOPE GROWS — this page absorbs the "enrich" verb (column derivation):
+   `.with_column()`, `.with_column_renamed()`, `.drop_columns()` as
+   first-class sections, not side mentions. Title may widen accordingly
+   (e.g. "Selection and Column Derivation").
+4. OWNERSHIP — Transformations owns the enrichment usage; the schema
+   effects of these methods are owned by
+   Schema-Management/schema-dataframe-methods.md — recap + link, don't
+   duplicate. Overlap with dataframe-specifics.md §Schema Manipulation
+   resolves per its dissolution TODO.
+5. POSITION — first action page in the reading order; opens on the
+   running-example dataset (introduced in transformation-concepts.md).
 -->
 
 # Selection and Projection Mastery

@@ -17,10 +17,24 @@
   under the License.
 -->
 
-<!--TODO
+<!--TODO (restructuring notes, agreed 2026-07-06)
 
 1. ABSTRACT
 2. INTRODUCTION
+3. LATERAL JOINS — add a condensed mention: SQL planner supports LATERAL
+   (derived tables / table functions, incl. APPLY syntax; see
+   datafusion/sql/src/relation/join.rs and issue #10048); no DataFrame API
+   method exists — honest "SQL shines" note, DataFrame route is hybrid via
+   `ctx.sql()`. Conceptually a correlated subquery in FROM → cross-link
+   subqueries.md.
+4. EXECUTION UPDATE — "How Joins Execute" gains a note on the piecewise
+   merge join operator (datafusion/physical-plan/src/joins/piecewise_merge_join)
+   for range/inequality join conditions.
+5. EXTRACTION CANDIDATE — the cognitive head (Why Joins Matter / How Joins
+   Work / How Joins Execute / Join Types at a Glance) is ~250 lines; if
+   transformation-concepts.md outgrows its budget, extract join-concepts.md.
+   transformation-concepts.md carries only a condensed "Joins in Brief" recap
+   linking here.
 -->
 
 # When DataFrames Collide: Join Patterns

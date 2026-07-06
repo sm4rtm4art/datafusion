@@ -17,6 +17,26 @@
   under the License.
 -->
 
+<!--TODO (restructuring map, agreed 2026-07-06)
+
+1. ROLE — this page is now the BRIDGE chapter: it closes the shared-verbs
+   part and opens the DataFrame-native part (toctree position after
+   subqueries, before reshaping).
+2. DONE (2026-07-06) — arrived from set-operations.md: "SQL-DataFrame Hybrid
+   Methods", "Parsing SQL Expressions", "Selecting with SQL Expressions",
+   "Parameter Binding" (raw material near the end of the file; fold into the
+   structure per item 4). NOTE: the Parameter Binding example never calls
+   `.with_param_values()` — see inline TODO.
+3. DONE (2026-07-06) — "DISTINCT ON (PostgreSQL-Style)" moved out to
+   set-operations.md (deduplication belongs to set operations).
+4. The pre-existing restructure plan below still stands (merge the two
+   bridging sections, drop the copy-paste tail from dataframe-specifics).
+5. BROKEN LINK — "[When Row-Based TableProviders Outperform Columnar]
+   (#when-row-based-tableproviders-outperform-columnar)" uses a local anchor;
+   the target section now lives in transformation-concepts.md (was already
+   cross-file when it lived in index.md). Repair during rework.
+-->
+
 <!--  TODO: 
 
 <!--TODO
@@ -325,51 +345,8 @@ async fn main() -> Result<()> {
 
 These methods have SQL counterparts but offer ergonomic advantages for programmatic use.
 
-### DISTINCT ON (PostgreSQL-Style)
-
-[`.distinct_on()`] keeps the first row for each unique value in specified columns. DataFusion also supports this via SQL (`SELECT DISTINCT ON (...)`), but the DataFrame method integrates naturally into pipelines:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let ctx = SessionContext::new();
-
-    // Create and register a table for the SQL DISTINCT ON example
-    let df = dataframe!(
-        "customer" => ["Alice", "Alice", "Bob", "Bob"],
-        "order_date" => ["2024-01-01", "2024-01-15", "2024-01-05", "2024-01-02"],
-        "amount" => [100, 200, 150, 75]
-    )?;
-    ctx.register_table("orders", df.into_view())?;
-
-    // Use SQL DISTINCT ON which DataFusion supports
-    let first_orders = ctx.sql("
-        SELECT DISTINCT ON (customer) customer, order_date, amount
-        FROM orders
-        ORDER BY customer, order_date ASC
-    ").await?;
-
-    first_orders.show().await?;
-    // +----------+------------+--------+
-    // | customer | order_date | amount |
-    // +----------+------------+--------+
-    // | Alice    | 2024-01-01 | 100    |
-    // | Bob      | 2024-01-02 | 75     |
-    // +----------+------------+--------+
-    Ok(())
-}
-```
-
-**SQL equivalent:**
-
-```sql
-SELECT DISTINCT ON (customer) customer, order_date, amount
-FROM orders
-ORDER BY customer, order_date ASC;
-```
+<!-- MOVED OUT (2026-07-06): "DISTINCT ON (PostgreSQL-Style)" →
+set-operations.md (deduplication belongs to set operations). -->
 
 ### Aliasing DataFrames
 
@@ -420,6 +397,139 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+<!-- MOVED HERE from set-operations.md (monolith-split repair, 2026-07-06) —
+raw material: the SQL-string-to-DataFrame bridge methods belong to this
+bridge chapter; rework pending (placement per the file-top restructure plan,
+restore missing link definitions). -->
+
+### SQL-DataFrame Hybrid Methods
+
+These methods let you combine SQL's familiar syntax with DataFrame's programmatic power—the best of both worlds.
+
+| Method                | Input             | Output      | Use Case                                  |
+| --------------------- | ----------------- | ----------- | ----------------------------------------- |
+| [`.parse_sql_expr()`] | SQL string        | `Expr`      | Single expression from config/user input  |
+| [`.select_exprs()`]   | SQL strings array | `DataFrame` | Multiple computed columns with SQL syntax |
+
+### Parsing SQL Expressions
+
+[`.parse_sql_expr()`] converts a SQL expression string into a DataFusion `Expr`. Useful when you want SQL syntax for complex expressions but DataFrame chaining for the overall pipeline:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_eq;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    let df = ctx.sql("SELECT 1 as a, 2 as b, 3 as c").await?;
+
+    // Parse SQL expression string into an Expr
+    let expr = df.parse_sql_expr("a + b * 2")?;
+
+    // Use it in DataFrame operations
+    let df = df.select(vec![col("a"), col("b"), expr.alias("computed")])?;
+
+    let results = df.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+---+---+----------+",
+            "| a | b | computed |",
+            "+---+---+----------+",
+            "| 1 | 2 | 5        |",
+            "+---+---+----------+",
+        ],
+        &results
+    );
+    Ok(())
+}
+```
+
+> **Use case:** Dynamically building expressions from user input or configuration files while maintaining type safety in the rest of your pipeline.
+
+### Selecting with SQL Expressions
+
+[`.select_exprs()`] takes an array of SQL expression strings and projects them—combining SQL's concise syntax with DataFrame chaining:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = SessionContext::new();
+
+    let df = ctx.sql("SELECT 'Alice' as name, 100 as price, 0.1 as tax_rate").await?;
+
+    // Use SQL syntax for complex expressions
+    let df = df.select_exprs(&[
+        "UPPER(name) AS upper_name",
+        "price * (1 + tax_rate) AS total",
+        "CASE WHEN price > 50 THEN 'expensive' ELSE 'cheap' END AS category"
+    ])?;
+
+    df.show().await?;
+    // +------------+-------+-----------+
+    // | upper_name | total | category  |
+    // +------------+-------+-----------+
+    // | ALICE      | 110.0 | expensive |
+    // +------------+-------+-----------+
+    Ok(())
+}
+```
+
+> **Why use this over pure SQL?** You get SQL's expression syntax while keeping DataFrame's:
+>
+> - **Chaining:** `.filter()`, `.join()`, `.aggregate()` flow naturally
+> - **Composition:** Build pipelines programmatically
+> - **Type checking:** Rust compiler catches method name typos
+
+### Parameter Binding
+
+[`.with_param_values()`] binds parameter values to placeholders (`$1`, `$2`, ...) in a plan—useful for prepared statement patterns and preventing SQL injection:
+
+<!-- TODO: the example below never calls `.with_param_values()` — it shows a
+plain `.filter()` with a Rust variable (refactoring artifact). Replace with a
+real placeholder-binding example (e.g. `ctx.sql("... WHERE age > $1")` +
+`.with_param_values(...)`) during rework. -->
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::common::ScalarValue;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create data and register it
+    let df = dataframe!(
+        "name" => ["Alice", "Bob", "Carol"],
+        "age" => [30, 25, 35]
+    )?;
+
+    // Filter using a runtime parameter
+    let min_age = 28;  // Could come from user input, config, etc.
+    let filtered = df.filter(col("age").gt(lit(min_age)))?;
+
+    filtered.show().await?;
+    // +-------+-----+
+    // | name  | age |
+    // +-------+-----+
+    // | Alice | 30  |
+    // | Carol | 35  |
+    // +-------+-----+
+
+    Ok(())
+}
+```
+
+> **Use cases:**
+>
+> - **Reusable templates** — Build query once, bind different values
+> - **User input** — Safely inject user-supplied values without SQL injection risk
+> - **Dynamic filtering** — Change filter values without rebuilding the plan
 
 ### Summary: DataFrame-Unique Methods
 

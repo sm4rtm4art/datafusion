@@ -33,6 +33,18 @@ TODO(Docs): executing-dataframes.md - Materializing Results to RAM
 
 3. LINK OUT:
    - Add a note: "If your dataset is larger than RAM, see [Streaming Execution](streaming-execution.md) or write directly to disk [Writing DataFrames](writing-dataframes.md)."
+
+4. REPARTITION (flagged 2026-07-06): `.repartition()` is only mentioned in
+   passing (§collect_partitioned) — give it a proper home here or in
+   streaming-execution.md (partition control before partition-aware
+   execution), and cross-reference from Transformations where partitioning
+   matters. Decided owner: Writing-DataFrames, not Transformations.
+
+5. HANDSHAKE (2026-07-06): set-operations.md carried duplicate coverage of
+   `.cache()`, execution control, streaming, and partition-aware execution
+   (monolith-split artifact) — deleted there in favor of this file's
+   sections; nothing unique was lost (verified against §Caching Results and
+   §Partitioned & Streaming Execution).
 -->
 
 ## DataFrame Execution

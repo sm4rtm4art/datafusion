@@ -17,10 +17,16 @@
   under the License.
 -->
 
-<!--TODO
+<!--TODO (content backlog, agreed 2026-07-06)
 
 1. ABSTRACT
 2. INTRODUCTION
+3. EMPTY SHELL — no body content yet. Methods to cover: `.sort()`
+   (SortExpr, asc/desc, nulls first/last), `.sort_by()` (default ascending
+   convenience), `.limit(skip, fetch)` (OFFSET + LIMIT in one call).
+4. POSITION — third page of the single-frame part (after selection and
+   filtering); include SQL equivalents (ORDER BY / LIMIT / OFFSET) and the
+   top-N pattern (sort + limit) with its optimization note.
 -->
 
 # Sorting and Limiting

@@ -17,20 +17,23 @@
   under the License.
 -->
 
-<!--TODO: :::{admonition} Style Note
-:class: note
-:collapsible: closed
+<!--TODO (restructuring notes, agreed 2026-07-06)
 
-In this document, code elements follow a consistent pattern:
-
-- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
-- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
-- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
-- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
-- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
-- **Actions:** (`.collect()`, `.show()`) trigger execution
-
-:::-->
+1. ABSTRACT
+2. INTRODUCTION
+3. DUPLICATE H1 — the title "Data Validation & Quality" appears twice
+   (refactoring artifact); the second occurrence must become the first H2.
+4. DONE (2026-07-06) — "Describing Data" (`.describe()`) arrived from
+   set-operations.md as raw material (before "Summary: Builder Methodology");
+   fits the declared "Quality Inspection" concern. Rework: frame as async
+   ACTION, place under the right H2.
+5. RECAP + LINK — `.fill_null()` gets a one-sentence recap here (cleaning
+   strategy); owner is Concepts/null-handling.md §Null-Handling Toolkit. The
+   full copy in set-operations.md is deleted as duplicate.
+6. HEADING DEPTH — body starts at H3 ("Data Constraint Validation"); lift to
+   H2 grain during rework. "Summary: Builder Methodology" is an orphan
+   heading from the monolith split.
+-->
 
 
 
@@ -285,6 +288,49 @@ For ML pipelines and data-sensitive applications, understanding how transformati
 These patterns come from research on [ML pipeline inspection][blue elephants inspecting pandas], which showed that many ML fairness issues originate in data preparation, not model training.
 
 > **See [Advanced Topics § Data Quality](dataframes-advance.md#data-quality--bias-inspection)** for complete implementations with code examples.
+
+<!-- MOVED HERE from set-operations.md (monolith-split repair, 2026-07-06) —
+raw material for the Quality Inspection concern; rework pending: frame
+`.describe()` as an async ACTION (pub async fn, triggers execution), lift to
+the right heading grain, restore missing link definitions. -->
+
+### Describing Data
+
+[`.describe()`] generates summary statistics for all columns—similar to pandas' `df.describe()`. No single SQL statement can do this:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let df = dataframe!(
+        "product" => ["A", "B", "C", "D", "E"],
+        "price" => [10.0, 25.0, 15.0, 30.0, 20.0],
+        "quantity" => [100, 50, 75, 25, 60]
+    )?;
+
+    // Get summary statistics
+    let stats = df.describe().await?;
+    stats.show().await?;
+
+    // Output includes: count, null_count, mean, std, min, max, median
+    // +------------+---------+-------+----------+
+    // | describe   | product | price | quantity |
+    // +------------+---------+-------+----------+
+    // | count      | 5.0     | 5.0   | 5.0      |
+    // | null_count | 0.0     | 0.0   | 0.0      |
+    // | mean       | null    | 20.0  | 62.0     |
+    // | std        | null    | 7.9   | 27.4     |
+    // | min        | A       | 10.0  | 25       |
+    // | max        | E       | 30.0  | 100      |
+    // | median     | null    | 20.0  | 60.0     |
+    // +------------+---------+-------+----------+
+    Ok(())
+}
+```
+
+> **SQL equivalent:** Would require 7+ separate aggregate queries unioned together—tedious and error-prone.
 
 ### Summary: Builder Methodology
 

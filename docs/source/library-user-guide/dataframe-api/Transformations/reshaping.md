@@ -17,10 +17,18 @@
   under the License.
 -->
 
-<!--TODO
+<!--TODO (restructuring notes, agreed 2026-07-06)
 
 1. ABSTRACT
 2. INTRODUCTION
+3. DONE (2026-07-06) — "Unnesting Arrays" (retitled "Unnesting with Arrow
+   List Columns" to avoid a duplicate anchor) and "Controlling Unnest
+   Behavior with Options" arrived from set-operations.md as raw material —
+   merge with the thinner unnest treatment above during rework.
+4. BROKEN LINK — "see the workaround in [DataFrame-Unique Methods]
+   (#dataframe-unique-methods)" uses a local anchor for a cross-file target;
+   repair after the dataframe-specifics.md decision.
+5. POSITION — opens the DataFrame-native part (after the hybrid-sql bridge).
 -->
 
 # Reshaping Data
@@ -107,5 +115,140 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 > **See also:** [PySpark explode] — similar operation in Spark DataFrames.
+
+<!-- MOVED HERE from set-operations.md (monolith-split repair, 2026-07-06) —
+raw material; rework pending: merge with the thinner unnest example above
+(duplicate coverage of `.unnest_columns()`). -->
+
+### Unnesting with Arrow List Columns
+
+[`.unnest_columns()`] explodes array (list) columns into multiple rows—one row per array element. SQL's `UNNEST` syntax varies significantly across databases; DataFusion provides a consistent API.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_eq;
+use std::sync::Arc;
+use arrow::array::{ArrayRef, StringArray, ListArray, Int32Array};
+use arrow::datatypes::{DataType, Field};
+use arrow::buffer::OffsetBuffer;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create a DataFrame with a list column
+    let tags_field = Arc::new(Field::new_list_field(DataType::Utf8, true));
+    let tags = ListArray::new(
+        tags_field,
+        OffsetBuffer::from_lengths([2, 1]),  // Alice has 2 tags, Bob has 1
+        Arc::new(StringArray::from(vec!["vip", "early", "new"])),
+        None
+    );
+
+    let df = DataFrame::from_columns(vec![
+        ("customer", Arc::new(StringArray::from(vec!["Alice", "Bob"])) as ArrayRef),
+        ("tags", Arc::new(tags) as ArrayRef),
+    ])?;
+
+    // Explode the tags array into rows
+    let expanded = df.unnest_columns(&["tags"])?;
+
+    let results = expanded.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----------+-------+",
+            "| customer | tags  |",
+            "+----------+-------+",
+            "| Alice    | vip   |",
+            "| Alice    | early |",
+            "| Bob      | new   |",
+            "+----------+-------+",
+        ],
+        &results
+    );
+    Ok(())
+}
+```
+
+### Controlling Unnest Behavior with Options
+
+[`.unnest_columns_with_options()`] provides fine-grained control via [`UnnestOptions`]:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_eq;
+use datafusion_common::UnnestOptions;
+use std::sync::Arc;
+use arrow::array::{ArrayRef, StringArray, ListArray};
+use arrow::datatypes::{DataType, Field};
+use arrow::buffer::OffsetBuffer;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create data with null and empty arrays
+    let tags_field = Arc::new(Field::new_list_field(DataType::Utf8, true));
+
+    // Alice: ["vip"], Bob: null, Carol: [] (empty)
+    let tags = ListArray::new(
+        tags_field,
+        OffsetBuffer::from_lengths([1, 0, 0]),
+        Arc::new(StringArray::from(vec!["vip"])),
+        Some(vec![true, false, true].into())  // Bob's entry is null
+    );
+
+    let df = DataFrame::from_columns(vec![
+        ("customer", Arc::new(StringArray::from(vec!["Alice", "Bob", "Carol"])) as ArrayRef),
+        ("tags", Arc::new(tags) as ArrayRef),
+    ])?;
+
+    // Default: preserve_nulls = true (keeps null rows)
+    let with_nulls = df.clone()
+        .unnest_columns_with_options(&["tags"], UnnestOptions::new())?;
+
+    let results = with_nulls.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----------+------+",
+            "| customer | tags |",
+            "+----------+------+",
+            "| Alice    | vip  |",
+            "| Bob      |      |",
+            "+----------+------+",
+        ],
+        &results
+    );
+
+    // Skip nulls and empty arrays
+    let without_nulls = df
+        .unnest_columns_with_options(
+            &["tags"],
+            UnnestOptions::new().with_preserve_nulls(false)
+        )?;
+
+    let results = without_nulls.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----------+------+",
+            "| customer | tags |",
+            "+----------+------+",
+            "| Alice    | vip  |",
+            "+----------+------+",
+        ],
+        &results
+    );
+    Ok(())
+}
+```
+
+**UnnestOptions fields:**
+
+| Option           | Default | Effect                                                               |
+| ---------------- | ------- | -------------------------------------------------------------------- |
+| `preserve_nulls` | `true`  | Keep rows where the array is `NULL` (outputs `NULL` for that column) |
+| `recursions`     | `[]`    | For nested arrays, specify recursion depth per column                |
+
+> **Nested arrays:** For deeply nested structures (e.g., `List<List<Int>>`), use `RecursionUnnestOption` to control how many levels to flatten.
+
+[`unnestoptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
 
 ---

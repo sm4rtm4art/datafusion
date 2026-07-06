@@ -17,6 +17,24 @@
   under the License.
 -->
 
+<!--TODO (RETIREMENT PENDING, flagged 2026-07-06)
+
+This legacy monolith is superseded by the phased leaf pages in
+Transformations/ (source of truth per the restructuring). Before deleting:
+1. Confirm no content survives only here (the "Data-Cleaning Journey"
+   narrative is reborn as the running-example dataset thread in
+   Transformations/transformation-concepts.md §Meet the Dataset).
+2. Repair inbound links: dataframe-api/index.md routes here (Quick
+   Navigation, "Transform data" rows).
+3. Remove from any toctree that still lists it.
+4. DOCTESTS — this file is the ONLY Transformations doc registered in
+   datafusion/core/src/lib.rs (doc_comment::doctest!, ~line 1445); the
+   Transformations/ leaf files are not registered. Retiring this file drops
+   doctest coverage to zero until the leaves are registered — registration
+   changes require discussion first (AGENTS.md code exception).
+Resolve at the end of the Transformations rework, before dataframe.md.
+-->
+
 # Transformations with DataFrame API
 
 <!-- TODO: Diskuss Mayor refractoring!
