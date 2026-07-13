@@ -605,7 +605,7 @@ Partition pruning is the optimization that skips directories whose path-derived 
 
 ---
 
-## Conclusion & Further Reading
+## Conclusion
 
 **Applying schemas at the read boundary means matching each source of column meaning to the API that owns it.**
 
@@ -613,7 +613,8 @@ Raw input becomes reliable only after DataFusion knows the column names, data ty
 
 Use explicit schemas for text formats, canonical schemas for self-describing datasets, schema metadata for semantic context, and separate partition-column declarations for directory layouts. After reading, inspect the resulting schema before relying on downstream transformations.
 
-### Further Reading
+:::{admonition} Related documents
+:class: seealso
 
 Continue with these pages when you need to define, infer, inspect, or transform schemas after the read boundary.
 
@@ -622,6 +623,7 @@ Continue with these pages when you need to define, infer, inspect, or transform 
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking the applied `DFSchema` before execution
 - [Type Coercion](type-coercion.md) — how the analyzer widens expression types and when explicit casts are needed
 - [Transforming Schemas](schema-transformation.md) — changing qualifiers, combining schemas, and adapting existing `DFSchema` values
+:::
 
 <!-- Link references -->
 

@@ -298,7 +298,7 @@ async fn main() -> datafusion::error::Result<()> {
 If validation fails — for example, inference chose `Float64` for a currency column that needs `Decimal128(19, 2)` — the fix is to provide an explicit schema via [`CsvReadOptions::schema()`] instead of relying on inference. See [Creating Schemas](schema-creation.md) for how to construct one.
 :::
 
-## Conclusion & Further Reading
+## Conclusion
 
 **Inference is a convenience — not a contract. Validate inferred schemas before production use, or provide explicit schemas from the start.**
 
@@ -310,8 +310,7 @@ Schema inference provides a fast on-ramp for exploration, but the guess is based
 - [Creating Schemas](schema-creation.md) — constructing explicit schemas programmatically
 - [Applying Explicit Schemas at Read Time](schema-application.md) — format-specific schema strategies
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking inferred schemas before use
-
-::::
+:::
 
 <!-- Link references -->
 

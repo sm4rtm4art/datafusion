@@ -504,7 +504,7 @@ To build a [`DFSchema`] from Arrow from scratch rather than recovering one, see 
 
 ---
 
-## Conclusion & Further Reading
+## Conclusion
 
 **You now have a layer for every schema change: reshape rows with DataFrame methods, rewrite planning context on the [`DFSchema`], and treat Arrow as a physical-only boundary whose context you rebuild on return.**
 
@@ -518,7 +518,7 @@ On the [`DFSchema`] layer, requalification controls how DataFusion resolves colu
 - [Inspecting and Validating Schemas](schema-inspection.md) — display, access, validation, and basic Arrow interop
 - [Anatomy of a Schema](schema-anatomy.md) — field-level properties, qualifiers, nullability, and metadata
 - [Schema Methods](schema-dataframe-methods.md) — DataFrame methods that add, remove, rename, or reshape columns
-  :::
+:::
 
 ---
 

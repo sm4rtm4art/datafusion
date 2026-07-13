@@ -31,11 +31,19 @@ stabilize, markdown-landing.mdc §1.3; 2026-07-06)
 3. DELETED: "What's Ahead" (dead anchors into the old monolith; replaced by
    the curated routing table below). Style Note + contents block (prohibited
    on landing pages, markdown-landing.mdc §1.2).
-4. PENDING: rendered starting-dataset table (text block, not code) once the
-   running-example dataset is designed — narrates the data journey here,
-   definition code lives in transformation-concepts.md.
-5. PENDING: curated routing table (arc: concepts → single-frame →
-   multi-frame → analytical → hybrid bridge → DataFrame-native → capstone).
+4. DONE 2026-07-10 (move handshake from transformation-concepts.md): rendered
+   starting-dataset preview (text blocks, not code) for customer_df + orders_df
+   with a one-paragraph narration; definition + worked pipeline stay in
+   transformation-concepts.md#from-concepts-to-methods (worked pipeline). Keep table text in sync with
+   the concept-page doctest output if the dataset changes.
+5. RECEIVED 2026-07-10 (move handshake from transformation-concepts.md): the
+   five-dimension reading-path table (what-changes → family → page) now renders
+   below as the curated routing table; routing is the landing page's job
+   (markdown-landing.mdc §1.1). PENDING: finalize into the full reading arc
+   (concepts → single-frame → multi-frame → analytical → hybrid bridge →
+   DataFrame-native → capstone) once leaf pages stabilize (§1.3), folding in the
+   remaining pages (subqueries, hybrid-sql, reshaping, data-quality,
+   dataframe-specifics, builder-patterns).
 -->
 
 # Transformations with DataFrame API
@@ -65,10 +73,43 @@ dataframe-specifics
 builder-patterns
 ```
 
-<!-- PLACEHOLDER: curated routing table (see file-top TODO 5). -->
+**Reading path.** The transformation methods group into families by what they change — the five dimensions from [Transformations Concepts](transformation-concepts.md#what-transformations-can-change). Use this to jump to the page that covers each family in full:
 
-<!-- PLACEHOLDER: rendered starting-dataset table + one-paragraph journey
-narration (see file-top TODO 4). -->
+| What changes   | Method family                          | Page                                                                          |
+| :------------- | :------------------------------------- | :---------------------------------------------------------------------------- |
+| Schema         | projection, column creation, renaming  | [Selection](selection.md)                                                     |
+| Cardinality    | filtering, limiting, deduplication     | [Filtering](filtering.md), [Sorting & Limiting](sorting-limiting.md), [Set Operations](set-operations.md) |
+| Ordering       | sorting                                | [Sorting & Limiting](sorting-limiting.md)                                     |
+| Grain          | aggregation, windows                   | [Aggregations](aggregations.md), [Window Functions](window-functions.md)      |
+| Frame boundary | joins, set operations                  | [Joins](joins.md), [Set Operations](set-operations.md)                        |
+
+**The running dataset.** Every page in this section works the same two frames — `customer_df` (one row per customer) and `orders_df` (one row per order, linked by `customer_id`). Two gaps are intentional: Carol has no orders, and order 104 points at a customer that does not exist, so joins and data-quality checks have something to reveal. The definition and a worked pipeline live in [Transformations Concepts](transformation-concepts.md#from-concepts-to-methods); here is the shape you will keep seeing:
+
+`customer_df`
+
+```text
++-------------+-------+--------+-------------+
+| customer_id | name  | region | signup_date |
++-------------+-------+--------+-------------+
+| 1           | Alice | West   | 2023-01-15  |
+| 2           | Bob   | East   | 2023-03-22  |
+| 3           | Carol | West   | 2023-06-10  |
+| 4           | Dave  | East   | 2023-09-01  |
++-------------+-------+--------+-------------+
+```
+
+`orders_df`
+
+```text
++----------+-------------+---------+--------+----------+------------+
+| order_id | customer_id | product | amount | quantity | order_date |
++----------+-------------+---------+--------+----------+------------+
+| 101      | 1           | Widget  | 100    | 2        | 2024-01-05 |
+| 102      | 1           | Gadget  | 200    | 1        | 2024-02-11 |
+| 103      | 2           | Widget  | 150    | 3        | 2024-01-20 |
+| 104      | 99          | Gizmo   | 300    | 1        | 2024-03-02 |
++----------+-------------+---------+--------+----------+------------+
+```
 
 <!-- Link references -->
 

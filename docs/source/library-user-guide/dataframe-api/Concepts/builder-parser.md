@@ -19,7 +19,7 @@
 
 # Two Paths to the Same Plan: Parser vs Builder
 
-**SQL and the DataFrame API are two front-ends to the same query engine**<br>
+**Datafusions DataFrame-API and SQL-API are two interfaces to the same query engine**
 
 Both compile to identical [`LogicalPlan`] representations, receive the same optimizations, and execute with the same performance. This unified architecture means you can choose whichever API fits your workflow without sacrificing speed, and you can freely combine both in a single application.
 

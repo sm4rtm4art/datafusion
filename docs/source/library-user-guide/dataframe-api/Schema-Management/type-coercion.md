@@ -419,13 +419,13 @@ async fn main() -> datafusion::error::Result<()> {
 In DataFusion SQL, `CAST(col AS type)` corresponds to [`cast()`], and `TRY_CAST(col AS type)` corresponds to [`try_cast()`]. The `arrow_cast()` SQL function provides Arrow-specific casting with full type syntax (e.g., `arrow_cast(col, 'Timestamp(Second, None)')`), and `arrow_typeof()` returns the Arrow type of any expression — useful for debugging coercion behavior. See [SQL Data Types](../../sql/data_types.md) for details.
 :::
 
-## Conclusion & Further Reading
+## Conclusion
 
 **The [`TypeCoercion`] analyzer resolves most type mismatches automatically — use [`cast()`] or [`try_cast()`] for the rest.**
 
 Automatic coercion widens within type families and parses literals to match their context. Set operations require column-by-column compatibility. When the analyzer rejects a mismatch, [`cast()`] provides a hard conversion that fails on bad values, while [`try_cast()`] substitutes `NULL` for resilient pipelines. Use `explain()` to inspect the `CAST` nodes the analyzer inserts, and `.schema()` to verify result types before execution.
 
-:::{admonition} Next steps
+:::{admonition} Related documents
 :class: seealso
 
 - [Anatomy of a Schema](schema-anatomy.md) — per-column field properties (`name`, `data_type`, `nullable`, `metadata`)
@@ -433,7 +433,7 @@ Automatic coercion widens within type families and parses literals to match thei
 - [Schema Transformation](schema-transformation.md) — qualifier manipulation, combining schemas, nullability handling
 - [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
 - [Handling Null Values](../Concepts/null-handling.md) — NULL behavior in expressions, filters, and joins
-  :::
+:::
 
 <!-- Link references -->
 

@@ -21,7 +21,7 @@
 
 1. ABSTRACT
 2. INTRODUCTION
-3. LATERAL JOINS — add a condensed mention: SQL planner supports LATERAL
+3. LATERAL JOINS (consideration of implementation) — add a condensed mention: SQL planner supports LATERAL
    (derived tables / table functions, incl. APPLY syntax; see
    datafusion/sql/src/relation/join.rs and issue #10048); no DataFrame API
    method exists — honest "SQL shines" note, DataFrame route is hybrid via
@@ -34,7 +34,27 @@
    Work / How Joins Execute / Join Types at a Glance) is ~250 lines; if
    transformation-concepts.md outgrows its budget, extract join-concepts.md.
    transformation-concepts.md carries only a condensed "Joins in Brief" recap
-   linking here.
+   linking here (handshake recorded 2026-07-10: that recap now exists at
+   transformation-concepts.md#joins-in-brief).
+6. FRAME-BOUNDARY ALIGNMENT (future) — the ## Introduction (currently "a join
+   takes two DataFrames … produces a wider table") defines joins primarily by
+   widening. Align with the frame-boundary model now used by
+   transformation-concepts.md#joins-in-brief: a join crosses the frame boundary
+   (two input frames); MANY joins widen the schema by carrying columns from both;
+   semi/anti are the exception (existence test, no right columns). Do NOT define
+   joins primarily as "widening the result."
+7. EXECUTION/OPTIMIZER DEPTH REVIEW (future) — "How Joins Execute" plus the
+   scattered optimizer/perf claims (build-side swap, dynamic filters, "16x
+   faster", partition mode) exceed leaf-page recap altitude. Review for accuracy
+   against source and decide ownership (this page vs.
+   Concepts/architectural-dataframe.md / execution owner). No performance claims
+   beyond what source supports (markdown.mdc §1, §4).
+8. TAXONOMY/API/TROUBLESHOOTING OWNERSHIP (future) — this page owns the full
+   JoinType taxonomy, .join()/.join_on() API guide, and troubleshooting;
+   transformation-concepts.md#joins-in-brief only recaps the frame-boundary
+   concept and links here. When the per-method SQL equivalents are distributed
+   from transformation-concepts.md Method Families, the join SQL equivalents land
+   on this page.
 -->
 
 # When DataFrames Collide: Join Patterns

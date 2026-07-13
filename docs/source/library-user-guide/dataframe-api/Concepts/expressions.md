@@ -17,17 +17,6 @@
   under the License.
 -->
 
-<!--TODO (relocated from Transformations/index.md, 2026-07-06)
-
-FUNCTION LIBRARIES — this page covers the `Expr` model but not the practical
-function vocabulary. Consider a section (or onward links) covering:
-- encoding functions: https://docs.rs/datafusion/latest/datafusion/functions/encoding/index.html
-- nested/array functions: https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html
-- datetime functions: https://docs.rs/datafusion/latest/datafusion/functions/datetime/index.html
-Transformations/transformation-concepts.md (§Expressions) recaps and links
-here; decide owner vs. pointer-to-docs.rs during rework.
--->
-
 # Expressions: The Building Blocks of Queries
 
 **If `DataFrame` is the Framework and `LogicalPlan` holds the relational operators (Filter, Join, Projection), then `Expr` represents the row-level logic _inside_ those operators.**
@@ -145,7 +134,7 @@ async fn main() -> Result<()> {
 | `.and()`, `.or()`         | Logical combinators           | `expr1.and(expr2)`                         |
 | `cast(expr, type)`        | Type conversion               | `cast(col("ts"), DataType::Timestamp(..))` |
 
-Beyond these basics, every built-in scalar function (`abs()`, `upper()`, `coalesce()`, etc.) and every user-defined function (UDF) also produces an `Expr` when called. Window functions (`row_number()`, `rank()`, `lead()`, etc.) create `Expr::WindowFunction` variants — see [Window Functions](../../user-guide/sql/window_functions.md) for details.
+Beyond these basics, every built-in scalar function (`abs()`, `upper()`, `coalesce()`, etc.) and every user-defined function (UDF) also produces an `Expr` when called. Window functions (`row_number()`, `rank()`, `lead()`, etc.) create `Expr::WindowFunction` variants — see [Window Functions](../../../user-guide/sql/window_functions.md) for details. The built-in function libraries — scalar, array, aggregate, and window — are collected under [Further Reading](#further-reading).
 
 ---
 
@@ -179,5 +168,6 @@ With expressions understood, the next section covers what happens when you trigg
 ## Further Reading
 
 - [Working with Exprs](../../working-with-exprs.md) — implementation guide for custom UDFs and expression rewriting
-- [Expressions guide](../../user-guide/expressions.md) — expression syntax and usage patterns
+- [Expressions guide](../../../user-guide/expressions.md) — expression syntax and usage patterns
 - [`Expr` API docs](https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.Expr.html) — full enum reference
+- Function libraries — every built-in function produces an `Expr`: [scalar](https://docs.rs/datafusion/latest/datafusion/functions/index.html) (math, string, datetime, encoding, regex, crypto), [array/nested](https://docs.rs/datafusion/latest/datafusion/functions_nested/index.html), [aggregate](https://docs.rs/datafusion/latest/datafusion/functions_aggregate/index.html), and [window](https://docs.rs/datafusion/latest/datafusion/functions_window/index.html) functions

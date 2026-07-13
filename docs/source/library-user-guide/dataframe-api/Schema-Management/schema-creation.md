@@ -539,13 +539,15 @@ The automatic path covered in the opening section works for exploration and unif
 
 The natural next step is [Applying Schemas](schema-application.md) — wiring the defined schema into CSV, JSON, and Parquet readers via format-specific read options. To verify a schema against inferred results before execution, see [Inspecting and Validating Schemas](schema-inspection.md).
 
-### Further Reading
+:::{admonition} Related documents
+:class: seealso
 
 - [Applying Schemas](schema-application.md) — format-specific wiring (CSV, JSON, Parquet, partitions)
 - [Schema Inference](schema-inference.md) — the inference path and its failure modes
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking a defined schema before execution
 - [Transforming Schemas](schema-transformation.md) — qualifiers, combining, nullability on existing schemas
 - [Anatomy of a Schema](schema-anatomy.md) — field-level reference for [`DataType`], nullability, metadata
+:::
 
 <!-- Link references -->
 

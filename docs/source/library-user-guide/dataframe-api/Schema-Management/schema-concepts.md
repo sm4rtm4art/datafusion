@@ -366,7 +366,7 @@ These differences are handled transparently by the physical plan — the core in
 
 ---
 
-## Conclusion & Further Reading
+## Conclusion
 
 **The schema is the contract that makes DataFusion's fail-fast behavior, type safety, and query optimization possible.**
 
@@ -376,7 +376,19 @@ SQL queries in DataFusion follow the same schema lifecycle — parsing produces 
 
 The next step is to explore the internal structure of [`DFSchema`] in detail — see [Anatomy of a Schema](schema-anatomy.md) for the field-level deep dive into names, types, nullability, and metadata.
 
-**Further reading** — external specifications and DataFusion references for Arrow's type system, schema metadata, and coercion rules, useful when debugging schema mismatches, unexpected casts, or expensive conversions:
+:::{admonition} Related documents
+:class: seealso
+
+- [Anatomy of a Schema](schema-anatomy.md) — field-level deep dive into names, types, nullability, and metadata
+- [Creating Schemas](schema-creation.md) — constructing Arrow and `DFSchema` contracts
+- [Applying Schemas](schema-application.md) — wiring schemas into readers at the read boundary
+- [Inspecting and Validating Schemas](schema-inspection.md) — checking schemas before execution
+- [Type Coercion](type-coercion.md) — automatic type reconciliation and explicit casts
+:::
+
+### Further Reading
+
+External specifications and DataFusion references for Arrow's type system, schema metadata, and coercion rules, useful when debugging schema mismatches, unexpected casts, or expensive conversions:
 
 | Resource                                                                                                             | Description                                                                                                               |
 | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |

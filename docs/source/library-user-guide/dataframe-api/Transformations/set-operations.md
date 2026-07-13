@@ -45,6 +45,20 @@
 7. LINK DEFINITIONS — all reference-style links in this file (e.g.
    [`.union_by_name()`], [`.with_column_renamed()`]) lost their definitions
    in the monolith split; restore before Stage 6.
+8. HANDSHAKE (2026-07-10) — the concept-level set-operation recap now lives at
+   transformation-concepts.md#set-operations-in-brief (frame-boundary model:
+   cross the boundary, align + stack/compare whole rows, change cardinality,
+   contrast with joins = no schema widening; links here). This page owns the
+   method mechanics, examples, SQL equivalents, compatibility, and dedup.
+   Single-frame dedup (.distinct(), .distinct_on()) is routed here from the
+   concept page as related cardinality reading.
+9. FRAME-BOUNDARY ALIGNMENT (future) — the ## Introduction currently leads with
+   the by-name / Arrow-columnar angle (artifact of the old "by Name" title).
+   When reworked (see rename/reorder in item 6), align with the frame-boundary
+   model: set operations cross the frame boundary and combine like-shaped frames
+   by aligning and then stacking or comparing whole rows; positional vs. by-name
+   is the alignment axis. Do NOT define set operations primarily as an
+   Arrow/by-name feature.
 -->
 
 # Set Operations by Name

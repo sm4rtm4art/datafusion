@@ -676,7 +676,7 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 
 ---
 
-## Conclusion & Further Reading
+## Conclusion
 
 **Schema inspection and validation form the defensive layer between planned data sources and pipeline logic — checking the available contract before execution reads values.**
 
@@ -691,7 +691,7 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 - [Type Coercion](type-coercion.md) — automatic type alignment and explicit casting
 - [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, nullability handling
 - [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
-  ::::
+:::
 
 ---
 

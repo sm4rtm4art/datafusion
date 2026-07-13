@@ -395,13 +395,13 @@ For the full metadata API and inspection patterns, see [Inspecting and Validatin
 
 The Arrow [`Schema`] and its individual [`Field`] properties (`name`, `data_type`, `nullable`, `metadata`) define the exact physical layout of your data. By wrapping this physical contract and injecting `field_qualifiers` (for cross-table disambiguation) and `functional_dependencies` (for optimizer reductions), [`DFSchema`] bridges the gap between raw bytes and DataFusion's relational query engine. Together, these layers form the complete schema accessible via [`df.schema()`][`.schema()`].
 
-:::{admonition} Next steps
+:::{admonition} Related documents
 :class: seealso
 
 - **[Schema Concepts](schema-concepts.md):** Ownership chains, memory management, and the big-picture schema lifecycle.
 - **[Inspecting and Validating Schemas](schema-inspection.md):** Hands-on patterns for programmatic field access and schema comparison.
 - **[Transforming Schemas](schema-transformation.md):** Qualifier manipulation, schema combining, and functional dependency methods.
 - **[Type Coercion](type-coercion.md):** How DataFusion automatically reconciles types when they do not match.
-  :::
+:::
 
 <!-- Literature references -->

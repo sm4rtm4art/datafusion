@@ -496,7 +496,7 @@ functions, and shared references to the catalog and runtime.
 
 The constructor is a single line:
 
-```rust,ignore
+```rust,no_run
 DataFrame::new(session_state, plan)
 ```
 

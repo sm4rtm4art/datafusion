@@ -487,16 +487,19 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
-## Conclusion & Further Reading
+## Conclusion
 
-Every method on this page answers one question: **does it change the visible `DFSchema`?**
-Most do not — row-shaping and inspection methods pass it straight through. Those that do split by intent: projection-backed edits and unnesting reshape the schema on purpose, while joins, aggregations, and the other operation-derived methods reshape it as a side effect of their real work. Knowing which group a method falls into turns schema change from an accidental surprise into a contract you author deliberately.
+**Every method on this page answers one question: does it change the visible `DFSchema`?**
 
-With the schema under control, the next step is composing these methods into full pipelines:
+Most do not — row-shaping and inspection methods pass it straight through. Those that do split by intent: projection-backed edits and unnesting reshape the schema on purpose, while joins, aggregations, and the other operation-derived methods reshape it as a side effect of their real work. Knowing which group a method falls into turns schema change from an accidental surprise into a contract you author deliberately. With the schema under control, the next step is composing these methods into full pipelines.
+
+:::{admonition} Related documents
+:class: seealso
 
 - **Next:** [Transformations](../Transformations/index.md) — filter, join, aggregate, sort, and enrich data in the DataFrame lifecycle's "life" phase.
 - [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, and the name collisions that operation-derived methods can trigger.
 - [Type Coercion](type-coercion.md) — the cast rules behind expression-driven type changes.
+:::
 
 ---
 

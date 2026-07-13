@@ -104,8 +104,10 @@ DataFusion is actively evolving. Key initiatives include:
 
 For the complete roadmap and quarterly planning discussions, see the [Contributor Guide: Roadmap][roadmap].
 
+Epic #12723 draws a line between two terms that are easy to conflate. **Frontends** are the query-authoring layer — DataFusion SQL and the DataFrame API — that turn a query into a `LogicalPlan`. **Interfaces** are the surrounding integration surfaces — Python bindings, Arrow Flight, Substrait, and custom embeddings — that drive the engine or exchange plans rather than acting as SQL dialects of their own. Both eventually meet at the same logical layer.
+
 **Putting it all together:**<br>
-The following diagram shows how these concepts connect—multiple frontends feed into a common logical layer, which executes via the vectorized Volcano engine:
+The following diagram shows how these concepts connect—frontends and interfaces both feed into a common logical layer, which executes via the vectorized Volcano engine:
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
@@ -113,10 +115,11 @@ The following diagram shows how these concepts connect—multiple frontends feed
 │                (The "LLVM" of Data: Modular & Composable)          │
 └───────────────────────────────┬────────────────────────────────────┘
                                 │
-        [ FRONTENDS ]           ▼          [ INTERFACES ]
+                                ▼
+       [ FRONTENDS ]             [ ──── INTERFACES ──── ]
   ┌──────────────────┐    ┌────────────┐    ┌──────────────────┐
-  │  SQL / DataFusion│    │  Python /  │    │   Substrait /    │
-  │     DataFrame    │    │   Flight   │    │     Custom       │
+  │  SQL / DataFrame │    │  Python /  │    │   Substrait /    │
+  │       API        │    │   Flight   │    │      Custom      │
   └─────────┬────────┘    └─────┬──────┘    └────────┬─────────┘
             │                   │                    │
             └───────────────────┼────────────────────┘
