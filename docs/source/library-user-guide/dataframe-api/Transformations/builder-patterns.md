@@ -17,16 +17,9 @@
   under the License.
 -->
 
-<!--TODO
+# Composing DataFrame Pipelines
 
-1. ABSTRACT
-2. INTRODUCTION
--->
-
-
-
-# Builder Methodology: Architecting with DataFrames
-
+**Compose maintainable, reusable, and dynamic DataFrame pipelines with Rust variables, control flow, functions, and schema inspection.**
 
 :::{admonition} Style Note
 :class: note
@@ -48,55 +41,13 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## The Builder Model in Brief
 
-**The DataFrame API isn't just SQL with different syntax—it's a programmatic _builder_ for query plans that integrates with Rust's type system, control flow, and tooling.**
+**Each transformation returns another lazy `DataFrame`, so Rust code can name, pass, and compose plans before an action executes them.**
 
-When you write SQL, you write a _string_ that gets parsed, planned, and executed in one shot. When you use the DataFrame API, you're _constructing a query plan_ step by step, storing intermediate stages in Rust variables, branching the plan with `if/else`, and composing reusable transformations as functions. The plan doesn't execute until you explicitly ask for results.
+SQL text is parsed into the same kind of plan and, like the DataFrame API, remains lazy until an action. The DataFrame API constructs that plan programmatically: variables can hold intermediate plans, while each transformation consumes its `DataFrame` value. Use `.clone()` when another branch must retain access to the same underlying plan; execution begins at an action.
 
-This is the **[Builder Pattern][builder_pattern]**—a design pattern where you construct a complex object (the query plan) through a series of method calls, each returning a modified builder (a new DataFrame). The diagram below illustrates this two-phase architecture:
-
-```text
-                         THE BUILDER PATTERN
-    ════════════════════════════════════════════════════════════
-
-     LAZY PHASE (builds plan)              EAGER PHASE (runs)
-    ┌────────────────────────────┐        ┌───────────────────┐
-    │                            │        │                   │
-    │  df ──► .filter() ──► step1│        │  .collect() ──► Data
-    │          (new DF)   (new DF)        │  .show()    ──► Output
-    │                        │   │        │  .count()   ──► Number
-    │           ┌────────────┴───┼────────┼─────────────────────┐
-    │           │                │        │                     │
-    │           ▼                ▼        │                     │
-    │     .aggregate()       .select()    │  SAME step1 feeds   │
-    │       (new DF)          (new DF)    │  BOTH branches!     │
-    │           │                │        │                     │
-    │           ▼                ▼        │                     │
-    │       summary          details ─────┼──► .show()          │
-    │                                     │                     │
-    └─────────────────────────────────────┴─────────────────────┘
-
-    Key: Each method returns a NEW DataFrame (immutable).
-         Use .clone() to branch: step1.clone().aggregate(...)
-```
-
-**What the diagram shows:**
-
-- **Left side (Lazy Phase):** Each transformation method ([`.filter()`], [`.select()`], [`.aggregate()`]) returns a _new_ DataFrame containing an extended logical plan. No data moves yet—you're just building a blueprint.
-- **Right side (Eager Phase):** Terminal actions ([`.collect()`], [`.show()`], [`.count()`]) trigger actual execution. Only then does DataFusion optimize the plan and process data.
-- **Branching:** The variable `step1` can feed _multiple_ downstream paths. Unlike SQL CTEs (which exist only within a single query), Rust variables persist across your entire program scope.
-- **Immutability:** The original `df` is unchanged after calling [`.filter()`]. Each method returns a fresh DataFrame, enabling safe parallel experimentation.
-
-This architecture unlocks patterns impossible in SQL: dynamic query construction with Rust control flow, reusable transformation functions, and compile-time validation of your pipeline structure.
-
-| Pattern                                                         | What It Enables                           | SQL Limitation                       |
-| --------------------------------------------------------------- | ----------------------------------------- | ------------------------------------ |
-| [Builder Pattern & Laziness](#the-builder-pattern-and-laziness) | Reuse intermediate plans as variables     | CTEs are query-scoped                |
-| Dynamic Construction                                            | Rust `if/else` modifies the plan          | String concatenation, injection risk |
-| [Encapsulation](#encapsulation-and-reusability)                 | Functions returning `Expr` or `DataFrame` | UDFs are hard to deploy/test         |
-| [Memory & Streaming](#memory-management--streaming)             | Control collect vs stream execution       | No equivalent control                |
-| [Error Handling](#error-handling-and-observability)             | Compile-time + runtime error separation   | All errors at runtime                |
+For the full [parser-versus-builder model](../Concepts/builder-parser.md#dataframe-api-the-builder-architecture), see the concepts page. For laziness, action boundaries, and ownership details, see the [execution lifecycle](../Concepts/execution-lifecycle.md#dataframe-method-categories) and [why `.clone()` appears in pipelines](../Concepts/execution-lifecycle.md#ownership-vs-execution-why-you-see-clone-everywhere).
 
 **Running Example:** Throughout this section, we'll use a single `sales` DataFrame to demonstrate all patterns. This reduces cognitive load and shows how each technique applies to the same data:
 
@@ -135,25 +86,13 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-### The Builder Pattern and Laziness
+---
 
-**Every DataFrame method returns a new DataFrame wrapping an extended [`LogicalPlan`]—no data moves until you call an action like [`.collect()`] or [`.show()`].**
+## Naming and Retaining Intermediate Stages
 
-Each transformation method (`.filter()`, `.select()`, `.sort()`) returns a _new_ DataFrame containing a logical plan—a description of _what_ to compute, not the computed result. The original DataFrame is immutable - it remains unchanged.
+**Name intermediate stages when inspection, reuse, or scope makes a single fluent chain harder to maintain.**
 
-This lazy evaluation enables DataFusion's optimizer to see the entire pipeline before execution. It can push filters down, eliminate unused columns, and choose optimal join strategies—optimizations that would be impossible if execution happened at each step.
-
-> **Projection Pushdown:**<br>
-> When you call [`.select()`] to choose specific columns, DataFusion pushes this information down to the data source. For columnar formats like Parquet, this means only the bytes for selected columns are read from disk. This is a major performance advantage of Lazy Evaluation compared to eager systems (like Pandas) which often read the entire file into memory before filtering columns.
-
-You chain method calls, storing intermediate DataFrames in Rust variables. Only when you call a terminal action ([`.collect()`], [`.show()`], [`.count()`]) does DataFusion optimize and execute the plan.
-
-> **Fluent Interface:** <br>
-> This chaining style is known as a [Fluent Interface][fluent_interface]—a design pattern where methods return `self` (or a modified copy) to enable readable chains. If you know Spark's DataFrame API, DataFusion's architecture is conceptually similar to [Spark's Catalyst Optimizer][catalyst_optimizer], but implemented in Rust.
-
-> **See also:** [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations) for a deeper dive into how DataFusion builds and optimizes logical plans.
-
-**In rust code:**
+The following pipeline keeps each stage available for plan inspection before the action runs:
 
 ```rust
 use datafusion::prelude::*;
@@ -210,6 +149,14 @@ If you're coming from SQL, you might think of intermediate results like CTEs (`W
 
 The practical benefit: you can inspect, branch, or reuse any intermediate DataFrame without re-executing the pipeline.
 
+---
+
+## Branching Pipelines and Ownership
+
+**Move a `DataFrame` into a transformation when only one downstream pipeline needs it; call `.clone()` when multiple branches must retain the same stage.**
+
+`.clone()` duplicates the plan description, not the underlying dataset; data is materialized only at an action. See the [ownership details](../Concepts/execution-lifecycle.md#ownership-vs-execution-why-you-see-clone-everywhere) for the complete model.
+
 **Footgun:** DataFrame is _consumed_ by transformations. To reuse, call [`.clone()`]:
 
 ```rust
@@ -225,234 +172,13 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-(dynamic-pipeline-construction)=
+---
 
-### Dynamic Pipeline Construction
+## Conditional and Dynamic Pipeline Construction
 
-**Use Rust control flow (`if/else`, `match`, loops) to build query plans dynamically—something SQL strings make dangerous and error-prone.**
+**Use Rust control flow to add transformations only when runtime parameters require them.**
 
-With SQL, dynamic queries often lead to string concatenation—a pattern prone to injection attacks and syntax errors. The DataFrame API eliminates both risks: values pass through [`lit()`] which properly escapes and types them, and Rust's type system ensures column references are valid at build time.
-
-**Control Flow vs String Concatenation**
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let sales = dataframe!("category" => ["Electronics"], "price" => [100])?;
-    let filter_category: Option<&str> = Some("Electronics");
-
-    // ❌ SQL: String concatenation (injection risk, runtime errors)
-    let mut query = "SELECT * FROM sales WHERE 1=1".to_string();
-    if let Some(cat) = filter_category {
-        query.push_str(&format!(" AND category = '{}'", cat));  // 💀 Injection!
-    }
-
-    // ✅ DataFrame: Type-safe, validated at build time
-    let mut result = sales.clone();
-    if let Some(cat) = filter_category {
-        result = result.filter(col("category").eq(lit(cat)))?;  // Safe: lit() handles escaping
-    }
-
-    result.show().await?;
-    Ok(())
-}
-```
-
-Rust's ownership model adds another layer: the `?` operator ensures errors propagate correctly, and the compiler verifies that `result` is properly reassigned in each branch.
-
-#### Schema-Driven Transformations
-
-Sometimes you don't know the column names or types until runtime—perhaps you're building a generic data processing library, or working with user-uploaded files. The DataFrame API lets you introspect the schema and build transformations dynamically.
-
-The pattern: call [`.schema()`] to get the DataFrame's structure, iterate over fields, and construct expressions based on each column's name and type. This is impossible with static SQL where the query text is fixed at write time.
-
-Using our `sales` DataFrame, let's double all numeric columns while keeping string columns unchanged.
-
-```rust
-use datafusion::prelude::*;
-use datafusion::assert_batches_eq;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let sales = dataframe!(
-        "order_id" => [1, 2, 3, 4, 5],
-        "product" => ["Laptop", "Mouse", "Keyboard", "Monitor", "Laptop"],
-        "category" => ["Electronics", "Accessories", "Accessories", "Electronics", "Electronics"],
-        "price" => [1200, 25, 75, 350, 1100],
-        "quantity" => [1, 5, 2, 1, 2],
-        "customer" => ["Alice", "Bob", "Alice", "Carol", "Bob"]
-    )?;
-
-    // Introspect schema at runtime
-    let schema = sales.schema();
-
-    // Build expressions dynamically based on column types
-    // Note: We match multiple numeric types to handle real-world data
-    let transformed_cols: Vec<_> = schema
-        .fields()
-        .iter()
-        .map(|f| {
-            if f.data_type().is_numeric() {
-                // Double numeric columns (Int32, Int64, Float32, Float64, etc.)
-                (col(f.name()) * lit(2)).alias(format!("{}_doubled", f.name()))
-            } else {
-                // Keep non-numeric columns as-is
-                col(f.name())
-            }
-        })
-        .collect();
-
-    let doubled = sales.clone().select(transformed_cols)?;
-    doubled.show().await?;
-
-    Ok(())
-}
-```
-
-Notice how `order_id`, `price`, and `quantity` (all `Int64`) were doubled and renamed, while `product`, `category`, and `customer` (strings) passed through unchanged.
-
-> **Note:** <br>
-> Arrow's [`DataType`] provides the helper method [`.is_numeric()`] which returns `true` for `Int8`, `Int16`, `Int32`, `Int64`, `UInt*`, `Float32`, `Float64`, and `Decimal` types—saving you from writing verbose match statements:
-
-See more information at the [Schema Management](schema-management.md) section.
-
-### Encapsulation and Reusability
-
-**Move complex transformation logic into reusable Rust functions—no UDF registration, no deployment headaches, full unit-testability.**
-
-SQL UDFs require registration with the execution context and have limited composability. Rust functions are native citizens: they compose naturally, benefit from IDE tooling, and can be unit-tested in isolation.
-
-DataFusion supports encapsulation at **two levels**:
-
-| Level               | Returns             | Use Case                        | Example                                                      |
-| ------------------- | ------------------- | ------------------------------- | ------------------------------------------------------------ |
-| **Column-level**    | `Expr`              | Reusable column transformations | `clean_currency("amount")` → use in `.select()`, `.filter()` |
-| **DataFrame-level** | `Result<DataFrame>` | Multi-step pipeline stages      | `summarize_sales(df)` → filtering, aggregating, joining      |
-
-Both approaches let you build a library of tested, composable transformations that work across any DataFrame with compatible schemas.
-
-**Native Functions vs SQL UDFs**
-
-| Aspect       | Rust Functions        | SQL UDFs                       |
-| ------------ | --------------------- | ------------------------------ |
-| Registration | None needed           | `ctx.register_udf(...)`        |
-| Testing      | Standard `#[test]`    | Requires execution context     |
-| IDE support  | Full autocomplete     | None                           |
-| Composition  | Direct function calls | Limited nesting                |
-| Distribution | Compiled into binary  | Must be registered per context |
-
-> **Need actual UDFs?** <br>
-> For custom scalar functions (UDFs) or aggregate functions (UDAFs) that must be registered with the context, see [Adding User Defined Functions](../../library-user-guide/functions/adding-udfs.md).
-
-#### Functions Returning [`Expr`] (Column-Level)
-
-When you find yourself writing the same column expression repeatedly—parsing dates, cleaning strings, computing derived values—extract it into a function that returns an [`Expr`]. This keeps your pipeline code clean and makes the logic testable in isolation.
-
-The pattern: write a Rust function that takes column names (or other parameters) and returns an [`Expr`]. You can then use this expression anywhere DataFusion expects one: in [`.select()`], [`.with_column()`], [`.filter()`], etc.
-
-```rust
-use datafusion::prelude::*;
-
-/// Calculate profit margin as a percentage
-fn profit_margin(revenue_col: &str, cost_col: &str) -> Expr {
-    ((col(revenue_col) - col(cost_col)) / col(revenue_col) * lit(100))
-        .alias("profit_margin_pct")
-}
-
-/// Price category based on value
-fn price_category(price_col: &str) -> datafusion::error::Result<Expr> {
-    Ok(case(col(price_col).gt(lit(100)))
-        .when(lit(true), lit("expensive"))
-        .otherwise(lit("affordable"))?
-        .alias("category"))
-}
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let df = dataframe!(
-        "product" => ["Laptop", "Mouse"],
-        "revenue" => [150.0, 250.0],
-        "cost" => [100.0, 150.0],
-        "price" => [1200, 25]
-    )?;
-
-    // Usage: reusable across any DataFrame
-    let df = df
-        .with_column("margin", profit_margin("revenue", "cost"))?
-        .with_column("price_tier", price_category("price")?)?;
-
-    df.show().await?;
-    Ok(())
-}
-```
-
-These functions compose naturally—you can nest them, combine them with other expressions, or use them in aggregations.
-
-#### Functions Returning `DataFrame` (Table-Level)
-
-While [`Expr`] functions transform individual columns, sometimes you need to encapsulate an entire multi-step pipeline—filtering, joining, aggregating—into a reusable unit. Functions that take a [`DataFrame`] and return a [`Result<DataFrame>`] let you build composable pipeline stages.
-
-This pattern shines when you have standard transformations applied across different datasets: data cleaning pipelines, report generators, or feature engineering steps for ML.
-
-Using our `sales` DataFrame:
-
-```rust
-use datafusion::prelude::*;
-use datafusion::functions_aggregate::expr_fn::*;
-use datafusion::assert_batches_sorted_eq;
-
-/// Calculate order totals and summarize by category
-fn summarize_sales(df: DataFrame) -> datafusion::error::Result<DataFrame> {
-    df.with_column("total", col("price") * col("quantity"))?
-      .aggregate(
-          vec![col("category")],
-          vec![
-              sum(col("total")).alias("revenue"),
-              count(lit(1)).alias("order_count"),
-          ]
-      )
-}
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let sales = dataframe!(
-        "order_id" => [1, 2, 3, 4, 5],
-        "product" => ["Laptop", "Mouse", "Keyboard", "Monitor", "Laptop"],
-        "category" => ["Electronics", "Accessories", "Accessories", "Electronics", "Electronics"],
-        "price" => [1200, 25, 75, 350, 1100],
-        "quantity" => [1, 5, 2, 1, 2],
-        "customer" => ["Alice", "Bob", "Alice", "Carol", "Bob"]
-    )?;
-
-    // Usage: apply the same summarization to any sales-like DataFrame
-    let summary = summarize_sales(sales.clone())?;
-    let batches = summary.collect().await?;
-    assert_batches_sorted_eq!(
-        [
-            "+-------------+---------+-------------+",
-            "| category    | revenue | order_count |",
-            "+-------------+---------+-------------+",
-            "| Accessories | 275     | 2           |",
-            "| Electronics | 3750    | 3           |",
-            "+-------------+---------+-------------+",
-        ],
-        &batches
-    );
-
-    Ok(())
-}
-```
-
-You can chain these functions together to build complex pipelines from simple, tested building blocks.
-
-#### Conditional Query Building
-
-Real-world applications rarely have fixed queries. Users filter by different criteria, APIs accept optional parameters, and reports need configurable groupings. The DataFrame API lets you build queries conditionally using standard Rust control flow—`if let`, `match`, loops—without the SQL string concatenation anti-pattern.
-
-This is where the builder pattern truly shines: <br>
-Each transformation returns a new DataFrame, so you can conditionally apply steps based on runtime parameters while keeping the code readable and type-safe.
+Dynamic DataFrame construction avoids SQL string concatenation and its injection risk; see [where the DataFrame API helps with safety](../Concepts/builder-parser.md#safety-and-security-where-the-dataframe-api-shines) for the full model. Column resolution, schema checks, and incompatible expressions can surface at plan-build time through `Result`.
 
 ```rust
 use datafusion::prelude::*;
@@ -519,4 +245,210 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-Compare this to SQL where you'd either write multiple query variants or resort to string concatenation—both error-prone and hard to test. Here, the logic is explicit, the types are checked, and you can unit-test `build_sales_query` with different parameter combinations.
+---
+
+## Schema-Driven Pipeline Construction
+
+**Inspect a runtime schema to decide which expressions to compose into a pipeline.**
+
+Sometimes a pipeline does not know column names or types until runtime. The pattern below inspects the schema, chooses an expression for each field, and then builds the projection. For method coverage, see [dynamic column selection](#advanced-dynamic-column-selection).
+
+Using our `sales` DataFrame, let's double all numeric columns while keeping string columns unchanged.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::assert_batches_eq;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let sales = dataframe!(
+        "order_id" => [1, 2, 3, 4, 5],
+        "product" => ["Laptop", "Mouse", "Keyboard", "Monitor", "Laptop"],
+        "category" => ["Electronics", "Accessories", "Accessories", "Electronics", "Electronics"],
+        "price" => [1200, 25, 75, 350, 1100],
+        "quantity" => [1, 5, 2, 1, 2],
+        "customer" => ["Alice", "Bob", "Alice", "Carol", "Bob"]
+    )?;
+
+    // Introspect schema at runtime
+    let schema = sales.schema();
+
+    // Build expressions dynamically based on column types
+    // Note: We match multiple numeric types to handle real-world data
+    let transformed_cols: Vec<_> = schema
+        .fields()
+        .iter()
+        .map(|f| {
+            if f.data_type().is_numeric() {
+                // Double numeric columns (Int32, Int64, Float32, Float64, etc.)
+                (col(f.name()) * lit(2)).alias(format!("{}_doubled", f.name()))
+            } else {
+                // Keep non-numeric columns as-is
+                col(f.name())
+            }
+        })
+        .collect();
+
+    let doubled = sales.clone().select(transformed_cols)?;
+    doubled.show().await?;
+
+    Ok(())
+}
+```
+
+Notice how `order_id`, `price`, and `quantity` (all `Int64`) were doubled and renamed, while `product`, `category`, and `customer` (strings) passed through unchanged.
+
+Arrow's [`DataType`] provides [`.is_numeric()`], which returns `true` for numeric Arrow types and avoids a verbose match statement.
+
+---
+
+## Reusable Transformation Functions
+
+**Extract repeated expressions and multi-step transformations into Rust functions that compose while plans are built.**
+
+A Rust function returning `Expr` or `Result<DataFrame>` is convenient and testable, but it is not interchangeable with a registered SQL UDF or UDAF. Registered functions participate in SQL and serialized or distributed plans; see [Adding User Defined Functions](../../functions/adding-udfs.md).
+
+DataFusion supports encapsulation at **two levels**:
+
+| Level               | Returns             | Use Case                        | Example                                                      |
+| ------------------- | ------------------- | ------------------------------- | ------------------------------------------------------------ |
+| **Column-level**    | `Expr`              | Reusable column transformations | `clean_currency("amount")` → use in `.select()`, `.filter()` |
+| **DataFrame-level** | `Result<DataFrame>` | Multi-step pipeline stages      | `summarize_sales(df)` → filtering, aggregating, joining      |
+
+Both approaches let you build a library of tested, composable transformations that work across any DataFrame with compatible schemas.
+
+### Functions Returning `Expr`
+
+When you find yourself writing the same column expression repeatedly—parsing dates, cleaning strings, computing derived values—extract it into a function that returns an [`Expr`]. This keeps your pipeline code clean and makes the logic testable in isolation.
+
+The pattern: write a Rust function that takes column names (or other parameters) and returns an [`Expr`]. You can then use this expression anywhere DataFusion expects one: in [`.select()`], [`.with_column()`], [`.filter()`], etc.
+
+```rust
+use datafusion::prelude::*;
+
+/// Calculate profit margin as a percentage
+fn profit_margin(revenue_col: &str, cost_col: &str) -> Expr {
+    ((col(revenue_col) - col(cost_col)) / col(revenue_col) * lit(100))
+        .alias("profit_margin_pct")
+}
+
+/// Price category based on value
+fn price_category(price_col: &str) -> datafusion::error::Result<Expr> {
+    Ok(case(col(price_col).gt(lit(100)))
+        .when(lit(true), lit("expensive"))
+        .otherwise(lit("affordable"))?
+        .alias("category"))
+}
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let df = dataframe!(
+        "product" => ["Laptop", "Mouse"],
+        "revenue" => [150.0, 250.0],
+        "cost" => [100.0, 150.0],
+        "price" => [1200, 25]
+    )?;
+
+    // Usage: reusable across any DataFrame
+    let df = df
+        .with_column("margin", profit_margin("revenue", "cost"))?
+        .with_column("price_tier", price_category("price")?)?;
+
+    df.show().await?;
+    Ok(())
+}
+```
+
+These functions compose naturally—you can nest them, combine them with other expressions, or use them in aggregations.
+
+### Functions Returning `Result<DataFrame>`
+
+While [`Expr`] functions transform individual columns, sometimes you need to encapsulate an entire multi-step pipeline—filtering, joining, aggregating—into a reusable unit. Functions that take a [`DataFrame`] and return a [`Result<DataFrame>`] let you build composable pipeline stages.
+
+This pattern shines when you have standard transformations applied across different datasets: data cleaning pipelines, report generators, or feature engineering steps for ML.
+
+Using our `sales` DataFrame:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::functions_aggregate::expr_fn::*;
+use datafusion::assert_batches_sorted_eq;
+
+/// Calculate order totals and summarize by category
+fn summarize_sales(df: DataFrame) -> datafusion::error::Result<DataFrame> {
+    df.with_column("total", col("price") * col("quantity"))?
+      .aggregate(
+          vec![col("category")],
+          vec![
+              sum(col("total")).alias("revenue"),
+              count(lit(1)).alias("order_count"),
+          ]
+      )
+}
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let sales = dataframe!(
+        "order_id" => [1, 2, 3, 4, 5],
+        "product" => ["Laptop", "Mouse", "Keyboard", "Monitor", "Laptop"],
+        "category" => ["Electronics", "Accessories", "Accessories", "Electronics", "Electronics"],
+        "price" => [1200, 25, 75, 350, 1100],
+        "quantity" => [1, 5, 2, 1, 2],
+        "customer" => ["Alice", "Bob", "Alice", "Carol", "Bob"]
+    )?;
+
+    // Usage: apply the same summarization to any sales-like DataFrame
+    let summary = summarize_sales(sales.clone())?;
+    let batches = summary.collect().await?;
+    assert_batches_sorted_eq!(
+        [
+            "+-------------+---------+-------------+",
+            "| category    | revenue | order_count |",
+            "+-------------+---------+-------------+",
+            "| Accessories | 275     | 2           |",
+            "| Electronics | 3750    | 3           |",
+            "+-------------+---------+-------------+",
+        ],
+        &batches
+    );
+
+    Ok(())
+}
+```
+
+You can chain these functions together to build complex pipelines from simple, tested building blocks.
+
+---
+
+## Organizing Errors and Pipeline Boundaries
+
+**Propagate plan-construction errors through each reusable pipeline boundary so callers can decide how to recover, add context, or fail.**
+
+Transformation methods return `Result<DataFrame>`, and reusable pipeline functions should normally do the same. Use `?` to propagate plan-build-time errors such as column resolution, schema checks, or incompatible expressions. Rust method signatures, argument types, and ownership are checked at compile time; data-source, resource, and physical failures occur at execution time.
+
+For data-quality validation, see [data-quality validation](data-quality.md). For execution and runtime failures, see the [execution lifecycle](../Concepts/execution-lifecycle.md).
+
+---
+
+## Conclusion
+
+Compose pipelines by naming stages that need reuse, moving or cloning plans deliberately, applying control flow to plan construction, and extracting repeated logic into functions.
+
+- [Parser-versus-builder](../Concepts/builder-parser.md)
+- [Laziness, actions, `.collect()`, and ownership](../Concepts/execution-lifecycle.md)
+- [Streaming result APIs and unbounded-output memory](../Writing-DataFrames/streaming-execution.md#streaming-execution)
+- [Dynamic column selection and enrichment](selection.md)
+- [Switching between SQL and DataFrames, including SQL-expression bridges](hybrid-sql.md)
+- [Data-quality validation](data-quality.md)
+- [Registered UDFs and UDAFs](../../functions/adding-udfs.md)
+
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`result<dataframe>`]: https://docs.rs/datafusion/latest/datafusion/error/type.Result.html
+[`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
+[`.is_numeric()`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html#method.is_numeric

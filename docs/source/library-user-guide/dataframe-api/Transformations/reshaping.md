@@ -25,15 +25,12 @@
    List Columns" to avoid a duplicate anchor) and "Controlling Unnest
    Behavior with Options" arrived from set-operations.md as raw material —
    merge with the thinner unnest treatment above during rework.
-4. BROKEN LINK — "see the workaround in [DataFrame-Unique Methods]
-   (#dataframe-unique-methods)" uses a local anchor for a cross-file target;
-   repair after the dataframe-specifics.md decision.
+4. DONE (2026-07-16) — melt/unpivot workaround now lives here
+   (### Melt and Unpivot); link repaired to #melt-and-unpivot.
 5. POSITION — opens the DataFrame-native part (after the hybrid-sql bridge).
 -->
 
 # Reshaping Data
-
-
 
 :::{admonition} Style Note
 :class: note
@@ -66,7 +63,7 @@ Two common reshaping patterns exist in data processing:
 | **Explode/Unnest** | Expands array elements into separate rows | ✅ [`.unnest_columns()`] |
 | **Melt/Unpivot**   | Converts columns into rows (wide → long)  | ❌ Not available         |
 
-Unnesting is essential when working with nested JSON data, multi-valued fields, or array columns from Parquet files. For melt/unpivot operations, see the workaround in [DataFrame-Unique Methods](#dataframe-unique-methods).
+Unnesting is essential when working with nested JSON data, multi-valued fields, or array columns from Parquet files. For melt/unpivot operations, see [Melt and Unpivot](#melt-and-unpivot).
 
 > **See also:** [pandas.DataFrame.explode], [PySpark explode] — similar operations in other DataFrame libraries.
 
@@ -249,6 +246,60 @@ async fn main() -> Result<()> {
 
 > **Nested arrays:** For deeply nested structures (e.g., `List<List<Int>>`), use `RecursionUnnestOption` to control how many levels to flatten.
 
+### Melt and Unpivot
+
+DataFusion has no built-in `.melt()` or `.unpivot()` DataFrame method and no native SQL `UNPIVOT` clause. Perform wide-to-long reshaping with a manual `UNION ALL` of one projection per value column; [Issue #12907](https://github.com/apache/datafusion/issues/12907) tracks native support and remains open.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Wide: one row per id, one column per quarter
+    let wide = dataframe!(
+        "id" => [1, 2],
+        "q1" => [10, 40],
+        "q2" => [20, 50]
+    )?;
+
+    // Melt (wide -> long): one projection per value column, combined with UNION ALL
+    let q1 = wide.clone().select(vec![
+        col("id"),
+        lit("q1").alias("quarter"),
+        col("q1").alias("amount"),
+    ])?;
+    let q2 = wide.select(vec![
+        col("id"),
+        lit("q2").alias("quarter"),
+        col("q2").alias("amount"),
+    ])?;
+    let long = q1.union(q2)?;
+
+    let batches = long.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+---------+--------+",
+            "| id | quarter | amount |",
+            "+----+---------+--------+",
+            "| 1  | q1      | 10     |",
+            "| 1  | q2      | 20     |",
+            "| 2  | q1      | 40     |",
+            "| 2  | q2      | 50     |",
+            "+----+---------+--------+",
+        ],
+        &batches
+    );
+    Ok(())
+}
+```
+
+UNPIVOT syntax can be added as a custom `RelationPlanner` extension that rewrites it to `UNION ALL`; see `datafusion-examples/examples/relation_planner`.
+
 [`unnestoptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
+[`.unnest_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns
+[`.unnest_columns_with_options()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns_with_options
+[pandas.dataframe.explode]: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.explode.html
+[pyspark explode]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.explode.html
 
 ---

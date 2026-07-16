@@ -21,22 +21,15 @@
 
 1. ABSTRACT
 2. INTRODUCTION
-3. SCOPE GROWS — this page absorbs the "enrich" verb (column derivation):
-   `.with_column()`, `.with_column_renamed()`, `.drop_columns()` as
-   first-class sections, not side mentions. Title may widen accordingly
-   (e.g. "Selection and Column Derivation").
-4. OWNERSHIP — Transformations owns the enrichment usage; the schema
-   effects of these methods are owned by
-   Schema-Management/schema-dataframe-methods.md — recap + link, don't
-   duplicate. Overlap with dataframe-specifics.md §Schema Manipulation
-   resolves per its dissolution TODO.
+3. DONE (2026-07-16) — this page owns column-enrichment usage through
+   `.with_column()`, `.with_column_renamed()`, and `.drop_columns()`.
+4. DONE (2026-07-16) — Transformations owns enrichment usage; schema effects
+   are owned by Schema-Management/schema-dataframe-methods.md.
 5. POSITION — first action page in the reading order; opens on the
    running-example dataset (introduced in transformation-concepts.md).
 -->
 
 # Selection and Projection Mastery
-
-
 
 :::{admonition} Style Note
 :class: note
@@ -52,7 +45,6 @@ In this document, code elements follow a consistent pattern:
 - **Actions:** (`.collect()`, `.show()`) trigger execution
 
 :::
-
 
 ```{contents} Table of Content
 :local:
@@ -147,7 +139,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 #### Intermediate: Expressions and Computed Columns
 
-[`.select()`] accepts any expression—arithmetic, conditionals, function calls—letting you compute new columns inline. Use [`.alias()`] to name computed results, [`.with_column()`] to add columns while keeping existing ones, and [`.with_column_renamed()`] to rename without recomputing.
+[`.select()`] accepts any expression—arithmetic, conditionals, function calls—letting you compute new columns inline. Use [`.alias()`] to name computed results.
 
 ```rust
 use datafusion::prelude::*;
@@ -177,42 +169,6 @@ async fn main() -> datafusion::error::Result<()> {
         "+----------+---------+",
     ], &df.clone().collect().await?);
 
-    // with_column() adds column while keeping all existing
-    let df = df.with_column("tag", lit("2026"))?;
-    assert_batches_eq!(&[
-        "+----------+---------+------+",
-        "| product  | revenue | tag  |",
-        "+----------+---------+------+",
-        "| Laptop   | 6000    | 2026 |",
-        "| Mouse    | 1250    | 2026 |",
-        "| Keyboard | 2250    | 2026 |",
-        "+----------+---------+------+",
-    ], &df.clone().collect().await?);
-
-    // with_column_renamed() renames without recomputing
-    let df = df.with_column_renamed("revenue", "total")?;
-    assert_batches_eq!(&[
-        "+----------+-------+------+",
-        "| product  | total | tag  |",
-        "+----------+-------+------+",
-        "| Laptop   | 6000  | 2026 |",
-        "| Mouse    | 1250  | 2026 |",
-        "| Keyboard | 2250  | 2026 |",
-        "+----------+-------+------+",
-    ], &df.clone().collect().await?);
-
-    // drop_columns() removes specific columns
-    let df = df.drop_columns(&["tag"])?;
-    assert_batches_eq!(&[
-        "+----------+-------+",
-        "| product  | total |",
-        "+----------+-------+",
-        "| Laptop   | 6000  |",
-        "| Mouse    | 1250  |",
-        "| Keyboard | 2250  |",
-        "+----------+-------+",
-    ], &df.collect().await?);
-
     Ok(())
 }
 ```
@@ -221,6 +177,54 @@ async fn main() -> datafusion::error::Result<()> {
 > Unlike [`.with_column()`], [`.select()`] only keeps columns you explicitly list.
 
 > **Ugly column names?** Without [`.alias()`], column names are the expression's string representation: `col("a") * col("b")` becomes `"a * b"`, `col("x").gt(lit(5))` becomes `"x > Int32(5)"` see [**g**rater **t**hen => `.gt()`][`.gt()`]. Always alias computed columns for readable output.
+
+(adding-renaming-and-dropping-columns)=
+
+#### Adding, Renaming, and Dropping Columns
+
+These methods edit the column set while passing other columns through unchanged—unlike `.select()`, which requires listing every column you keep.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::assert_batches_eq;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let sample_df = dataframe!(
+        "product" => ["Laptop", "Mouse", "Keyboard"],
+        "price" => [1200, 25, 75],
+        "quantity" => [5, 50, 30],
+        "category" => ["Electronics", "Accessories", "Accessories"]
+    )?;
+
+    let enriched = sample_df
+        .with_column("revenue", col("price") * col("quantity"))?
+        .with_column("price", col("price") + lit(100))?
+        .with_column_renamed("revenue", "total")?
+        .drop_columns(&["quantity", "category"])?;
+
+    let batches = enriched.collect().await?;
+    assert_batches_eq!(
+        &[
+            "+----------+-------+-------+",
+            "| product  | price | total |",
+            "+----------+-------+-------+",
+            "| Laptop   | 1300  | 6000  |",
+            "| Mouse    | 125   | 1250  |",
+            "| Keyboard | 175   | 2250  |",
+            "+----------+-------+-------+",
+        ],
+        &batches
+    );
+    Ok(())
+}
+```
+
+These methods avoid re-listing every column that SQL `SELECT` requires. `.with_column_renamed()` is like `SELECT price AS unit_price` but touches only the renamed field, and `.drop_columns()` has no direct SQL keyword because SQL requires listing the columns to keep.
+
+For how these methods reshape the schema, including replace-in-place type and nullability drift, unknown-name no-ops, and rename case sensitivity, see [Changing Schemas with DataFrame Methods](../Schema-Management/schema-dataframe-methods.md#adding-and-replacing-fields) and [Renaming and Removing Fields](../Schema-Management/schema-dataframe-methods.md#renaming-and-removing-fields).
+
+(advanced-dynamic-column-selection)=
 
 #### Advanced: Dynamic Column Selection
 
@@ -339,45 +343,18 @@ async fn main() -> datafusion::error::Result<()> {
 
 > **Warning:** This loses compile-time safety. A typo like `"prodict"` compiles fine but fails at runtime. Use when SQL is genuinely clearer, not as a shortcut to avoid learning the expression API.
 
-> **Going deeper:** See [`expr_api`] for complex expression patterns combining both approaches.
+For detailed `.select_exprs()` behavior and API-mixing guidance, see [Mixing SQL and DataFrames](hybrid-sql.md#selecting-with-sql-expressions).
 
----
-
-**Best Practice: Pick a Lane (or Document the Bridge)**
-
-Mixing method chains with embedded SQL strings violates the [Single Level of Abstraction Principle][slap]—readers must context-switch constantly between abstraction levels. Choose _one_ approach:
-
-| Approach                                                | Best For                               | Trade-off                            |
-| :------------------------------------------------------ | :------------------------------------- | :----------------------------------- |
-| **Full DataFrame**                                      | App logic, refactoring, IDE support    | Type-safe, but more verbose          |
-| **Full SQL** via [`ctx.sql()`][`sessioncontext::sql()`] | Ad-hoc queries, portability            | Familiar, but no compile-time checks |
-| **Documented Constants**                                | Complex expressions reused across code | Traceable, but requires discipline   |
-
-If you choose the third approach, extract SQL strings into named constants with doc comments:
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    /// Pricing tier based on unit price.
-    /// Business rule: ACME-1234
-    const TIER_EXPR: &str = "\
-        CASE WHEN price > 100 \
-             THEN 'Premium' \
-             ELSE 'Standard' \
-        END AS tier";
-
-    let sample_df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard"],
-        "price" => [1200, 25, 75]
-    )?;
-
-    let df = sample_df.select_exprs(&["product", "price", TIER_EXPR])?;
-    df.show().await?;
-
-    Ok(())
-}
-```
-
-This makes SQL expressions discoverable, testable, and traceable—rather than buried inline where they drift and multiply.
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.select_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns
+[`.select_exprs()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_exprs
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
+[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
+[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.gt()`]: https://docs.rs/datafusion/latest/datafusion/prelude/enum.Expr.html#method.gt
+[`col()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.col.html
+[`case`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.when.html
+[`select`]: ../../../user-guide/sql/select.md
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html

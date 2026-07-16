@@ -59,8 +59,6 @@
 
 # When DataFrames Collide: Join Patterns
 
-
-
 :::{admonition} Style Note
 :class: note
 :collapsible: closed
@@ -282,7 +280,7 @@ All join algorithms leverage [Arrow]'s columnar format: instead of copying rows,
 > | **Statistics-driven optimization** | Table metadata (row counts, min/max) guide join order and algorithm selection—[**16x faster** on TPC-H benchmarks][datafusion join optimization] |
 > | **Late materialization**           | During joins, only key columns + row indices are processed; other columns are fetched afterward                                                  |
 >
-> \*SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../user-guide/crate-configuration.md).
+> \*SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../../user-guide/crate-configuration.md).
 >
 > The result: you describe _what_ to join, and the optimizer handles _how_—often matching or exceeding hand-tuned imperative code.
 
@@ -361,7 +359,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Not for set intersections!** <br>
 If you need rows that exist in _both_ DataFrames (identical schemas, all columns compared), use [`.intersect()`] instead—that's a set operation, not a join.
-<br> For more see the subsection [Dataframes unique methods](#dataframe-unique-methods)
+<br> For set operations like intersection and difference, see [Set Operations](set-operations.md#intersection-and-difference).
 
 > **⚠️ The hidden cost: [Survivorship bias][survivorship_bias]**
 >
@@ -554,7 +552,9 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-**Use Case: Self-Joins (Customer Referrals)**
+(self-joins-and-qualified-columns)=
+
+#### Self-Joins and Qualified Columns
 
 A **self-join** joins a table with itself—essential for hierarchical data. Left Join preserves all rows even if they have no match (like Alice, who has no referrer).
 
@@ -1572,3 +1572,69 @@ Joins are fundamental yet often misunderstood. These resources provide deeper un
 | [PostgreSQL JOIN docs]                                                    | Authoritative reference—DataFusion follows PostgreSQL semantics    |
 | [NULL handling in joins]                                                  | Why `NULL = NULL` is `UNKNOWN`, not `TRUE`                         |
 | [Understanding SQL Dialects][understanding sql dialects (medium-article)] | Medium article about different SQL dialects                        |
+
+[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`.distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.distinct
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
+[datafusion `.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[join_filter_param]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join "See the 'filter' parameter in the join() signature"
+[`jointype`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
+[`full`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Full "All rows from both tables (NULL where no match)"
+[`inner`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Inner "Only rows with matches in both tables"
+[`left`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Left "All left rows + matching right rows (NULL if no match)"
+[`right`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Right "All right rows + matching left rows (NULL if no match)"
+[`leftanti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
+[`leftsemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
+[`leftmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
+[`rightanti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightAnti
+[`rightsemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightSemi
+[`rightmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`datafusion.optimizer`]: https://docs.rs/datafusion/latest/datafusion/optimizer/index.html
+[`sqlparser`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/index.html "DataFusion's SQL parser supports multiple dialects"
+[`sessioncontext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`date_trunc()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_trunc.html
+[`take()`]: https://docs.rs/arrow/latest/arrow/compute/kernels/take/fn.take.html "Arrow kernel: select elements by index"
+[arrow]: https://arrow.apache.org/ "Apache Arrow: columnar in-memory format"
+[`cross join`]: ../../../user-guide/sql/select.md#cross-join
+[`inner join`]: ../../../user-guide/sql/select.md#inner-join
+[`full outer join`]: ../../../user-guide/sql/select.md#full-outer-join
+[`natural join`]: ../../../user-guide/sql/select.md#natural-join
+[`left anti join`]: ../../../user-guide/sql/select.md#left-anti-join
+[`left semi join`]: ../../../user-guide/sql/select.md#left-semi-join
+[`where`]: ../../../user-guide/sql/select.md#where-clause
+[`or`]: ../../../user-guide/sql/operators.md#logical-operators
+[**cross join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.CrossJoinExec.html "Cartesian product of two tables"
+[**hash join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html "Equi-join using hash table on build side"
+[**nested loop join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html "General non-equi join conditions"
+[**piecewise merge join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.PiecewiseMergeJoinExec.html "Optimized for single range conditions"
+[**sort-merge join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html "Join pre-sorted inputs with optional spilling"
+[**symmetric hash join**]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SymmetricHashJoinExec.html "Streaming join for unbounded data"
+[several join algorithms]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/index.html "DataFusion join implementations"
+[cmu join algorithms]: https://www.youtube.com/watch?v=YIdIaPopfpk&list=PLSE8ODhjZXjYMAgsGH-GtY5rJYZ6zjsd5&index=12 "CMU 15-445 Lecture 11: Join Algorithms (Andy Pavlo)"
+[databricks_star_schema]: https://www.databricks.com/glossary/star-schema
+[datafusion join optimization]: https://xebia.com/blog/making-joins-faster-in-datafusion-based-on-table-statistics/ "Making Joins Faster in DataFusion Based on Table Statistics"
+[hash join (wikipedia)]: https://en.wikipedia.org/wiki/Hash_join "Hash join algorithm explanation"
+[join optimization strategies]: https://use-the-index-luke.com/sql/join "How databases optimize joins and what you can control"
+[join tutorial]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/ "Why Venn diagrams mislead when explaining joins"
+[null handling in joins]: https://modern-sql.com/concept/null "Why NULL comparisons return UNKNOWN, not TRUE/FALSE"
+[optimizing sql & dataframes pt 1]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-one/ "Optimizing SQL (and DataFrames) in DataFusion: Part 1"
+[optimizing sql & dataframes pt 2]: https://www.influxdata.com/blog/optimizing-sql-dataframes-part-two/ "Optimizing SQL (and DataFrames) in DataFusion: Part 2"
+[polars join operations]: https://docs.pola.rs/user-guide/transformations/joins/ "Polars DataFrame join operations"
+[postgresql join docs]: https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN "Authoritative reference for join semantics"
+[semi and anti joins explained]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/ "Why Semi/Anti joins deserve first-class syntax"
+[sort-merge join]: https://en.wikipedia.org/wiki/Sort-merge_join "Sort-merge join algorithm"
+[spark join guide]: https://spark.apache.org/docs/latest/sql-ref-syntax-qry-select-join.html "Apache Spark SQL join syntax and examples"
+[survivorship_bias]: https://en.wikipedia.org/wiki/Survivorship_bias
+[understanding sql dialects (medium-article)]: https://medium.com/@abhapratiti27/understanding-sql-dialects-a-deeper-dive-into-the-linguistic-variations-of-sql-e7e2fdb7509b
+[visual join guide]: https://joins.spathon.com/ "Interactive visual guide to SQL joins"

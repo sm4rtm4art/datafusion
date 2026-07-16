@@ -17,32 +17,20 @@
   under the License.
 -->
 
-
 <!--TODO (restructuring map, agreed 2026-07-06)
 
-1. ABSTRACT
-2. INTRODUCTION
-3. DISSOLUTION CANDIDATE — this file is a monolith-split artifact: it holds
-   the intro + hub table of the old "Advanced DataFrame Patterns". The body
-   redistribution is now DONE (2026-07-06; see set-operations.md TODO for
-   the map) — the hub-table anchors are stale and must point cross-file:
-   hybrid methods → hybrid-sql.md, describe → data-quality.md, unnest →
-   reshaping.md, fill_null → Concepts/null-handling.md, cache/execution →
-   Writing-DataFrames/executing-dataframes.md, from_columns →
-   Creating-DataFrames/inline-data.md. Decide: keep as a short "what's
-   unique" reference page opening the DataFrame-native part, or fold into
-   transformation-concepts.md.
-4. OWNERSHIP — "Schema Manipulation" (`.with_column()`, `.with_column_renamed()`,
-   `.drop_columns()`) overlaps selection.md (which absorbs the "enrich" verb)
-   and Schema-Management/schema-dataframe-methods.md. Resolve: Transformations
-   owns enrichment usage, Schema-Management owns schema effects.
-5. HUB TABLE — after redistribution, repair anchors to cross-file links
-   (hybrid-sql.md, reshaping.md, data-quality.md, Writing-DataFrames/,
-   Creating-DataFrames/).
+3. DONE (2026-07-16) — keep as a slim classification-and-routing page titled
+   "DataFrame-Native Capabilities".
+4. DONE (2026-07-16) — usage → selection.md; effects →
+   Schema-Management/schema-dataframe-methods.md.
+5. DONE (2026-07-16) — hub-table anchors repaired to authoritative pages.
 -->
 
-# DataFrame-Unique Methods
+# DataFrame-Native Capabilities
 
+**Most DataFrame methods mirror SQL, while the smaller set that is dedicated to, native to, or more ergonomic in the DataFrame API is classified and routed here to its authoritative page.**
+
+DataFusion provides one engine through both the SQL and DataFrame APIs. Most transformations are available through either API, but a smaller set is distinctive to the DataFrame API. This page answers what is meaningfully different about the DataFrame API, whether a capability is API-level, a native convenience, SQL-equivalent, or a bridge, and where its authoritative explanation lives. It classifies and routes capabilities; it does not teach method behavior.
 
 :::{admonition} Style Note
 :class: note
@@ -64,185 +52,40 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## Four Ways a Capability Relates to SQL
 
-**Some DataFrame methods have no SQL equivalent—these are the programmatic superpowers that justify using the DataFrame API.**
+The same engine can expose a capability differently through SQL and through a programmatic API. This classification distinguishes the relationship without treating either interface as universally better.
 
-While the previous section covered operations available in _both_ APIs, this section highlights methods unique to DataFrames or methods where they shine due to their ergonomics. These exist because SQL's declarative grammar cannot express certain programmatic patterns that Rust handles naturally. For more see the [builder-methodology](#builder-methodology-architecting-with-dataframe) section.
-
-For a more detailed overview, the following table list all the methods unique to the DataFrame API , a clustering of those in sections and the reasons why they are unique.
-
-| Method                                                 | Purpose                                 | Why SQL Can't Express It                   |
-| ------------------------------------------------------ | --------------------------------------- | ------------------------------------------ |
-| **Schema Manipulation**                                |                                         |                                            |
-| [`.with_column()`](#schema-manipulation)               | Add/replace a column keeping all others | SQL `SELECT` requires listing all columns  |
-| [`.with_column_renamed()`](#schema-manipulation)       | Rename without expression               | SQL uses `AS` inside `SELECT`              |
-| [`.drop_columns()`](#schema-manipulation)              | Remove columns by name                  | SQL has no direct equivalent               |
-| **Set Operations by Name**                             |                                         |                                            |
-| [`.union_by_name()`](#set-operations-by-name)          | Union aligned by name, not position     | SQL `UNION` is positional                  |
-| [`.union_by_name_distinct()`](#set-operations-by-name) | Same with deduplication                 | SQL `UNION DISTINCT` is positional         |
-| **SQL-DataFrame Hybrid**                               |                                         |                                            |
-| [`.parse_sql_expr()`](#sql-dataframe-hybrid-methods)   | Parse SQL string into `Expr`            | Bridges SQL syntax into DataFrame code     |
-| [`.select_exprs()`](#sql-dataframe-hybrid-methods)     | Select using SQL expression strings     | Combines SQL ergonomics with chaining      |
-| [`.with_param_values()`](#parameter-binding)           | Bind parameter values to placeholders   | Plan-level operation, not a SQL clause     |
-| **Data Exploration**                                   |                                         |                                            |
-| [`.describe()`](#describing-data)                      | Summary statistics for all columns      | No single SQL statement equivalent         |
-| **Convenience Methods**                                |                                         |                                            |
-| [`.fill_null()`](#convenience-methods)                 | Fill nulls with default value           | Wrapper—SQL requires `COALESCE` per column |
-| [`.cache()`](#convenience-methods)                     | Materialize DataFrame in memory         | Execution control—no SQL concept           |
-| **Execution Control**                                  |                                         |                                            |
-| [`.collect_partitioned()`](#execution-control)         | Collect preserving partitions           | Partition-aware execution                  |
-| [`.execute_stream()`](#execution-control)              | Stream results without buffering        | Streaming execution control                |
-| [`.execute_stream_partitioned()`](#execution-control)  | Stream per partition                    | Parallel streaming execution               |
-| **Creation**                                           |                                         |                                            |
-| [`.from_columns()`](#creating-from-columns)            | Create from column arrays               | Programmatic construction                  |
-| **Array/Nested Data**                                  |                                         |                                            |
-| [`.unnest_columns()`](#unnesting-arrays)               | Explode arrays into rows                | SQL `UNNEST` varies by database            |
-| [`.unnest_columns_with_options()`](#unnesting-arrays)  | Unnest with fine-grained control        | Recursive depth, null handling             |
-| **Bridging to SQL**                                    |                                         |                                            |
-| [`.into_view()`](#bridging-to-sql)                     | Register DataFrame as SQL table         | Enables hybrid SQL/DataFrame workflows     |
-
-> **Methods with SQL equivalents:** Some methods have SQL counterparts but offer ergonomic advantages:
->
-> - **`.distinct_on()`** — DataFusion supports `SELECT DISTINCT ON (...)` in SQL (PostgreSQL-style, issues [#7827], [#7981])
-> - **`.alias()`** — Equivalent to `SELECT * FROM (...) AS my_alias` subquery aliasing
-
-[#7827]: https://github.com/apache/datafusion/issues/7827
-[#7981]: https://github.com/apache/datafusion/issues/7981
-[#12907]: https://github.com/apache/datafusion/issues/12907
-
-> **Gap Note:** `unpivot`/`melt` (wide-to-long reshaping) is not yet available in DataFusion See [Issue #12907][#12907]. Workaround: manual `UNION ALL` of columns.
-
-### Schema Manipulation
-
-These methods modify column structure without requiring you to enumerate all columns—a common pain point in SQL. For more see the [Schema Management](schema-management.md).
-
-#### Adding and Replacing Columns
-
-[`.with_column()`] adds a new column or replaces an existing one _while keeping all other columns intact_. In SQL, you'd need to explicitly list every column in your `SELECT`.
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let df = dataframe!(
-        "product" => ["Laptop", "Mouse"],
-        "price" => [1200, 25]
-    )?;
-
-    // Add a computed column - all existing columns are preserved
-    let df = df.with_column("discounted", col("price") * lit(0.9))?;
-
-    df.clone().show().await?;
-    // +---------+-------+------------+
-    // | product | price | discounted |
-    // +---------+-------+------------+
-    // | Laptop  | 1200  | 1080.0     |
-    // | Mouse   | 25    | 22.5       |
-    // +---------+-------+------------+
-
-    // Replace an existing column (same name overwrites)
-    let df = df.with_column("price", col("price") * lit(1.1))?;
-
-    df.show().await?;
-    // +---------+--------+------------+
-    // | product | price  | discounted |
-    // +---------+--------+------------+
-    // | Laptop  | 1320.0 | 1080.0     |
-    // | Mouse   | 27.5   | 22.5       |
-    // +---------+--------+------------+
-
-    Ok(())
-}
-```
-
-> **Why this matters:**
-> With 2 columns the SQL is fine, but imagine a table with 20 columns—you'd have to list all 20 just to add one computed column. `.with_column()` scales effortlessly.
-
-#### Renaming Columns
-
-[`.with_column_renamed()`] renames a column without requiring an expression—just the old name and new name. Like all DataFrame methods, it's **lazy**: no execution happens until you call a terminal action.
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::assert_batches_eq;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let df = dataframe!(
-        "price" => [100, 200],
-        "qty" => [5, 10]
-    )?;
-
-    // Rename is lazy - just updates the logical plan
-    let df = df.with_column_renamed("price", "unit_price")?;
-
-    // Chain multiple renames
-    let df = df
-        .with_column_renamed("qty", "quantity")?
-        .with_column_renamed("unit_price", "cost")?;
-
-    // Execute to see results
-    let results = df.collect().await?;
-    assert_batches_eq!(
-        &[
-            "+------+----------+",
-            "| cost | quantity |",
-            "+------+----------+",
-            "| 100  | 5        |",
-            "| 200  | 10       |",
-            "+------+----------+",
-        ],
-        &results
-    );
-    Ok(())
-}
-```
-
-> **SQL equivalent:** `SELECT price AS unit_price, qty AS quantity FROM ...`
->
-> The difference: SQL's `AS` is part of the projection—you must list all columns. `.with_column_renamed()` touches only the renamed column, passing others through unchanged.
-
-#### Dropping Columns
-
-[`.drop_columns()`] removes columns by name. SQL has no equivalent—you must list all columns you want to _keep_ instead.
-
-```rust
-use datafusion::prelude::*;
-use datafusion::error::Result;
-use datafusion::assert_batches_eq;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let df = dataframe!(
-        "id" => [1, 2],
-        "name" => ["Alice", "Bob"],
-        "temp_id" => [999, 998],
-        "category" => ["A", "B"]
-    )?;
-
-    // Remove multiple columns at once
-    let df = df.drop_columns(&["category", "temp_id"])?;
-
-    let results = df.collect().await?;
-    assert_batches_eq!(
-        &[
-            "+----+-------+",
-            "| id | name  |",
-            "+----+-------+",
-            "| 1  | Alice |",
-            "| 2  | Bob   |",
-            "+----+-------+",
-        ],
-        &results
-    );
-    Ok(())
-}
-```
-
-> **SQL workaround:** `SELECT id, name FROM ...` — must explicitly list every column to keep. With 20 columns, dropping 2 means listing 18.
+- **API-level capability** — programmatic plan construction, execution control, or API behavior rather than a SQL clause.
+- **Native convenience** — SQL can produce the same result, but the DataFrame API offers a direct programmatic operation.
+- **SQL-equivalent** — both APIs support it directly; the difference is ergonomics or composition.
+- **Bridge capability** — moves expressions or plans between SQL and DataFrame workflows.
 
 ---
+
+## Capability Map
+
+| Capability                       | Classification       | Why it matters                                                                              | Authoritative page                                                        |
+| -------------------------------- | -------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `.with_column()`                 | Native convenience   | Add or replace a column without re-listing the rest                                         | [Selection](#adding-renaming-and-dropping-columns)                        |
+| `.with_column_renamed()`         | Native convenience   | Rename one field in place                                                                   | [Selection](#adding-renaming-and-dropping-columns)                        |
+| `.drop_columns()`                | Native convenience   | Drop named columns, keeping the complement                                                  | [Selection](#adding-renaming-and-dropping-columns)                        |
+| `.union_by_name()`               | Native convenience   | Align set operations by column name, not position (a `_distinct` variant also deduplicates) | [Set Operations](set-operations.md#union-by-column-name)                  |
+| `.fill_null()`                   | Native convenience   | Replace nulls across several columns in one call                                            | [Null Handling](../Concepts/null-handling.md#the-null-handling-toolkit)   |
+| `.describe()`                    | Native convenience   | Summary statistics for every column in one action                                           | [Data Validation & Quality](data-quality.md#describing-data)              |
+| `.unnest_columns()`              | Native convenience   | Explode array/list columns into rows                                                        | [Reshaping Data](reshaping.md#unnesting--exploding-arrays)                |
+| `.unnest_columns_with_options()` | API-level capability | Control recursion depth and null handling when exploding                                    | [Reshaping Data](reshaping.md#controlling-unnest-behavior-with-options)   |
+| `.into_view()`                   | Bridge capability    | Register a DataFrame as a SQL-queryable table                                               | [Mixing SQL and DataFrames](hybrid-sql.md#the-seamless-workflow)          |
+| `.parse_sql_expr()`              | Bridge capability    | Parse a SQL expression string into an `Expr`                                                | [Mixing SQL and DataFrames](hybrid-sql.md#parsing-sql-expressions)        |
+| `.select_exprs()`                | Bridge capability    | Project using SQL expression strings                                                        | [Mixing SQL and DataFrames](hybrid-sql.md#selecting-with-sql-expressions) |
+| `.with_param_values()`           | Bridge capability    | Bind values to `$1`/`$name` placeholders                                                    | [Mixing SQL and DataFrames](hybrid-sql.md#parameter-binding)              |
+| `.distinct_on()`                 | SQL-equivalent       | Keep the first row per key; DataFusion SQL also has `DISTINCT ON`                           | [Set Operations](set-operations.md#distinct-on-postgresql-style)          |
+| `.alias()`                       | SQL-equivalent       | Qualify columns for self-joins, like SQL table aliasing                                     | [Join Patterns](#self-joins-and-qualified-columns)                        |
+
+The DataFrame API also owns capabilities outside transformation logic: programmatic construction such as `.from_columns()` ([Creating DataFrames](../Creating-DataFrames/index.md)) and execution control such as `.cache()`, `.collect_partitioned()`, and `.execute_stream()` ([Writing & Executing DataFrames](../Writing-DataFrames/index.md)). These are genuine API-level capabilities documented in their own lifecycle phases. Wide-to-long reshaping (melt/unpivot) has no built-in method—see [Melt and Unpivot](reshaping.md#melt-and-unpivot).
+
+---
+
+## Conclusion
+
+These capabilities recur across the DataFrame-native leaves; follow the owner links for full behavior. The DataFrame API's edge here is ergonomics and composition, not doing what SQL cannot.
