@@ -251,7 +251,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Inspect a runtime schema to decide which expressions to compose into a pipeline.**
 
-Sometimes a pipeline does not know column names or types until runtime. The pattern below inspects the schema, chooses an expression for each field, and then builds the projection. For method coverage, see [dynamic column selection](#advanced-dynamic-column-selection).
+Sometimes a pipeline does not know column names or types until runtime. The pattern below inspects the schema, chooses an expression for each field, and then builds the projection. For method coverage, see [dynamic column selection](selection.md#advanced-dynamic-column-selection).
 
 Using our `sales` DataFrame, let's double all numeric columns while keeping string columns unchanged.
 
