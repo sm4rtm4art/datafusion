@@ -27,7 +27,9 @@
    merge with the thinner unnest treatment above during rework.
 4. DONE (2026-07-16) — melt/unpivot workaround now lives here
    (### Melt and Unpivot); link repaired to #melt-and-unpivot.
-5. POSITION — opens the DataFrame-native part (after the hybrid-sql bridge).
+5. DONE (2026-07-16) — POSITION: a DataFrame-native leaf. The classification
+   page (dataframe-specifics.md, "DataFrame-Native Capabilities") opens the
+   DataFrame-native part after the hybrid-sql bridge; reshaping follows it.
 -->
 
 # Reshaping Data

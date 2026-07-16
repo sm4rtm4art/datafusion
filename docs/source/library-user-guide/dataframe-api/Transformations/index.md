@@ -17,35 +17,6 @@
   under the License.
 -->
 
-<!--TODO (Stage 2 scaffold — landing skeleton; finalize after leaf pages
-stabilize, markdown-landing.mdc §1.3; 2026-07-06)
-
-1. MOVED OUT to transformation-concepts.md (move handshake): orientation
-   paragraphs, SessionContext→LogicalPlan diagram, builder-vs-parser
-   exposition, "Methodical Differences" + injection example, "Finding
-   Balance" / TableProvider / use-case tables, SQL↔DataFrame method map.
-   Duplicated intro blocks (copy-paste artifact) were deleted — one copy
-   survives at the destination.
-2. MOVED OUT to Concepts/expressions.md: TODO on function-library coverage
-   (encoding, nested, datetime).
-3. DELETED: "What's Ahead" (dead anchors into the old monolith; replaced by
-   the curated routing table below). Style Note + contents block (prohibited
-   on landing pages, markdown-landing.mdc §1.2).
-4. DONE 2026-07-10 (move handshake from transformation-concepts.md): rendered
-   starting-dataset preview (text blocks, not code) for customer_df + orders_df
-   with a one-paragraph narration; definition + worked pipeline stay in
-   transformation-concepts.md#from-concepts-to-methods (worked pipeline). Keep table text in sync with
-   the concept-page doctest output if the dataset changes.
-5. RECEIVED 2026-07-10 (move handshake from transformation-concepts.md): the
-   five-dimension reading-path table (what-changes → family → page) now renders
-   below as the curated routing table; routing is the landing page's job
-   (markdown-landing.mdc §1.1). PENDING: finalize into the full reading arc
-   (concepts → single-frame → multi-frame → analytical → hybrid bridge →
-   DataFrame-native → capstone) once leaf pages stabilize (§1.3), folding in the
-   remaining pages (subqueries, hybrid-sql, reshaping, data-quality,
-   dataframe-specifics, builder-patterns).
--->
-
 # Transformations with DataFrame API
 
 **The "life" phase of the DataFrame lifecycle: build and refine a lazy query plan.**
@@ -67,21 +38,21 @@ aggregations
 window-functions
 subqueries
 hybrid-sql
+dataframe-specifics
 reshaping
 data-quality
-dataframe-specifics
 builder-patterns
 ```
 
 **Reading path.** The transformation methods group into families by what they change — the five dimensions from [Transformations Concepts](transformation-concepts.md#what-transformations-can-change). Use this to jump to the page that covers each family in full:
 
-| What changes   | Method family                          | Page                                                                          |
-| :------------- | :------------------------------------- | :---------------------------------------------------------------------------- |
-| Schema         | projection, column creation, renaming  | [Selection](selection.md)                                                     |
-| Cardinality    | filtering, limiting, deduplication     | [Filtering](filtering.md), [Sorting & Limiting](sorting-limiting.md), [Set Operations](set-operations.md) |
-| Ordering       | sorting                                | [Sorting & Limiting](sorting-limiting.md)                                     |
-| Grain          | aggregation, windows                   | [Aggregations](aggregations.md), [Window Functions](window-functions.md)      |
-| Frame boundary | joins, set operations                  | [Joins](joins.md), [Set Operations](set-operations.md)                        |
+| What changes   | Method family                         | Page                                                                                                      |
+| :------------- | :------------------------------------ | :-------------------------------------------------------------------------------------------------------- |
+| Schema         | projection, column creation, renaming | [Selection](selection.md)                                                                                 |
+| Cardinality    | filtering, limiting, deduplication    | [Filtering](filtering.md), [Sorting & Limiting](sorting-limiting.md), [Set Operations](set-operations.md) |
+| Ordering       | sorting                               | [Sorting & Limiting](sorting-limiting.md)                                                                 |
+| Grain          | aggregation, windows                  | [Aggregations](aggregations.md), [Window Functions](window-functions.md)                                  |
+| Frame boundary | joins, set operations                 | [Joins](joins.md), [Set Operations](set-operations.md)                                                    |
 
 **The running dataset.** Every page in this section works the same two frames — `customer_df` (one row per customer) and `orders_df` (one row per order, linked by `customer_id`). Two gaps are intentional: Carol has no orders, and order 104 points at a customer that does not exist, so joins and data-quality checks have something to reveal. The definition and a worked pipeline live in [Transformations Concepts](transformation-concepts.md#from-concepts-to-methods); here is the shape you will keep seeing:
 

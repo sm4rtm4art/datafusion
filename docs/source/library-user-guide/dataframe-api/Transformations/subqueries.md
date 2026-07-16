@@ -21,19 +21,16 @@
 
 1. ABSTRACT
 2. INTRODUCTION
-3. ORPHAN HEADING — "Summary: Shared Transformations" is a monolith-split
-   artifact (summary of the old "Shared Transformations" part); rewrite as
-   this page's own conclusion.
+3. DONE (2026-07-16) — the monolith-split "Summary: Shared Transformations"
+   orphan was rewritten as this page's own conclusion.
 4. LATERAL — cross-link the lateral-join note in joins.md: a LATERAL join is
    conceptually a correlated subquery in the FROM clause; SQL-only today
    (no DataFrame API method), hybrid route via `ctx.sql()`.
-5. TRANSITION — this page closes the analytical part; hand off to
-   hybrid-sql.md (the bridge chapter).
+5. DONE (2026-07-16) — closing transition hands off to hybrid-sql.md
+   (the bridge chapter).
 -->
 
 # Subqueries
-
-
 
 :::{admonition} Style Note
 :class: note
@@ -184,34 +181,17 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
-### Summary: Shared Transformations
+## Conclusion
 
-**Every operation in this chapter has a direct SQL equivalent—the logic is identical, only the syntax differs.** Both APIs compile to the same logical plan, so performance is equivalent.
+**Subqueries let a filter or expression depend on the result of another query — built programmatically with `scalar_subquery()`, `in_subquery()`, and `exists()`.** Each wraps a `LogicalPlan` into an `Expr` you compose into `.filter()` like any other predicate, so a subquery plan can be named, reused, and assembled conditionally.
 
-| Operation        | DataFrame                            | SQL                  |
-| ---------------- | ------------------------------------ | -------------------- |
-| Select columns   | `.select()`, `.select_columns()`     | `SELECT`             |
-| Filter rows      | `.filter()`                          | `WHERE`              |
-| Aggregate        | `.aggregate()`                       | `GROUP BY`           |
-| Join tables      | `.join()`                            | `JOIN`               |
-| Sort results     | `.sort()`                            | `ORDER BY`           |
-| Limit rows       | `.limit()`                           | `LIMIT`              |
-| Set operations   | `.union()`, `.intersect()`           | `UNION`, `INTERSECT` |
-| Window functions | `.window()` + builder                | `OVER (...)`         |
-| Unnest arrays    | `.unnest_columns()`                  | `UNNEST`             |
-| Subqueries       | `scalar_subquery()`, `in_subquery()` | `(SELECT ...)`       |
+Subqueries close the analytical part of this section: every method up to here mirrors a SQL clause and compiles to the same logical plan. From here the guide turns to what the DataFrame API adds around and beyond SQL. Continue with [Mixing SQL and DataFrames](hybrid-sql.md) to move between `ctx.sql()` and DataFrame methods in a single workflow.
 
-> **When to use which?**
->
-> - **DataFrame API:** Complex logic with conditionals, reusable pipelines, compile-time checks, or when building queries programmatically.
-> - **SQL API:** Ad-hoc exploration, familiar syntax, or when porting existing SQL queries.
+:::{admonition} See also
+:class: seealso
 
-**Next:** [DataFrame-Unique Methods](#dataframe-unique-methods) covers operations that have no direct SQL equivalent.
+- [SQL SELECT reference](../../../user-guide/sql/select.md) — detailed SQL syntax
+- [Window Functions](../../../user-guide/sql/window_functions.md) — all window functions
+- [SQL Subqueries](../../../user-guide/sql/subqueries.md) — SQL subquery patterns
 
-**See also:**
-
-- [SQL SELECT reference](../../user-guide/sql/select.md) — detailed SQL syntax
-- [Window Functions](../../user-guide/sql/window_functions.md) — all window functions
-- [Subqueries](../../user-guide/sql/subqueries.md) — SQL subquery patterns
-
----
+:::
