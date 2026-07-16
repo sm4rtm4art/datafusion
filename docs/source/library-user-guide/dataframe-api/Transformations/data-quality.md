@@ -17,29 +17,7 @@
   under the License.
 -->
 
-<!--TODO (restructuring notes, agreed 2026-07-06)
-
-1. ABSTRACT
-2. INTRODUCTION
-3. DUPLICATE H1 — the title "Data Validation & Quality" appears twice
-   (refactoring artifact); the second occurrence must become the first H2.
-4. DONE (2026-07-06) — "Describing Data" (`.describe()`) arrived from
-   set-operations.md as raw material (before "Summary: Builder Methodology");
-   fits the declared "Quality Inspection" concern. Rework: frame as async
-   ACTION, place under the right H2.
-5. RECAP + LINK — `.fill_null()` gets a one-sentence recap here (cleaning
-   strategy); owner is Concepts/null-handling.md §Null-Handling Toolkit. The
-   full copy in set-operations.md is deleted as duplicate.
-6. HEADING DEPTH — body starts at H3 ("Data Constraint Validation"); lift to
-   H2 grain during rework. "Summary: Builder Methodology" is an orphan
-   heading from the monolith split.
--->
-
-
-
 # Data Validation & Quality
-
-
 
 :::{admonition} Style Note
 :class: note
@@ -61,13 +39,12 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-
-# Data Validation & Quality
-
 **Validation protects your pipeline at multiple levels: schema validation ensures structure, constraint validation ensures values, and quality inspection tracks how transformations affect your data.**
 
 **Why the DataFrame-API excels here:** <br>
 Validation is where DataFusion's DataFrame-API truly shines over the SQL-API. With the SQL-API, validation logic lives in query strings—you can't easily parameterize thresholds, compose rules as functions, or integrate with Rust's type system. The DataFrame-API lets you build validation as **reusable Rust functions** with configurable thresholds, return [`Result<DataFrame>`][`result<dataframe>`] to fail fast with meaningful errors, and connect validation failures directly to your logging, metrics, and alerting infrastructure. Both APIs produce the same optimized plans—but the DataFrame-API gives you production-grade data quality tooling, not just "check and hope."
+
+## Validation Layers
 
 This section covers three complementary approaches:
 
@@ -77,9 +54,9 @@ This section covers three complementary approaches:
 | **Constraint Validation** | Business rules (price > 0, not null)   | Every pipeline—reject/flag bad data             |
 | **Quality Inspection**    | Distribution tracking, bias detection  | ML pipelines, auditing, compliance              |
 
-> **Schema validation** is covered in detail in [Schema Management § Validating Schemas](schema-management.md#validating-schemas). This section focuses on constraint validation and quality inspection.
+> **Schema validation** is covered in detail in [Schema Management § Comparing and Validating Schemas](../Schema-Management/schema-inspection.md#comparing-and-validating-schemas). This section focuses on constraint validation and quality inspection.
 
-### Data Constraint Validation
+## Constraint Validation
 
 Once schema validation confirms your DataFrame has the right structure, constraint validation ensures **values** meet business rules: no negative prices, required fields populated, values within expected ranges.
 
@@ -88,7 +65,7 @@ DataFusion's DataFrame-API provides **composable validation primitives**—filte
 > **Coming from other ecosystems?** <br>
 > If you've used [Pandera] (Python), [Great Expectations], or [Deequ] (Spark), the patterns here serve a similar purpose: ensuring data meets business rules before processing. The DataFrame-API approach trades declarative schemas for programmatic flexibility—your validation rules are Rust functions you can test, version, and compose.
 >
-> For declarative validation built on DataFusion, the community is developing [Term](https://github.com/withterm/term)—an emerging project aiming to bring schema-based validation to the Rust/Arrow ecosystem.
+> For declarative validation built on DataFusion, projects such as [Term](https://github.com/withterm/term) aim to bring schema-based, declarative validation to the Rust/Arrow ecosystem.
 
 **Three constraint validation strategies:**
 
@@ -98,12 +75,14 @@ DataFusion's DataFrame-API provides **composable validation primitives**—filte
 | **Flag-based**      | Marks rows, keeps all    | Need to report issues but preserve data      |
 | **Aggregate-based** | Produces quality summary | Monitoring data health, CI/CD checks         |
 
-### Filter-Based Constraints (Reject Invalid Rows)
+### Filter-Based Validation
 
 Use this when downstream processing requires clean data. Invalid rows are removed before they can cause calculation errors or corrupt aggregations.
 
 **Trade-off:** <br>
 Simple and fast, but you lose visibility into what was rejected. Consider logging reject counts.
+
+> **Execution note:** `validate_sales` is `async` because it runs two `.count()` actions for reporting. The `.filter()` calls build a lazy plan, but those counts execute work before the function returns; the returned `DataFrame` is still lazy.
 
 ```rust
 use datafusion::prelude::*;
@@ -150,7 +129,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### Flag-Based Constraints (Mark Issues, Keep All)
+### Flag-Based Validation
 
 Use this when you need to preserve all data but identify problems. Downstream processes can filter on `is_valid` or handle invalid rows differently.
 
@@ -180,7 +159,8 @@ async fn validate_with_flags(
         .filter(col("is_valid").eq(lit(false)))?
         .count().await? as f64;
 
-    let invalid_percent = invalid / total;
+    // Treat empty input as zero invalid percentage (avoid 0 / 0 = NaN)
+    let invalid_percent = if total == 0.0 { 0.0 } else { invalid / total };
     if invalid_percent > max_invalid_percent {
         return Err(datafusion::error::DataFusionError::Execution(
             format!("Validation failed: {:.1}% invalid rows (threshold: {:.1}%)",
@@ -214,7 +194,9 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-#### Aggregate-Based Constraints (Quality Report)
+> **Note:** This helper reuses `DataFusionError::Execution` so it composes with `?`, but a threshold breach is a business-rule failure, not an engine execution error. In production you may prefer a dedicated application error type to keep quality-gate failures distinct from plan-build and I/O errors.
+
+### Aggregate Quality Reports
 
 Use this for monitoring pipelines, CI/CD quality gates, or dashboards. Produces a single-row summary of data health without modifying the data itself.
 
@@ -274,29 +256,13 @@ async fn main() -> datafusion::error::Result<()> {
 
 These patterns let you build validation into your pipeline without external dependencies.
 
-> **See also:** <br>
-> For dedicated validation frameworks with schema definitions and reporting, the community has developed tools like [Term](https://github.com/withterm/term) that build on DataFusion's query engine.
+## Quality Inspection
 
-#### Data Quality & Bias Inspection
-
-For ML pipelines and data-sensitive applications, understanding how transformations affect your data is critical. Did filtering introduce demographic bias? Did a join drop important records? DataFrames enable inspection patterns that answer these questions:
-
-- **Tuple identifiers**: Use [`row_number()`] to assign stable IDs that track individual rows through transformations—essential for debugging "where did this row go?" questions
-- **Distribution tracking**: Register pipeline steps as views and compare group counts before/after operations—catches bias introduced by filters or joins
-- **Hybrid inspection**: Build pipelines with DataFrames, audit with SQL—leverage each API's strengths
-
-These patterns come from research on [ML pipeline inspection][blue elephants inspecting pandas], which showed that many ML fairness issues originate in data preparation, not model training.
-
-> **See [Advanced Topics § Data Quality](dataframes-advance.md#data-quality--bias-inspection)** for complete implementations with code examples.
-
-<!-- MOVED HERE from set-operations.md (monolith-split repair, 2026-07-06) —
-raw material for the Quality Inspection concern; rework pending: frame
-`.describe()` as an async ACTION (pub async fn, triggers execution), lift to
-the right heading grain, restore missing link definitions. -->
+Quality inspection looks at the shape of the data itself—distributions, summary statistics, and how they change across a pipeline—rather than accepting or rejecting individual rows.
 
 ### Describing Data
 
-[`.describe()`] generates summary statistics for all columns—similar to pandas' `df.describe()`. No single SQL statement can do this:
+[`.describe()`] is an async action that executes immediately and returns summary statistics for every column—similar to pandas' `df.describe()`. DataFusion packages the result into one standard summary layout; producing the same summary in SQL generally means composing several aggregate expressions or queries.
 
 ```rust
 use datafusion::prelude::*;
@@ -310,11 +276,11 @@ async fn main() -> Result<()> {
         "quantity" => [100, 50, 75, 25, 60]
     )?;
 
-    // Get summary statistics
+    // .describe() executes immediately and returns a summary DataFrame
     let stats = df.describe().await?;
     stats.show().await?;
 
-    // Output includes: count, null_count, mean, std, min, max, median
+    // Summary rows: count, null_count, mean, std, min, max, median
     // +------------+---------+-------+----------+
     // | describe   | product | price | quantity |
     // +------------+---------+-------+----------+
@@ -330,22 +296,28 @@ async fn main() -> Result<()> {
 }
 ```
 
-> **SQL equivalent:** Would require 7+ separate aggregate queries unioned together—tedious and error-prone.
+> **SQL equivalent:** The same summary in SQL generally requires composing several aggregate expressions or queries; `.describe()` packages them into one call.
 
-### Summary: Builder Methodology
+### Tracking Transformation Effects
 
-**The DataFrame API is Rust-first query building—not SQL with different syntax.**
+For ML pipelines and data-sensitive applications, understanding how transformations affect your data is critical. Did filtering introduce demographic bias? Did a join drop important records? DataFrames enable inspection patterns that answer these questions:
 
-| Pattern                  | Key Benefit                                             |
-| ------------------------ | ------------------------------------------------------- |
-| **Builder + Laziness**   | Variables hold plans, not data; branch and reuse freely |
-| **Dynamic Construction** | Rust `if/else/match` builds safe, validated plans       |
-| **Encapsulation**        | Functions returning [`Expr`]/[`DataFrame`] replace UDFs |
-| **Memory Control**       | Choose collect vs stream based on data size             |
-| **Error Separation**     | Schema errors at build time, I/O errors at execution    |
-| **Data Validation**      | Native filter/aggregate patterns for quality checks     |
-| **Observability**        | [`.explain()`] shows optimizer decisions                |
+- **Tuple identifiers**: Use [`row_number()`] to assign stable IDs that track individual rows through transformations—essential for debugging "where did this row go?" questions
+- **Distribution tracking**: Register pipeline steps as views and compare group counts before/after operations—catches bias introduced by filters or joins
+- **Hybrid inspection**: Build pipelines with DataFrames, audit with SQL—leverage each API's strengths
 
-> **The takeaway:** Think of DataFrames as _query builders_, not _data containers_. Build the plan with Rust's full power, let DataFusion optimize it, then execute once.
+These patterns come from research on [ML pipeline inspection][blue elephants inspecting pandas], which showed that many ML fairness issues originate in data preparation, not model training.
 
----
+> **See [Advanced DataFrame Topics § Data Quality & Bias Inspection](../dataframes-advance.md#data-quality--bias-inspection)** for complete implementations with code examples.
+
+## Conclusion
+
+Validation and quality checks turn a DataFrame pipeline into something you can trust in production: schema validation confirms structure, constraint validation enforces business rules through filter, flag, and aggregate patterns, and quality inspection tracks how transformations reshape your data. Because these checks are ordinary DataFrame transformations and actions, you can package them as reusable, testable Rust functions—see [Composing DataFrame Pipelines](builder-patterns.md)—while routing structural checks to [Schema Management](../Schema-Management/schema-inspection.md#comparing-and-validating-schemas) and deeper bias auditing to [Advanced DataFrame Topics](../dataframes-advance.md#data-quality--bias-inspection).
+
+[`result<dataframe>`]: https://docs.rs/datafusion/latest/datafusion/error/type.Result.html
+[`.describe()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.describe
+[`row_number()`]: https://docs.rs/datafusion/latest/datafusion/functions_window/row_number/fn.row_number.html
+[pandera]: https://pandera.readthedocs.io/
+[great expectations]: https://greatexpectations.io/
+[deequ]: https://github.com/awslabs/deequ
+[blue elephants inspecting pandas]: https://arxiv.org/abs/2309.07564 "Research paper on inspecting ML pipelines"
