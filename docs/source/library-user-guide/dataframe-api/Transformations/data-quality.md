@@ -17,6 +17,19 @@
   under the License.
 -->
 
+<!--TODO (reframe as applied DataFrame pipeline capstone, 2026-07-18) 
+1. Reframe this page as an applied use of the transformation methods and the Rust composition model taught in builder-patterns.md.
+2. Preserve the three useful validation strategies, subject to detailed review: - filter invalid rows, - retain rows and add validation flags, - aggregate quality metrics. 
+3. Separate lazy plan construction from actions clearly. Functions that call count(), collect(), show(), or other actions are execution workflows, not purely lazy transformation builders. 
+4. Replace advocacy such as "the DataFrame API excels" or "production-grade tooling, not check and hope" with a fair comparison: both SQL and DataFrame APIs can express relational validation checks; the DataFrame API is especially useful when rules must integrate with Rust functions, typed configuration, control flow, reuse, application errors, logging, or metrics. 
+5. Do not claim that SQL cannot parameterize thresholds, compose reusable logic, or integrate with applications. Compare concrete authoring and integration trade-offs instead. 
+6. Keep detailed schema validation in Schema Management. This page should recap and link to that owner, then focus on value constraints and quality reports. 
+7. Reassess whether .describe() belongs here as a bounded inspection tool or remains owned elsewhere. 
+8. Review error modeling. A failed business-quality threshold is not necessarily a DataFusion engine Execution error; show or discuss an application error boundary where appropriate. 
+9. Replace .show() examples and comment-only expected results with collected and asserted doctest output. 
+10. Verify empty-input behavior, null semantics, numeric casts, percentage calculations, and repeated-action costs during subtree implementation. 
+11. Write the abstract and conclusion last. The closing section should explain that this is one applied pattern enabled by composable DataFrame pipelines, not a claim that the DataFrame API is a complete data-quality framework. -->
+
 # Data Validation & Quality
 
 :::{admonition} Style Note

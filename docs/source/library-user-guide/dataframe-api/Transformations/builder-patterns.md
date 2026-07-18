@@ -17,6 +17,20 @@
   under the License.
 -->
 
+<!--TODO (reframe as DataFrame API composition capstone, 2026-07-18) 
+1. Keep this as a standalone page, but define its role precisely: explain how Rust code constructs, branches, parameterizes, reuses, and organizes lazy DataFrame plans. 
+2. Consider the title: # Composing DataFrame Pipelines 
+3. Build the storyline around: name intermediate stages → retain or branch plans → construct plans conditionally → extract reusable Expr builders → extract reusable DataFrame stages → define action and error boundaries 
+4. Treat this as an API-composition page, not another transformation-method catalogue. Link to selection, filtering, sorting, aggregation, and other method owners instead of reteaching their contracts.
+5. Reassess inherited schema-driven projection content. Keep it only when it demonstrates a broader dynamic-pipeline technique; otherwise route to selection.md. 
+6. Verify and explain ownership semantics carefully: - transformations consume DataFrame values, - clone() preserves another plan handle, - cloning a DataFrame does not execute or materialize the data. 
+7. Compare Rust variables and functions with SQL statements, CTEs, parameters, and views fairly. Do not imply that SQL cannot compose or parameterize logic. 
+8. Standardize all examples on the documentation Rust rules: self-contained doctests, asserted output, no .show() as proof, and no unverified compile-time schema-safety claims. 
+9. End with a direct transition to data-quality.md: reusable plan and expression functions become especially useful when transformations enforce application-level validation rules. 
+-->
+
+
+
 # Composing DataFrame Pipelines
 
 **Compose maintainable, reusable, and dynamic DataFrame pipelines with Rust variables, control flow, functions, and schema inspection.**

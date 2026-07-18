@@ -17,15 +17,11 @@
   under the License.
 -->
 
-<!--TODO
+# Filtering Rows with Expressions
 
-1. ABSTRACT
-2. INTRODUCTION
--->
+**The DataFrame API builds filtering rules as typed, composable [`Expr`] values, making null behavior and application-driven criteria explicit without interpolating runtime values into SQL expression text.**
 
-# Filtering Excellence
-
-
+Analytical applications rarely need every row from each input, and their filtering criteria are often determined by application state or user input. DataFusion narrows a `DataFrame` with [`.filter()`], using Boolean-compatible expressions that can be composed, validated against the input schema, and handled through Rust's normal `Result` flow. This page covers comparisons, Boolean composition, membership tests, ranges, patterns, null-aware rules, and predicates assembled from optional application inputs. It also explains why some predicate errors surface later and why filter pushdown is a performance optimization rather than a semantic guarantee.
 
 :::{admonition} Style Note
 :class: note
@@ -42,289 +38,574 @@ In this document, code elements follow a consistent pattern:
 
 :::
 
-```{contents} Table of Content
+```{contents} Table of Contents for Filtering Rows with Expressions
 :local:
 :depth: 2
 ```
 
-## Introduction (placeholder)
+## Construct Filtering Predicates
 
-**Filtering controls which rows survive—applying predicates to discard irrelevant data early, before expensive joins or aggregations consume resources.**
+**Filtering applies predicate expressions to decide which rows survive, preserving the DataFrame's columns while potentially reducing its cardinality.**
 
-<!--Check Reference
+Calling [`.filter()`] adds a filtering condition to the DataFrame's logical plan. The condition is represented as an `Expr` rather than evaluated immediately, so constructing the filtered `DataFrame` does not read the input data. An action such as [`.collect()`] later triggers planning and execution.
 
-[projection](#selection-and-projection-mastery)
--->
+For the broader expression model, see [Expressions](../Concepts/expressions.md).
 
-Where projection shapes columns, filtering shapes rows. The [`.filter()`] method accepts any boolean expression built from these building blocks:
+During execution, DataFusion evaluates the predicate against incoming record batches. Logically, the predicate produces one Boolean-compatible result for each input row: `true` keeps the row, while `false` or `NULL` discards it.
 
-| Predicate Type   | Methods                           | Example                                   |
-| :--------------- | :-------------------------------- | :---------------------------------------- |
-| Comparisons      | [`.gt()`], [`.lt()`], [`.eq()`]   | `col("price").gt(lit(100))`               |
-| Logical          | [`.and()`], [`.or()`], [`.not()`] | `condition_a.and(condition_b)`            |
-| Set membership   | [`in_list()`]                     | `col("status").in_list(vec![...], false)` |
-| Pattern matching | [`.like()`], [`.ilike()`]         | `col("name").like(lit("A%"))`             |
-| Range            | [`.between()`]                    | `col("age").between(lit(18), lit(65))`    |
+Filtering predicates range from individual comparisons to composed Boolean conditions, membership tests, ranges, patterns, and explicit null checks. The following sections build those forms using a shared `orders_df` dataset. DataFusion must resolve each predicate as Boolean-compatible; [Know When Predicate Errors Surface](#know-when-predicate-errors-surface) explains where invalid references or incompatible types fail.
 
-Predicate pushdown ensures filters reach the data source, letting formats like Parquet skip entire row groups.
+| Filtering need                     | Representative expression                                  |
+| :--------------------------------- | :--------------------------------------------------------- |
+| Compare values                     | `col("amount").gt(lit(150))`                              |
+| Combine Boolean conditions         | `high_value.and(multiple_items)`                           |
+| Test membership, ranges, patterns  | `in_list(...)`, `.between(...)`, `.like(...)`              |
+| Handle missing values              | `.is_null()`, `.is_not_null()`, null-aware composition     |
 
-**SQL equivalent:** [`WHERE condition`][`where`]
+### Compare Values
 
-> **Trade-off: DataFrame vs SQL**
->
-> - **DataFrame shines:** Composable predicates built programmatically, Rust control flow for conditional logic, compile-time column checking, dynamic filters from runtime values
-> - **SQL shines:** Familiar `WHERE` syntax, more readable for simple static conditions, clearer `AND`/`OR` precedence
+**A comparison combines value expressions into the Boolean predicate required by [`.filter()`].**
 
-**Performance note:** <br>
-DataFusion excels at **predicate pushdown** — filters reach data sources so Parquet skips entire row groups and databases apply indexes. For highly selective point lookups (`WHERE id = 123`) on indexed row-based databases, the source DB may be faster. For complex multi-column predicates or full scans, DataFusion's vectorized evaluation wins.
+[`col()`] references the values of an input column, while [`lit()`] represents a constant value. These are value expressions: neither one alone determines whether a row should remain. A comparison method combines compatible operands into a Boolean `Expr` that can be passed to [`.filter()`].
 
-### Basic Filtering
+Use [`.eq()`] and [`.not_eq()`] for equality comparisons; [`.gt()`] and [`.gt_eq()`] for greater-than comparisons; and [`.lt()`] and [`.lt_eq()`] for less-than comparisons. The operands can be columns, literals, or larger compatible expressions.
 
-**Start simple:** most filters are single-column comparisons. <br>
-Build the predicate with [`col()`] for the column, a comparison method like [`.gt()`], and [`lit()`] for the literal value. The pattern reads naturally: `col("price").gt(lit(100))` means "price greater than 100".
+This example keeps orders whose `amount` is greater than 150:
 
 ```rust
+use datafusion::assert_batches_sorted_eq;
 use datafusion::prelude::*;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    let sample_df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard"],
-        "price" => [1200, 25, 75],
-        "quantity" => [5, 50, 30],
-        "category" => ["Electronics", "Accessories", "Accessories"]
+    let orders_df = dataframe!(
+        "order_id" => [101, 102, 103, 104],
+        "customer_id" => vec![Some(1), Some(1), Some(2), None],
+        "product" => ["Widget", "Gadget", "Widget", "Gizmo"],
+        "amount" => [100, 200, 150, 300],
+        "quantity" => [2, 1, 3, 1]
     )?;
 
-    // Filter: keep only rows where price > 100
-    sample_df.clone()
-        .filter(col("price").gt(lit(100)))?
-        .show().await?;
-    // Only Laptop (1200) survives — Mouse (25) and Keyboard (75) are filtered out
-    // +---------+-------+----------+-------------+
-    // | product | price | quantity | category    |
-    // +---------+-------+----------+-------------+
-    // | Laptop  | 1200  | 5        | Electronics |
-    // +---------+-------+----------+-------------+
+    let result = orders_df
+        .filter(col("amount").gt(lit(150)))?
+        .collect()
+        .await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+-------------+---------+--------+----------+",
+            "| order_id | customer_id | product | amount | quantity |",
+            "+----------+-------------+---------+--------+----------+",
+            "| 102      | 1           | Gadget  | 200    | 1        |",
+            "| 104      |             | Gizmo   | 300    | 1        |",
+            "+----------+-------------+---------+--------+----------+",
+        ],
+        &result
+    );
 
     Ok(())
 }
 ```
 
-### Intermediate: Complex Predicates
+:::{admonition} SQL comparison equivalents
+:class: seealso
 
-**Real-world filters combine multiple conditions.** <br>
-Chain predicates with [`.and()`] and [`.or()`], check set membership with [`in_list()`], match patterns with [`.like()`] (case-sensitive) or [`.ilike()`] (case-insensitive), and validate ranges with [`.between()`].
+DataFrame comparison methods construct the same logical comparison operations expressed by SQL operators.
+
+| Comparison            | DataFrame expression                         | SQL expression  |
+| :-------------------- | :------------------------------------------- | :-------------- |
+| Equal                 | `col("amount").eq(lit(150))`                 | `amount = 150`  |
+| Not equal             | `col("amount").not_eq(lit(150))`             | `amount <> 150` |
+| Greater than          | `col("amount").gt(lit(150))`                 | `amount > 150`  |
+| Greater than or equal | `col("amount").gt_eq(lit(150))`              | `amount >= 150` |
+| Less than             | `col("amount").lt(lit(150))`                 | `amount < 150`  |
+| Less than or equal    | `col("amount").lt_eq(lit(150))`              | `amount <= 150` |
+
+The DataFrame API constructs an `Expr` directly. SQL parses the corresponding expression text into the same logical expression model. For APIs that parse SQL expressions within a DataFrame pipeline, see [SQL-Expression Bridge Methods](hybrid-sql.md#sql-expression-bridge-methods).
+:::
+
+### Combine Boolean Conditions
+
+**Boolean composition combines complete predicates into one row-survival rule, making the intended grouping explicit when `AND`, `OR`, and `NOT` interact.**
+
+A comparison answers one filtering question, but application rules commonly depend on several conditions. Use [`.and()`] when every condition must evaluate to `true`, [`.or()`] when any condition may evaluate to `true`, and [`.not()`] to invert a Boolean expression.
+
+When a predicate mixes `AND` and `OR`, build and name its meaningful parts before combining them. Intermediate expressions expose the intended grouping directly and make later changes less likely to alter the business rule accidentally.
+
+The following example keeps an order when either:
+
+1. its `amount` is at least 150 and its `quantity` is at least 2; or
+2. its `product` is `Gadget`.
 
 ```rust
+use datafusion::assert_batches_sorted_eq;
 use datafusion::prelude::*;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    let sample_df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard"],
-        "price" => [1200, 25, 75],
-        "quantity" => [5, 50, 30],
-        "category" => ["Electronics", "Accessories", "Accessories"]
+    let orders_df = dataframe!(
+        "order_id" => [101, 102, 103, 104],
+        "customer_id" => vec![Some(1), Some(1), Some(2), None],
+        "product" => ["Widget", "Gadget", "Widget", "Gizmo"],
+        "amount" => [100, 200, 150, 300],
+        "quantity" => [2, 1, 3, 1]
     )?;
 
-    // AND/OR: (price > 50 AND quantity < 40) OR product = "Laptop"
-    sample_df.clone()
-        .filter(
-            col("price").gt(lit(50))
-                .and(col("quantity").lt(lit(40)))
-                .or(col("product").eq(lit("Laptop")))
-        )?
-        .show().await?;
-    // Keyboard matches (price=75 > 50, quantity=30 < 40)
-    // Laptop matches via OR clause
-    // +---------+-------+----------+-------------+
-    // | product | price | quantity | category    |
-    // +---------+-------+----------+-------------+
-    // | Laptop  | 1200  | 5        | Electronics |
-    // | Keyboard| 75    | 30       | Accessories |
-    // +---------+-------+----------+-------------+
+    let multi_quantity_order = col("amount")
+        .gt_eq(lit(150))
+        .and(col("quantity").gt_eq(lit(2)));
+
+    let gadget_order = col("product").eq(lit("Gadget"));
+    let predicate = multi_quantity_order.or(gadget_order);
+
+    let result = orders_df.filter(predicate)?.collect().await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+-------------+---------+--------+----------+",
+            "| order_id | customer_id | product | amount | quantity |",
+            "+----------+-------------+---------+--------+----------+",
+            "| 102      | 1           | Gadget  | 200    | 1        |",
+            "| 103      | 2           | Widget  | 150    | 3        |",
+            "+----------+-------------+---------+--------+----------+",
+        ],
+        &result
+    );
 
     Ok(())
 }
 ```
 
-**More examples for predicate patterns:**
+:::{admonition} SQL Boolean equivalents
+:class: seealso
+
+| DataFrame composition | SQL composition  |
+| :-------------------- | :--------------- |
+| `left.and(right)`     | `left AND right` |
+| `left.or(right)`      | `left OR right`  |
+| `predicate.not()`     | `NOT predicate`  |
+
+The complete predicate above corresponds to:
+
+```sql
+WHERE (amount >= 150 AND quantity >= 2)
+   OR product = 'Gadget'
+```
+:::
+
+### Test Membership, Ranges, and Patterns
+
+**Specialized predicate methods express membership, inclusive ranges, and text patterns directly, avoiding longer Boolean chains that obscure the filtering rule.**
+
+Individual comparisons can represent these conditions manually. A set membership test could be written as several equality expressions joined with [`.or()`], while an inclusive range could be written using lower- and upper-bound comparisons joined with [`.and()`]. Those forms are valid, but the resulting expression describes the mechanics rather than the intended rule.
+
+Use [`.in_list()`] when a value must belong to a finite set, [`.between()`] when it must fall within an inclusive interval, and [`.like()`] or [`.ilike()`] when text must match a SQL-style pattern.
+
+| Filtering need           | DataFrame expression                            | Negated form                                    |
+| :----------------------- | :---------------------------------------------- | :---------------------------------------------- |
+| Membership               | `col("product").in_list(values, false)`        | `col("product").in_list(values, true)`         |
+| Inclusive range          | `col("amount").between(low, high)`             | `col("amount").not_between(low, high)`         |
+| Case-sensitive pattern   | `col("product").like(pattern)`                 | `col("product").not_like(pattern)`             |
+| Case-insensitive pattern | `col("product").ilike(pattern)`                | `col("product").not_ilike(pattern)`            |
+
+For [`.in_list()`], the Boolean argument controls whether the expression is negated: `false` represents `IN`, while `true` represents `NOT IN`. The [`.between()`] method includes both its lower and upper boundaries. Pattern expressions use `%` to match a sequence of characters and `_` to match one character.
+
+The following example evaluates one predicate from each family against the shared `orders_df` dataset:
 
 ```rust
+use datafusion::assert_batches_sorted_eq;
 use datafusion::prelude::*;
-use datafusion::functions::string::expr_fn::lower;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    let sample_df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard"],
-        "price" => [1200, 25, 75],
-        "quantity" => [5, 50, 30],
-        "category" => ["Electronics", "Accessories", "Accessories"]
+    let orders_df = dataframe!(
+        "order_id" => [101, 102, 103, 104],
+        "customer_id" => vec![Some(1), Some(1), Some(2), None],
+        "product" => ["Widget", "Gadget", "Widget", "Gizmo"],
+        "amount" => [100, 200, 150, 300],
+        "quantity" => [2, 1, 3, 1]
     )?;
 
-    // IN list: product IN ("Laptop", "Mouse")
-    println!("IN list example:");
-    sample_df.clone()
-        .filter(in_list(col("product"), vec![lit("Laptop"), lit("Mouse")], false))?
-        .show().await?;
+    let selected_products = orders_df
+        .clone()
+        .filter(col("product").in_list(
+            vec![lit("Widget"), lit("Gizmo")],
+            false,
+        ))?
+        .select(vec![col("order_id"), col("product")])?
+        .collect()
+        .await?;
 
-    // Pattern matching: product LIKE '%board%' (contains "board")
-    println!("LIKE example:");
-    sample_df.clone()
-        .filter(col("product").like(lit("%board%")))?
-        .show().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+---------+",
+            "| order_id | product |",
+            "+----------+---------+",
+            "| 101      | Widget  |",
+            "| 103      | Widget  |",
+            "| 104      | Gizmo   |",
+            "+----------+---------+",
+        ],
+        &selected_products
+    );
 
-    // Case-insensitive matching: ILIKE or lower()
-    // Method 1: .ilike() — SQL's ILIKE equivalent
-    println!("ILIKE example:");
-    sample_df.clone()
-        .filter(col("product").ilike(lit("%BOARD%")))?  // Matches "Keyboard"
-        .show().await?;
+    let selected_amounts = orders_df
+        .clone()
+        .filter(col("amount").between(lit(150), lit(200)))?
+        .select(vec![col("order_id"), col("amount")])?
+        .collect()
+        .await?;
 
-    // Method 2: Normalize both sides with lower()
-    println!("lower() example:");
-    sample_df.clone()
-        .filter(lower(col("product")).eq(lit("keyboard")))?
-        .show().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+--------+",
+            "| order_id | amount |",
+            "+----------+--------+",
+            "| 102      | 200    |",
+            "| 103      | 150    |",
+            "+----------+--------+",
+        ],
+        &selected_amounts
+    );
 
-    // Range: price BETWEEN 50 AND 500
-    println!("BETWEEN example:");
-    sample_df.clone()
-        .filter(col("price").between(lit(50), lit(500)))?
-        .show().await?;
+    let matching_products = orders_df
+        .filter(col("product").ilike(lit("g%")))?
+        .select(vec![col("order_id"), col("product")])?
+        .collect()
+        .await?;
 
-    // Null safety: price IS NOT NULL (all rows pass — no nulls in sample_df)
-    println!("IS NOT NULL example:");
-    sample_df.clone()
-        .filter(col("price").is_not_null())?
-        .show().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+---------+",
+            "| order_id | product |",
+            "+----------+---------+",
+            "| 102      | Gadget  |",
+            "| 104      | Gizmo   |",
+            "+----------+---------+",
+        ],
+        &matching_products
+    );
 
     Ok(())
 }
 ```
 
-> **Operator precedence:** [`.and()`] binds tighter than [`.or()`], just like SQL. Use parentheses (method chaining order) to make intent explicit: `a.and(b).or(c)` means `(a AND b) OR c`.
+:::{admonition} SQL predicate equivalents
+:class: seealso
 
-### Advanced: Dynamic Filter Building
+| Filtering need  | DataFrame expression                                      | SQL expression                          |
+| :-------------- | :-------------------------------------------------------- | :-------------------------------------- |
+| Membership      | `col("product").in_list(values, false)`                    | `product IN ('Widget', 'Gizmo')`        |
+| Inclusive range | `col("amount").between(lit(150), lit(200))`                | `amount BETWEEN 150 AND 200`            |
+| Pattern         | `col("product").ilike(lit("g%"))`                         | `product ILIKE 'g%'`                    |
 
-**This is where DataFrames truly outshine SQL.** When filter criteria come from user input, configuration, or runtime logic, building queries dynamically showcases two critical safety advantages:
+The corresponding negated SQL forms are `NOT IN`, `NOT BETWEEN`, `NOT LIKE`, and `NOT ILIKE`. For APIs that parse SQL expressions within a DataFrame pipeline, see [SQL-Expression Bridge Methods](hybrid-sql.md#sql-expression-bridge-methods).
+:::
 
-1. **Rust's type system catches errors at compile time.** <br> _Misspell a column name?_ <br>
-   The compiler tells you. Pass a string where a number is expected? Caught before your code ever runs. With dynamic SQL, these errors surface at runtime—often in production.
+These predicates remain nullable: missing operands or list values can affect whether the result is `true`, `false`, or `NULL`. The next section examines those null semantics explicitly.
 
-2. **SQL injection becomes impossible by design.** <br> Values flow through [`lit()`] as typed data, not string fragments. There's no way for user input like [`"; DROP TABLE users;--"`](https://xkcd.com/327/) to escape into query structure. You don't need to remember to sanitize—the API makes unsafe patterns unrepresentable.
+### Account for NULL Results
+
+**`NULL` represents an unknown predicate result—not `false`—so filtering logic must state whether missing values should be rejected, selected, or preserved.**
+
+Comparisons, membership tests, ranges, and patterns can produce `NULL` when a nullable operand contains no value. DataFusion follows three-valued Boolean logic: a predicate can evaluate to `true`, `false`, or `NULL`, and [`.filter()`] retains only rows producing `true`.
+
+| Predicate result | Meaning                            | Filter behavior |
+| :--------------- | :--------------------------------- | :-------------- |
+| `true`           | The condition is satisfied         | Keep the row    |
+| `false`          | The condition is not satisfied     | Discard the row |
+| `NULL`           | The condition cannot be determined | Discard the row |
+
+Negation does not convert an unknown result into a match. When a predicate evaluates to `NULL`, calling [`.not()`] on it also produces `NULL`.
+
+Use null-specific expressions to state the intended policy:
+
+| Filtering intention                          | Expression                              |
+| :------------------------------------------- | :-------------------------------------- |
+| Select missing values                        | `col("customer_id").is_null()`         |
+| Select known values                          | `col("customer_id").is_not_null()`     |
+| Test whether a predicate is unknown          | `predicate.is_unknown()`                |
+| Keep predicate results that are `true` or `NULL` | `predicate.is_not_false()`           |
+
+The following example first keeps only definite matches for customer `1`. It then changes the rule explicitly to retain both matching orders and orders whose customer is unknown.
 
 ```rust
+use datafusion::assert_batches_sorted_eq;
 use datafusion::prelude::*;
-
-/// Builds a filter expression from optional criteria.
-/// Returns `lit(true)` if no criteria provided (matches all rows).
-fn build_filter(min_price: Option<i32>, max_quantity: Option<i32>) -> Expr {
-    let mut conditions: Vec<Expr> = Vec::new();
-
-    if let Some(price) = min_price {
-        conditions.push(col("price").gt_eq(lit(price)));
-    }
-
-    if let Some(qty) = max_quantity {
-        conditions.push(col("quantity").lt_eq(lit(qty)));
-    }
-
-    // Fold conditions with AND; default to lit(true) if empty
-    conditions
-        .into_iter()
-        .reduce(|acc, cond| acc.and(cond))
-        .unwrap_or_else(|| lit(true))
-}
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    let sample_df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard"],
-        "price" => [1200, 25, 75],
-        "quantity" => [5, 50, 30],
-        "category" => ["Electronics", "Accessories", "Accessories"]
+    let orders_df = dataframe!(
+        "order_id" => [101, 102, 103, 104],
+        "customer_id" => vec![Some(1), Some(1), Some(2), None],
+        "product" => ["Widget", "Gadget", "Widget", "Gizmo"],
+        "amount" => [100, 200, 150, 300],
+        "quantity" => [2, 1, 3, 1]
     )?;
 
-    // Example: min_price=50, no max_quantity constraint
-    let filter_expr = build_filter(Some(50), None);
-    sample_df.clone().filter(filter_expr)?.show().await?;
-    // Only Laptop (1200) and Keyboard (75) have price >= 50
-    // +---------+-------+----------+-------------+
-    // | product | price | quantity | category    |
-    // +---------+-------+----------+-------------+
-    // | Laptop  | 1200  | 5        | Electronics |
-    // | Keyboard| 75    | 30       | Accessories |
-    // +---------+-------+----------+-------------+
+    let customer_one = col("customer_id").eq(lit(1));
 
-    // Example: both constraints — price >= 50 AND quantity <= 10
-    let filter_expr = build_filter(Some(50), Some(10));
-    sample_df.clone().filter(filter_expr)?.show().await?;
-    // Only Laptop matches (price=1200 >= 50, quantity=5 <= 10)
-    // +---------+-------+----------+-------------+
-    // | product | price | quantity | category    |
-    // +---------+-------+----------+-------------+
-    // | Laptop  | 1200  | 5        | Electronics |
-    // +---------+-------+----------+-------------+
+    let definite_matches = orders_df
+        .clone()
+        .filter(customer_one.clone())?
+        .select(vec![col("order_id"), col("customer_id")])?
+        .collect()
+        .await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+-------------+",
+            "| order_id | customer_id |",
+            "+----------+-------------+",
+            "| 101      | 1           |",
+            "| 102      | 1           |",
+            "+----------+-------------+",
+        ],
+        &definite_matches
+    );
+
+    let matches_or_missing = orders_df
+        .filter(customer_one.or(col("customer_id").is_null()))?
+        .select(vec![col("order_id"), col("customer_id")])?
+        .collect()
+        .await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+-------------+",
+            "| order_id | customer_id |",
+            "+----------+-------------+",
+            "| 101      | 1           |",
+            "| 102      | 1           |",
+            "| 104      |             |",
+            "+----------+-------------+",
+        ],
+        &matches_or_missing
+    );
 
     Ok(())
 }
 ```
 
-> **Why [`unwrap_or_else`] instead of [`unwrap()`]?** <br>
-> Calling [`unwrap()`] on `None` panics—crashing your program. Here, [`reduce()`] returns `None` when the conditions vector is empty (no filters provided). Instead of panicking, [`unwrap_or_else`] lets us provide a fallback: [`lit(true)`][`lit()`] matches all rows. This is a common Rust pattern for gracefully handling "no input" cases.
+The first predicate returns `NULL` for order 104 because its `customer_id` is missing, so that row does not survive. The second predicate makes the application rule explicit: an order survives when its customer equals `1` **or** its customer is unknown.
 
-### Anti-Pattern: Multiple Sequential Filters
+:::{admonition} SQL null-predicate equivalents
+:class: seealso
 
-**Each [`.filter()`] call creates a separate node in the logical plan.** While DataFusion's optimizer _can_ merge adjacent filters, combining them yourself is clearer, guarantees a single predicate evaluation, and makes your intent explicit.
+| Filtering intention             | DataFrame expression                    | SQL expression                       |
+| :------------------------------ | :-------------------------------------- | :----------------------------------- |
+| Select missing values           | `col("customer_id").is_null()`         | `customer_id IS NULL`                |
+| Select known values             | `col("customer_id").is_not_null()`     | `customer_id IS NOT NULL`            |
+| Detect an unknown comparison    | `predicate.is_unknown()`                | `(customer_id = 1) IS UNKNOWN`       |
+| Keep true or unknown results    | `predicate.is_not_false()`              | `(customer_id = 1) IS NOT FALSE`     |
 
-```rust
-use datafusion::prelude::*;
+The explicit condition used in the example corresponds to:
 
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let sample_df = dataframe!(
-        "product" => ["Laptop", "Mouse", "Keyboard"],
-        "price" => [1200, 25, 75],
-        "quantity" => [5, 50, 30],
-        "category" => ["Electronics", "Accessories", "Accessories"]
-    )?;
-
-    // ❌ DON'T: Chain multiple filter calls
-    let _fragmented = sample_df.clone()
-        .filter(col("price").gt(lit(50)))?
-        .filter(col("quantity").lt(lit(100)))?
-        .filter(col("product").is_not_null())?;
-
-    // ✅ DO: Combine into single filter
-    let combined = sample_df.clone()
-        .filter(
-            col("price").gt(lit(50))
-                .and(col("quantity").lt(lit(100)))
-                .and(col("product").is_not_null())
-        )?;
-
-    // Both return the same result — Keyboard (price=75, quantity=30)
-    combined.show().await?;
-    // +----------+-------+----------+-------------+
-    // | product  | price | quantity | category    |
-    // +----------+-------+----------+-------------+
-    // | Keyboard | 75    | 30       | Accessories |
-    // +----------+-------+----------+-------------+
-
-    Ok(())
-}
+```sql
+WHERE customer_id = 1
+   OR customer_id IS NULL
 ```
 
-> **Why it matters:** The fragmented version creates 3 filter nodes; the combined version creates 1. In complex queries, this compounds—affecting plan readability and optimization opportunities.
+For APIs that parse SQL expressions within a DataFrame pipeline, see [SQL-Expression Bridge Methods](hybrid-sql.md#sql-expression-bridge-methods).
+:::
 
-### Filter Troubleshooting
+Use [`.is_not_false()`] when every unknown result from a predicate should survive. Prefer an explicit `.or(...is_null())` branch when missingness in one particular column defines the business rule; it documents exactly which absent value receives special treatment.
 
-| Symptom          | Cause                                                                  | Fix                                                 |
-| :--------------- | :--------------------------------------------------------------------- | :-------------------------------------------------- |
-| No rows returned | [three-valued logic]: `NULL > 5` → `NULL` (filtered out)               | Use [`.is_not_null()`] or [`coalesce()`]            |
-| Nulls vanishing  | `col("x").eq(lit(false))` removes `NULL` too (`NULL = false` → `NULL`) | Add `.or(col("x").is_null())`                       |
-| Slow filter      | Predicate not pushed to data source                                    | Check [`.explain()`]—filter should be _inside_ scan |
+Do not apply [`coalesce()`] as a generic correction. `coalesce(vec![predicate, lit(false)])` does not change filtering behavior because both `false` and `NULL` are already discarded. `coalesce(vec![predicate, lit(true)])` retains every unknown result, which may be broader than the intended policy.
 
 ---
+
+## Build Predicates from Application Inputs
+
+**Application inputs often determine which filters apply, so construct each supplied criterion as an `Expr`, combine the active expressions, and decide explicitly what no active criteria should mean.**
+
+The preceding examples define complete predicates directly in the source code. Applications commonly receive filtering criteria later through request parameters, command-line options, configuration, or other user input. Some criteria may be present while others are absent.
+
+These values are available when the application constructs the DataFrame's logical plan; they are not physical runtime filters created during query execution. Wrap each supplied value with [`lit()`] and combine it with the appropriate column expression.
+
+### Combine Optional Criteria
+
+**Convert each supplied criterion into an `Expr`, discard absent criteria, and reduce the remaining expressions into one predicate.**
+
+A hard-coded predicate has a fixed shape, but an application may receive only some of its possible filtering values. Represent the resulting predicate as `Option<Expr>`: `Some(predicate)` means at least one criterion is active, while `None` means that no filtering criterion was supplied.
+
+The following helper converts each present value into an expression, removes absent criteria, and combines the remaining expressions with [`.and()`]. The example supplies both a minimum amount and a maximum quantity.
+
+```rust
+use datafusion::assert_batches_sorted_eq;
+use datafusion::prelude::*;
+
+fn build_order_predicate(
+    min_amount: Option<i32>,
+    max_quantity: Option<i32>,
+) -> Option<Expr> {
+    [
+        min_amount.map(|amount| col("amount").gt_eq(lit(amount))),
+        max_quantity.map(|quantity| col("quantity").lt_eq(lit(quantity))),
+    ]
+    .into_iter()
+    .flatten()
+    .reduce(|left, right| left.and(right))
+}
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let orders_df = dataframe!(
+        "order_id" => [101, 102, 103, 104],
+        "customer_id" => vec![Some(1), Some(1), Some(2), None],
+        "product" => ["Widget", "Gadget", "Widget", "Gizmo"],
+        "amount" => [100, 200, 150, 300],
+        "quantity" => [2, 1, 3, 1]
+    )?;
+
+    let predicate = build_order_predicate(Some(150), Some(2));
+    let filtered_df = match predicate {
+        Some(predicate) => orders_df.filter(predicate)?,
+        None => orders_df,
+    };
+
+    let result = filtered_df
+        .select(vec![col("order_id"), col("amount"), col("quantity")])?
+        .collect()
+        .await?;
+
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+--------+----------+",
+            "| order_id | amount | quantity |",
+            "+----------+--------+----------+",
+            "| 102      | 200    | 1        |",
+            "| 104      | 300    | 1        |",
+            "+----------+--------+----------+",
+        ],
+        &result
+    );
+
+    Ok(())
+}
+```
+
+Because both values are present, the helper constructs `amount >= 150 AND quantity <= 2`. Passing `None` for either argument omits only that criterion. Passing `None` for both arguments leaves no expressions to reduce and therefore returns `None`.
+
+:::{admonition} Keep application values typed
+:class: tip
+
+Use [`lit()`] to convert application values into typed literal expressions. Do not construct SQL fragments by interpolating those values into strings. For APIs that intentionally accept SQL expression text, see [SQL-Expression Bridge Methods](hybrid-sql.md#sql-expression-bridge-methods).
+:::
+
+### Choose the No-Criteria Behavior
+
+**An empty set of criteria is an application-policy decision: it can mean no filtering, all rows, no rows, or an invalid request.**
+
+`Option<Expr>` preserves the empty case until the application chooses its meaning. There is no universal default because different interfaces assign different semantics to missing or empty input.
+
+| No-criteria policy | Representation | Appropriate meaning |
+| :----------------- | :------------- | :------------------ |
+| Do not filter | Return `None` and reuse the input `DataFrame` | Optional search criteria were omitted, so return all input rows |
+| Match all rows | Use `lit(true)` | A surrounding helper requires an `Expr` even when no restriction applies |
+| Match no rows | Use `lit(false)` | An explicitly empty allow-list means that no value is permitted |
+| Reject the request | Return an application error | At least one filtering criterion is required |
+
+Also distinguish an absent criterion from a present but empty value. For example, no product criterion may mean “include every product,” while an explicitly empty list of allowed products may mean “include no products.” Define that behavior at the application boundary before constructing the predicate.
+
+---
+
+## Understand Validation and Filter Pushdown
+
+**Filtering is lazy but not validation-free: DataFusion may reject a predicate while constructing the logical plan, and later optimizers may rewrite or push that predicate without changing which rows qualify.**
+
+Calling [`.filter()`] records a logical row-selection requirement and validates it where possible. Later planning determines how the predicate executes and whether it can move closer to the data source. For the complete path from logical-plan construction to execution, see [Execution Lifecycle](../Concepts/execution-lifecycle.md).
+
+### Know When Predicate Errors Surface
+
+**Predicate validation is incremental: some mistakes are rejected while [`.filter()`] builds the logical plan, while others surface during later planning or execution.**
+
+DataFusion resolves predicates against the current input schema and checks their result type where enough information is available. Errors requiring type coercion, physical-expression conversion, or actual input values may surface only during later planning or execution.
+
+| Problem | Where it may first surface | Why |
+| :--- | :--- | :--- |
+| Missing or ambiguous column | Calling [`.filter()`] | The expression is resolved against the current input schema |
+| Resolved non-Boolean predicate | Calling [`.filter()`] | A logical filter requires a Boolean-compatible result |
+| Incompatible or unresolved types | Logical analysis or physical planning | Additional type coercion or physical conversion is required |
+| Data-dependent expression failure | Execution triggered by an action | The failure depends on values in an input batch |
+
+These are possible earliest boundaries, not a fixed error schedule. Propagate both `orders_df.filter(predicate)?` and actions such as `filtered_df.collect().await?`.
+
+### Treat Filter Pushdown as Conditional
+
+**Filter pushdown is a provider capability and optimizer decision, not a guarantee attached to every [`.filter()`] call.**
+
+During optimization, DataFusion may simplify predicates, merge adjacent filters, move conditions closer to their inputs, or offer them to a table provider so that fewer rows are retrieved.
+
+Table providers report their support for each offered predicate through [`TableProviderFilterPushDown`]:
+
+| Provider response | Provider behavior | DataFusion behavior |
+| :--- | :--- | :--- |
+| `Unsupported` | Does not apply the predicate during retrieval | Evaluates the filter outside the provider scan |
+| `Inexact` | Uses the predicate but may return nonmatching rows | Retains a residual filter to guarantee correctness |
+| `Exact` | Guarantees that returned rows satisfy the predicate | Does not require an additional residual filter |
+
+The resulting plan can take any of these conceptual shapes:
+
+```text
+Unsupported:
+Filter: amount > 150
+  TableScan: orders
+
+Exact:
+TableScan: orders, filters=[amount > 150]
+
+Inexact:
+Filter: amount > 150
+  TableScan: orders, filters=[amount > 150]
+```
+
+Predicate placement depends on the provider, expression, intervening operators, optimizer rules, and configuration. Treat these as conceptual shapes rather than stable formatted output.
+
+:::{admonition} Pushdown affects cost, not filtering semantics
+:class: important
+
+A query must return the same qualifying rows whether a predicate is pushed into the provider, evaluated by a residual `Filter`, or split between both locations. Pushdown can reduce data retrieval and downstream processing, but application correctness must not depend on it.
+
+Inspect the optimized plan for the actual table provider and DataFusion version when predicate placement matters for performance.
+:::
+
+---
+
+## Conclusion
+
+**Filtering adds a predicate to the logical plan so that only rows evaluating to `true` remain, preserving the DataFrame's columns while potentially reducing its cardinality.**
+
+Construct predicates from comparisons, Boolean composition, membership tests, ranges, patterns, and explicit null policies. When filtering criteria come from application inputs, build typed `Expr` values for the active criteria and define the no-criteria behavior explicitly. Propagate errors both while constructing the logical plan and when an action triggers later planning or execution.
+
+Filter pushdown may reduce the amount of data read and processed, but it remains a provider capability and optimizer decision; it does not change which rows qualify. After filtering narrows the dataset, use sorting and limiting to control the order and number of rows returned. Continue with [Sorting and Limiting](sorting-limiting.md).
+
+<!-- DataFusion types -->
+
+[`Expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
+[`TableProviderFilterPushDown`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.TableProviderFilterPushDown.html
+
+<!-- DataFrame methods -->
+
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+
+<!-- Expression constructors and methods -->
+
+[`col()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.col.html
+[`lit()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.lit.html
+[`.eq()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.eq
+[`.not_eq()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.not_eq
+[`.gt()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.gt
+[`.gt_eq()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.gt_eq
+[`.lt()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.lt
+[`.lt_eq()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.lt_eq
+[`.and()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.and
+[`.or()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.or
+[`.not()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.not
+[`.in_list()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.in_list
+[`.between()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.between
+[`.like()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.like
+[`.ilike()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.ilike
+[`.is_not_false()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.is_not_false
+[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.coalesce.html

@@ -17,6 +17,18 @@
   under the License.
 -->
 
+<!--TODO (Transformations section restructuring, 2026-07-18)
+1. Reassess the toctree as three connected arcs: Core relational transformations: transformation-concepts → selection → filtering → sorting-limiting → aggregations → window-functions → joins → set-operations → reshaping → subqueries API selection and composition: hybrid-sql → builder-patterns Applied pipeline pattern: data-quality 
+2. Move aggregations and window-functions before joins and set-operations so the reading order follows transformation-concepts.md: single-frame operations → across-row analysis → multi-frame operations.
+3. Reassess dataframe-specifics.md as a standalone page. Current direction: redistribute its useful content to the index, hybrid-sql.md, the owned method pages, reshaping.md, and builder-patterns.md.
+4. Update the reading-path table after page ownership and order are approved. Distinguish core transformation families from API-composition and applied pattern pages. 
+5. Reassess the placement of reshaping.md during its Stage 1 review. It changes schema, cardinality, and grain but is not part of the aggregation/window "across rows" family. 
+6. Keep subqueries.md after the core transformation families and before hybrid-sql.md unless its detailed review establishes a stronger position. 
+7. Repair incoming and outgoing page transitions only after the final toctree order is approved. 
+-->
+
+
+
 # Transformations with DataFrame API
 
 **The "life" phase of the DataFrame lifecycle: build and refine a lazy query plan.**
@@ -32,10 +44,10 @@ transformation-concepts
 selection
 filtering
 sorting-limiting
-joins
-set-operations
 aggregations
 window-functions
+joins
+set-operations
 subqueries
 hybrid-sql
 dataframe-specifics
