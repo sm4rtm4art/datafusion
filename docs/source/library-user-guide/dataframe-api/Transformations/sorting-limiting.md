@@ -17,6 +17,7 @@
   under the License.
 -->
 
+
 <!--TODO (Stage 2 scaffold, approved 2026-07-18)
 
 PAGE ROLE
@@ -44,7 +45,7 @@ NARRATIVE
 3. Combine both for deterministic Top-N.
 
 STAGE PLAN
-- Stage 4 complete: `## Sorting Rows`, `## Limiting Rows`, and `## Returning Top-N Rows`.
+- Stage 4 complete: `## Sorting Rows`, `## Limiting Rows`, and `## Returning Global Top-N Rows`.
 - Stage 6 complete: opening block, body sections, and conclusion drafted.
 - Remaining: final cleanup, transition decision, link audit, and repository validation.
 -->
@@ -55,11 +56,11 @@ STAGE PLAN
 
 Analytical queries often need more than the right rows: they need those rows in a meaningful sequence and sometimes only a bounded portion of that sequence. In DataFusion, `.sort()` and `.sort_by()` establish order, while `.limit(skip, fetch)` skips rows and bounds the result without evaluating a predicate. This page shows how sort-key precedence, direction, null placement, and method order determine which rows are returned, then combines sorting and limiting for deterministic global Top-N results. Because limiting is positional, place it deliberately and establish a sufficiently complete sort order whenever the selected rows must be reproducible.
 
-| Method                                 | Purpose                                                               |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| [`.sort()`](#defining-a-sort-order)    | Define sort-key precedence, direction, and null placement explicitly. |
-| [`.sort_by()`](#defining-a-sort-order) | Apply the fixed `ASC NULLS LAST` policy to each sort expression.      |
-| [`.limit()`](#taking-a-bounded-slice)  | Skip input rows and return an optionally bounded result.              |
+| Method | Purpose |
+| --- | --- |
+| [`.sort()`](#defining-a-sort-order) | Define sort-key precedence, direction, and null placement explicitly. |
+| [`.sort_by()`](#defining-a-sort-order) | Apply the fixed `ASC NULLS LAST` policy to each sort expression. |
+| [`.limit()`](#taking-a-bounded-slice) | Skip input rows and return an optionally bounded result. |
 
 :::{admonition} Style Note
 :class: note
@@ -83,15 +84,19 @@ In this document, code elements follow a consistent pattern:
 
 ## Sorting Rows
 
-**Sorting makes a DataFrame's row order explicit, with each sort expression adding another level of precedence.**
+**Sorting makes a DataFrame's row order explicit, so position-dependent results do not rely on an incidental output sequence.**
 
-Sorting defines the sequence of logical rows returned by a DataFrame. An observed output sequence is not an ordering contract, so establish an explicit sort whenever the result depends on which rows are first, last, highest, or lowest.
+DataFusion does not treat an observed row sequence as an ordering contract. Establish an explicit sort whenever the result depends on which rows are first, last, highest, or lowest.
 
-The DataFrame API provides [`.sort()`][sort-method] and [`.sort_by()`][sort-by-method]. Both add a sort operation to the DataFrame's `LogicalPlan`; the rows are not physically reordered until the plan is executed.
+A sort order is an ordered list of key expressions: earlier keys establish precedence, and later keys resolve ties. The next section shows how the DataFrame API defines that order.
 
-Sort expressions are applied in vector order. The first expression is the primary key, and each later expression is used only for rows that tie on every preceding key. DataFusion moves each complete row as one unit: in a sort by `amount` descending and then `order_id` ascending, `order_id` affects only rows with equal amounts. Values within a key follow their data type's ordering; ascending UTF-8 strings, for example, place `Monitor` before `Mouse`.
+### Defining a Sort Order
 
-Use [`.sort()`][sort-method] when direction or null placement must be explicit. Use [`.sort_by()`][sort-by-method] when every expression should use its fixed ascending, nulls-last policy.
+**A sort order combines one or more key expressions with precedence, direction, and null placement.**
+
+The DataFrame API provides [`.sort()`][sort-method] and [`.sort_by()`][sort-by-method]. Both add a sort operation to the DataFrame's `LogicalPlan`; rows are reordered only when the plan executes. Use [`.sort()`][sort-method] to control direction and null placement for each key, or [`.sort_by()`][sort-by-method] when every key should use its fixed `ASC NULLS LAST` policy.
+
+Sort expressions are applied in vector order. The first expression is the primary key, and each later expression orders only rows that tie on every preceding key. DataFusion moves complete rows according to those keys rather than sorting columns independently.
 
 :::{admonition} DataFrame sorting and SQL `ORDER BY`
 :class: note
@@ -100,11 +105,7 @@ SQL uses [`ORDER BY`][sql-order-by] with `ASC`, `DESC`, `NULLS FIRST`, and `NULL
 
 :::
 
-### Defining a Sort Order
-
-**A sort order combines one or more key expressions with precedence, direction, and null placement.**
-
-Pass [`.sort()`][sort-method] a `Vec<SortExpr>` containing the columns or other expressions that should order the rows. Their position in the vector sets precedence, while each [`SortExpr`][sort-expr-type] defines the direction and null placement for one key. The [`Expr::sort()`][expr-sort-method] method constructs each `SortExpr`:
+Pass [`.sort()`][sort-method] a `Vec<SortExpr>` containing the columns or other expressions that should order the rows. Each [`SortExpr`][sort-expr-type] defines the direction and null placement for one key. The [`Expr::sort()`][expr-sort-method] method constructs each `SortExpr`:
 
 - `asc`: `true` sorts ascending; `false` sorts descending.
 - `nulls_first`: `true` places nulls first; `false` places nulls last.
@@ -217,11 +218,11 @@ When `fetch` is `Some(n)`, DataFusion can stop consuming input after enough rows
 
 The first argument, `skip`, specifies how many input rows to discard before returning any rows. The second argument, `fetch`, sets the maximum number of following rows:
 
-| Call                    | Result                                            |
-| ----------------------- | ------------------------------------------------- |
-| `.limit(0, Some(n))`    | Return at most `n` input rows.                    |
-| `.limit(skip, Some(n))` | Skip `skip` rows, then return at most `n` rows.   |
-| `.limit(skip, None)`    | Skip `skip` rows, then return all remaining rows. |
+| Call | Result |
+| --- | --- |
+| `.limit(0, Some(n))` | Return at most `n` input rows. |
+| `.limit(skip, Some(n))` | Skip `skip` rows, then return at most `n` rows. |
+| `.limit(skip, None)` | Skip `skip` rows, then return all remaining rows. |
 
 These arguments correspond to SQL [`OFFSET` and `LIMIT`][sql-limit]. The following example establishes an order by `order_id`, skips the first ordered row, and returns the next two rows.
 
@@ -261,21 +262,22 @@ async fn main() -> datafusion::error::Result<()> {
 :::{admonition} "First rows" require an explicit order
 :class: caution
 
-Without a sufficiently complete sort order, `.limit()` still bounds the result, but the selected rows do not represent a deterministic business ranking such as the earliest, latest, highest, or lowest values.
+Without a sufficiently complete sort order, `.limit()` still bounds the result, but the selected rows do not represent a deterministic business-defined ordering such as the earliest, latest, highest, or lowest values.
 
 :::
 
+
 ---
 
-## Returning Top-N Rows
+## Returning Global Top-N Rows
 
 **Return the highest, lowest, earliest, or latest N rows by defining a global ordering and then applying `.limit()`.**
 
-Many analytical queries need only a small ranked result, such as the highest-value orders or the latest events. The DataFrame API does not provide a separate Top-N method; compose [`.sort()`][sort-method] with [`.limit()`][limit-method] to define the ranking and then bound the result.
+Many analytical queries need only a small globally ordered result, such as the highest-value orders or the latest events. The DataFrame API does not provide a separate Top-N method; compose [`.sort()`][sort-method] with [`.limit()`][limit-method] to define the ordering and then bound the result.
 
 Neither transformation is sufficient by itself. `.sort()` defines the global ordering without reducing the row count, while `.limit()` bounds its input without defining what "top" means. Add enough tie-breaker expressions to distinguish rows at the N-row boundary.
 
-The following example returns the three highest-value orders. `amount` defines the ranking, `order_id` resolves equal amounts, and `.limit(0, Some(3))` returns the first three rows of that order.
+The following example returns the three highest-value orders. `amount` defines the primary order, `order_id` resolves equal amounts, and `.limit(0, Some(3))` returns the first three rows of that order.
 
 ```rust
 use datafusion::assert_batches_eq;
@@ -336,13 +338,13 @@ The DataFrame pattern `.sort(...).limit(0, Some(n))` corresponds to SQL `ORDER B
 
 ---
 
-## Conclusion & Further Reading
+## Conclusion
 
 Sorting and limiting control different properties of a DataFrame result. [`.sort()`][sort-method] and [`.sort_by()`][sort-by-method] establish an explicit row order, while [`.limit()`][limit-method] takes a positional slice by skipping rows and optionally bounding how many rows follow.
 
 Combined as `.sort(...).limit(...)`, these transformations return a global Top-N result. The sort expressions define what highest, lowest, earliest, or latest means, and a sufficiently complete sort order makes the N selected rows deterministic. Reversing the method order limits the input first and sorts only that subset, which is a different query.
 
-For related topics:
+### Further Reading
 
 - See the SQL user guide for [`ORDER BY`][sql-order-by] and [`LIMIT` with `OFFSET`][sql-limit].
 - Use [window functions](window-functions.md) for ranking and per-group Top-N results.

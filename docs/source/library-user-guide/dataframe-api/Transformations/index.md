@@ -66,6 +66,10 @@ builder-patterns
 | Grain          | aggregation, windows                  | [Aggregations](aggregations.md), [Window Functions](window-functions.md)                                  |
 | Frame boundary | joins, set operations                 | [Joins](joins.md), [Set Operations](set-operations.md)                                                    |
 
+
+<!--TODO: remove this claim, this is impossible! 
+
+
 **The running dataset.** Every page in this section works the same two frames — `customer_df` (one row per customer) and `orders_df` (one row per order, linked by `customer_id`). Two gaps are intentional: Carol has no orders, and order 104 points at a customer that does not exist, so joins and data-quality checks have something to reveal. The definition and a worked pipeline live in [Transformations Concepts](transformation-concepts.md#from-concepts-to-methods); here is the shape you will keep seeing:
 
 `customer_df`
@@ -93,7 +97,8 @@ builder-patterns
 | 104      | 99          | Gizmo   | 300    | 1        | 2024-03-02 |
 +----------+-------------+---------+--------+----------+------------+
 ```
-
+ -->
+ 
 <!-- Link references -->
 
 [`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
