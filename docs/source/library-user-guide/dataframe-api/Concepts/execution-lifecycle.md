@@ -187,12 +187,14 @@ For the complete method reference, see [Transformations](transformations.md).
 When you call an action like [`.collect()`], the lazy plan crosses the ACTION boundary and enters a multi-phase pipeline. What looks like a simple filter to you triggers a series of optimizations that DataFusion handles automatically in the background. Only the **applicable rules fire** based on your specific plan structure:
 
 1. **Logical Optimization** ([21+ optimizer rules][optimizer-rules], multiple passes):
+
    - Predicate pushdown (move filters closer to scans)
    - Projection pruning (remove unused columns)
    - Common subexpression elimination
    - Constant folding and simplification
 
 2. **Physical Planning** ([19+ physical rules][physical-rules]):
+
    - Choose concrete algorithms (HashJoin vs SortMergeJoin)
    - Insert repartitioning for parallelism
    - Add sorts where needed

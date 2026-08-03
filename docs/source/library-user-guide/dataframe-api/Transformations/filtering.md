@@ -55,12 +55,12 @@ During execution, DataFusion evaluates the predicate against incoming record bat
 
 Filtering predicates range from individual comparisons to composed Boolean conditions, membership tests, ranges, patterns, and explicit null checks. The following sections build those forms using a shared `orders_df` dataset. DataFusion must resolve each predicate as Boolean-compatible; [Know When Predicate Errors Surface](#know-when-predicate-errors-surface) explains where invalid references or incompatible types fail.
 
-| Filtering need                     | Representative expression                                  |
-| :--------------------------------- | :--------------------------------------------------------- |
-| Compare values                     | `col("amount").gt(lit(150))`                              |
-| Combine Boolean conditions         | `high_value.and(multiple_items)`                           |
-| Test membership, ranges, patterns  | `in_list(...)`, `.between(...)`, `.like(...)`              |
-| Handle missing values              | `.is_null()`, `.is_not_null()`, null-aware composition     |
+| Filtering need                    | Representative expression                              |
+| :-------------------------------- | :----------------------------------------------------- |
+| Compare values                    | `col("amount").gt(lit(150))`                           |
+| Combine Boolean conditions        | `high_value.and(multiple_items)`                       |
+| Test membership, ranges, patterns | `in_list(...)`, `.between(...)`, `.like(...)`          |
+| Handle missing values             | `.is_null()`, `.is_not_null()`, null-aware composition |
 
 ### Compare Values
 
@@ -112,14 +112,14 @@ async fn main() -> datafusion::error::Result<()> {
 
 DataFrame comparison methods construct the same logical comparison operations expressed by SQL operators.
 
-| Comparison            | DataFrame expression                         | SQL expression  |
-| :-------------------- | :------------------------------------------- | :-------------- |
-| Equal                 | `col("amount").eq(lit(150))`                 | `amount = 150`  |
-| Not equal             | `col("amount").not_eq(lit(150))`             | `amount <> 150` |
-| Greater than          | `col("amount").gt(lit(150))`                 | `amount > 150`  |
-| Greater than or equal | `col("amount").gt_eq(lit(150))`              | `amount >= 150` |
-| Less than             | `col("amount").lt(lit(150))`                 | `amount < 150`  |
-| Less than or equal    | `col("amount").lt_eq(lit(150))`              | `amount <= 150` |
+| Comparison            | DataFrame expression             | SQL expression  |
+| :-------------------- | :------------------------------- | :-------------- |
+| Equal                 | `col("amount").eq(lit(150))`     | `amount = 150`  |
+| Not equal             | `col("amount").not_eq(lit(150))` | `amount <> 150` |
+| Greater than          | `col("amount").gt(lit(150))`     | `amount > 150`  |
+| Greater than or equal | `col("amount").gt_eq(lit(150))`  | `amount >= 150` |
+| Less than             | `col("amount").lt(lit(150))`     | `amount < 150`  |
+| Less than or equal    | `col("amount").lt_eq(lit(150))`  | `amount <= 150` |
 
 The DataFrame API constructs an `Expr` directly. SQL parses the corresponding expression text into the same logical expression model. For APIs that parse SQL expressions within a DataFrame pipeline, see [SQL-Expression Bridge Methods](hybrid-sql.md#sql-expression-bridge-methods).
 :::
@@ -191,6 +191,7 @@ The complete predicate above corresponds to:
 WHERE (amount >= 150 AND quantity >= 2)
    OR product = 'Gadget'
 ```
+
 :::
 
 ### Test Membership, Ranges, and Patterns
@@ -201,12 +202,12 @@ Individual comparisons can represent these conditions manually. A set membership
 
 Use [`.in_list()`] when a value must belong to a finite set, [`.between()`] when it must fall within an inclusive interval, and [`.like()`] or [`.ilike()`] when text must match a SQL-style pattern.
 
-| Filtering need           | DataFrame expression                            | Negated form                                    |
-| :----------------------- | :---------------------------------------------- | :---------------------------------------------- |
-| Membership               | `col("product").in_list(values, false)`        | `col("product").in_list(values, true)`         |
-| Inclusive range          | `col("amount").between(low, high)`             | `col("amount").not_between(low, high)`         |
-| Case-sensitive pattern   | `col("product").like(pattern)`                 | `col("product").not_like(pattern)`             |
-| Case-insensitive pattern | `col("product").ilike(pattern)`                | `col("product").not_ilike(pattern)`            |
+| Filtering need           | DataFrame expression                    | Negated form                           |
+| :----------------------- | :-------------------------------------- | :------------------------------------- |
+| Membership               | `col("product").in_list(values, false)` | `col("product").in_list(values, true)` |
+| Inclusive range          | `col("amount").between(low, high)`      | `col("amount").not_between(low, high)` |
+| Case-sensitive pattern   | `col("product").like(pattern)`          | `col("product").not_like(pattern)`     |
+| Case-insensitive pattern | `col("product").ilike(pattern)`         | `col("product").not_ilike(pattern)`    |
 
 For [`.in_list()`], the Boolean argument controls whether the expression is negated: `false` represents `IN`, while `true` represents `NOT IN`. The [`.between()`] method includes both its lower and upper boundaries. Pattern expressions use `%` to match a sequence of characters and `_` to match one character.
 
@@ -293,11 +294,11 @@ async fn main() -> datafusion::error::Result<()> {
 :::{admonition} SQL predicate equivalents
 :class: seealso
 
-| Filtering need  | DataFrame expression                                      | SQL expression                          |
-| :-------------- | :-------------------------------------------------------- | :-------------------------------------- |
-| Membership      | `col("product").in_list(values, false)`                    | `product IN ('Widget', 'Gizmo')`        |
-| Inclusive range | `col("amount").between(lit(150), lit(200))`                | `amount BETWEEN 150 AND 200`            |
-| Pattern         | `col("product").ilike(lit("g%"))`                         | `product ILIKE 'g%'`                    |
+| Filtering need  | DataFrame expression                        | SQL expression                   |
+| :-------------- | :------------------------------------------ | :------------------------------- |
+| Membership      | `col("product").in_list(values, false)`     | `product IN ('Widget', 'Gizmo')` |
+| Inclusive range | `col("amount").between(lit(150), lit(200))` | `amount BETWEEN 150 AND 200`     |
+| Pattern         | `col("product").ilike(lit("g%"))`           | `product ILIKE 'g%'`             |
 
 The corresponding negated SQL forms are `NOT IN`, `NOT BETWEEN`, `NOT LIKE`, and `NOT ILIKE`. For APIs that parse SQL expressions within a DataFrame pipeline, see [SQL-Expression Bridge Methods](hybrid-sql.md#sql-expression-bridge-methods).
 :::
@@ -320,12 +321,12 @@ Negation does not convert an unknown result into a match. When a predicate evalu
 
 Use null-specific expressions to state the intended policy:
 
-| Filtering intention                          | Expression                              |
-| :------------------------------------------- | :-------------------------------------- |
-| Select missing values                        | `col("customer_id").is_null()`         |
-| Select known values                          | `col("customer_id").is_not_null()`     |
-| Test whether a predicate is unknown          | `predicate.is_unknown()`                |
-| Keep predicate results that are `true` or `NULL` | `predicate.is_not_false()`           |
+| Filtering intention                              | Expression                         |
+| :----------------------------------------------- | :--------------------------------- |
+| Select missing values                            | `col("customer_id").is_null()`     |
+| Select known values                              | `col("customer_id").is_not_null()` |
+| Test whether a predicate is unknown              | `predicate.is_unknown()`           |
+| Keep predicate results that are `true` or `NULL` | `predicate.is_not_false()`         |
 
 The following example first keeps only definite matches for customer `1`. It then changes the rule explicitly to retain both matching orders and orders whose customer is unknown.
 
@@ -392,12 +393,12 @@ The first predicate returns `NULL` for order 104 because its `customer_id` is mi
 :::{admonition} SQL null-predicate equivalents
 :class: seealso
 
-| Filtering intention             | DataFrame expression                    | SQL expression                       |
-| :------------------------------ | :-------------------------------------- | :----------------------------------- |
-| Select missing values           | `col("customer_id").is_null()`         | `customer_id IS NULL`                |
-| Select known values             | `col("customer_id").is_not_null()`     | `customer_id IS NOT NULL`            |
-| Detect an unknown comparison    | `predicate.is_unknown()`                | `(customer_id = 1) IS UNKNOWN`       |
-| Keep true or unknown results    | `predicate.is_not_false()`              | `(customer_id = 1) IS NOT FALSE`     |
+| Filtering intention          | DataFrame expression               | SQL expression                   |
+| :--------------------------- | :--------------------------------- | :------------------------------- |
+| Select missing values        | `col("customer_id").is_null()`     | `customer_id IS NULL`            |
+| Select known values          | `col("customer_id").is_not_null()` | `customer_id IS NOT NULL`        |
+| Detect an unknown comparison | `predicate.is_unknown()`           | `(customer_id = 1) IS UNKNOWN`   |
+| Keep true or unknown results | `predicate.is_not_false()`         | `(customer_id = 1) IS NOT FALSE` |
 
 The explicit condition used in the example corresponds to:
 
@@ -499,12 +500,12 @@ Use [`lit()`] to convert application values into typed literal expressions. Do n
 
 `Option<Expr>` preserves the empty case until the application chooses its meaning. There is no universal default because different interfaces assign different semantics to missing or empty input.
 
-| No-criteria policy | Representation | Appropriate meaning |
-| :----------------- | :------------- | :------------------ |
-| Do not filter | Return `None` and reuse the input `DataFrame` | Optional search criteria were omitted, so return all input rows |
-| Match all rows | Use `lit(true)` | A surrounding helper requires an `Expr` even when no restriction applies |
-| Match no rows | Use `lit(false)` | An explicitly empty allow-list means that no value is permitted |
-| Reject the request | Return an application error | At least one filtering criterion is required |
+| No-criteria policy | Representation                                | Appropriate meaning                                                      |
+| :----------------- | :-------------------------------------------- | :----------------------------------------------------------------------- |
+| Do not filter      | Return `None` and reuse the input `DataFrame` | Optional search criteria were omitted, so return all input rows          |
+| Match all rows     | Use `lit(true)`                               | A surrounding helper requires an `Expr` even when no restriction applies |
+| Match no rows      | Use `lit(false)`                              | An explicitly empty allow-list means that no value is permitted          |
+| Reject the request | Return an application error                   | At least one filtering criterion is required                             |
 
 Also distinguish an absent criterion from a present but empty value. For example, no product criterion may mean “include every product,” while an explicitly empty list of allowed products may mean “include no products.” Define that behavior at the application boundary before constructing the predicate.
 
@@ -522,12 +523,12 @@ Calling [`.filter()`] records a logical row-selection requirement and validates 
 
 DataFusion resolves predicates against the current input schema and checks their result type where enough information is available. Errors requiring type coercion, physical-expression conversion, or actual input values may surface only during later planning or execution.
 
-| Problem | Where it may first surface | Why |
-| :--- | :--- | :--- |
-| Missing or ambiguous column | Calling [`.filter()`] | The expression is resolved against the current input schema |
-| Resolved non-Boolean predicate | Calling [`.filter()`] | A logical filter requires a Boolean-compatible result |
-| Incompatible or unresolved types | Logical analysis or physical planning | Additional type coercion or physical conversion is required |
-| Data-dependent expression failure | Execution triggered by an action | The failure depends on values in an input batch |
+| Problem                           | Where it may first surface            | Why                                                         |
+| :-------------------------------- | :------------------------------------ | :---------------------------------------------------------- |
+| Missing or ambiguous column       | Calling [`.filter()`]                 | The expression is resolved against the current input schema |
+| Resolved non-Boolean predicate    | Calling [`.filter()`]                 | A logical filter requires a Boolean-compatible result       |
+| Incompatible or unresolved types  | Logical analysis or physical planning | Additional type coercion or physical conversion is required |
+| Data-dependent expression failure | Execution triggered by an action      | The failure depends on values in an input batch             |
 
 These are possible earliest boundaries, not a fixed error schedule. Propagate both `orders_df.filter(predicate)?` and actions such as `filtered_df.collect().await?`.
 
@@ -539,11 +540,11 @@ During optimization, DataFusion may simplify predicates, merge adjacent filters,
 
 Table providers report their support for each offered predicate through [`TableProviderFilterPushDown`]:
 
-| Provider response | Provider behavior | DataFusion behavior |
-| :--- | :--- | :--- |
-| `Unsupported` | Does not apply the predicate during retrieval | Evaluates the filter outside the provider scan |
-| `Inexact` | Uses the predicate but may return nonmatching rows | Retains a residual filter to guarantee correctness |
-| `Exact` | Guarantees that returned rows satisfy the predicate | Does not require an additional residual filter |
+| Provider response | Provider behavior                                   | DataFusion behavior                                |
+| :---------------- | :-------------------------------------------------- | :------------------------------------------------- |
+| `Unsupported`     | Does not apply the predicate during retrieval       | Evaluates the filter outside the provider scan     |
+| `Inexact`         | Uses the predicate but may return nonmatching rows  | Retains a residual filter to guarantee correctness |
+| `Exact`           | Guarantees that returned rows satisfy the predicate | Does not require an additional residual filter     |
 
 The resulting plan can take any of these conceptual shapes:
 
@@ -582,8 +583,8 @@ Filter pushdown may reduce the amount of data read and processed, but it remains
 
 <!-- DataFusion types -->
 
-[`Expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
-[`TableProviderFilterPushDown`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.TableProviderFilterPushDown.html
+[`expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
+[`tableproviderfilterpushdown`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.TableProviderFilterPushDown.html
 
 <!-- DataFrame methods -->
 

@@ -91,10 +91,10 @@ SQL's `UNION` matches columns by _position_, not name. If two tables have the sa
 
 Because Arrow schemas carry column names as metadata, DataFusion can align DataFrames by name instead of position. This is impossible in traditional row-based databases where columns are just offsets.
 
-| Method                        | Duplicate Rows | SQL Equivalent                |
-| ----------------------------- | -------------- | ----------------------------- |
-| [`.union_by_name()`]          | Keeps all      | `UNION ALL` + reorder columns |
-| [`.union_by_name_distinct()`] | Removes        | `UNION` + reorder columns     |
+| Method                        | Duplicate Rows | SQL Equivalent      |
+| ----------------------------- | -------------- | ------------------- |
+| [`.union_by_name()`]          | Keeps all      | `UNION ALL BY NAME` |
+| [`.union_by_name_distinct()`] | Removes        | `UNION BY NAME`     |
 
 ### Union by Column Name
 
@@ -177,17 +177,33 @@ async fn main() -> Result<()> {
 }
 ```
 
-> **When to use:** Data pipelines combining sources with inconsistent column ordering (e.g., different Parquet writers, CSV exports from different tools).
->
-> **SQL equivalent:** None—SQL `UNION` is strictly positional. You'd need to manually reorder columns in one of the queries to match.
+:::{admonition} When to use
+:class: tip
 
-**Limitations:**
+Data pipelines combining sources with inconsistent column ordering — different Parquet writers, or CSV exports from different tools.
+:::
 
-| Requirement       | Description                                                      | Workaround                             |
-| ----------------- | ---------------------------------------------------------------- | -------------------------------------- |
-| Same column names | Both DataFrames must have identical column names                 | Rename with [`.with_column_renamed()`] |
-| Compatible types  | Types must be castable (`Int32` ↔ `Int64` ✓, `Int32` ↔ `Utf8` ✗) | Cast columns first                     |
-| No extra columns  | Columns in one but not the other cause errors                    | Use [`.drop_columns()`] to align       |
+**Schema handling.** `.union_by_name()` is the permissive variant: it resolves the three ways two frames can disagree instead of rejecting them.
+
+| Disagreement                      | What DataFusion does                                                        |
+| --------------------------------- | --------------------------------------------------------------------------- |
+| Different column order            | Aligns by name                                                              |
+| A column missing on one side      | Adds it as `NULL` for the rows from the frame that lacks it                 |
+| Different types for the same name | Coerces to a common type; a numeric/string pair becomes the **string** type |
+
+:::{admonition} Permissive alignment hides mismatches
+:class: caution
+
+Both conveniences are silent. A misspelled column name raises no error — it becomes an extra column that is `NULL` for every row from the other frame. A numeric column unioned with a text column does not fail either; it widens to `Utf8`, so `revenue` can arrive as strings. Inspect the resulting schema when the inputs are not under your control, and use `.with_column_renamed()` when two frames name the same field differently.
+:::
+
+A union fails only when no coercion rule covers the pair of types found for a shared column name.
+
+:::{admonition} SQL equivalent
+:class: note
+
+`UNION ALL BY NAME`, and `UNION BY NAME` for the deduplicating form. The plain positional `UNION` is the one that cannot express this.
+:::
 
 <!-- MOVED OUT (monolith-split repair, 2026-07-06): everything that followed
 this point was the body of the old "Advanced DataFrame Patterns" —
@@ -198,9 +214,148 @@ Creating-DataFrames/inline-data.md were deleted). -->
 
 ### Positional Union
 
-<!-- PLACEHOLDER (content backlog): `.union()` (SQL `UNION ALL`) and
-`.union_distinct()` (SQL `UNION`) — position-based alignment, schema
-compatibility requirements, contrast with the by-name variants above. -->
+[`.union()`] pairs columns by _position_: the first column of one frame meets the first column of the other, whatever either one is called. The result carries the left frame's column names, which makes positional union the natural choice when the same code produced both schemas.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_sorted_eq;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let west_sales = dataframe!(
+        "product" => ["A", "B"],
+        "revenue" => [100, 200]
+    )?;
+
+    // Same columns, same order — row (A, 100) duplicates west_sales
+    let east_sales = dataframe!(
+        "product" => ["A", "C"],
+        "revenue" => [100, 300]
+    )?;
+
+    // union keeps ALL rows (including duplicates)
+    let all_sales = west_sales.union(east_sales)?;
+
+    let results = all_sales.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+---------+---------+",
+            "| product | revenue |",
+            "+---------+---------+",
+            "| A       | 100     |",
+            "| A       | 100     |",  // Duplicate kept!
+            "| B       | 200     |",
+            "| C       | 300     |",
+            "+---------+---------+",
+        ],
+        &results
+    );
+    Ok(())
+}
+```
+
+[`.union_distinct()`] aligns by position the same way, then discards duplicate rows:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_sorted_eq;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let west_sales = dataframe!(
+        "product" => ["A", "B"],
+        "revenue" => [100, 200]
+    )?;
+
+    let east_sales = dataframe!(
+        "product" => ["A", "C"],
+        "revenue" => [100, 300]
+    )?;
+
+    // Combine and deduplicate
+    let all_sales = west_sales.union_distinct(east_sales)?;
+
+    let results = all_sales.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+---------+---------+",
+            "| product | revenue |",
+            "+---------+---------+",
+            "| A       | 100     |",
+            "| B       | 200     |",
+            "| C       | 300     |",
+            "+---------+---------+",
+        ],
+        &results
+    );
+    Ok(())
+}
+```
+
+**Schema handling.** Positional union is strict about width and permissive about everything else.
+
+| Input property | What DataFusion does                                                                      |
+| -------------- | ----------------------------------------------------------------------------------------- |
+| Column count   | The only hard requirement — a mismatch fails on the `.union()` call itself                |
+| Column names   | Takes them from the left frame; the right frame's names are discarded                     |
+| Column types   | Coerces each position to a common type; a numeric/string pair becomes the **string** type |
+| Nullability    | Marks a column nullable when the column is nullable on either side                        |
+
+Only the column count is checked while the plan is built, so `.union()` returns an error immediately when the widths disagree. Type coercion happens later, during analysis, which means an irreconcilable pair of types surfaces when an action runs rather than at the call site.
+
+Column count is also the _only_ structural check, so two frames holding the same columns in opposite order pass it. Positional union then stacks `product` onto `revenue`, widens both to `Utf8` to accommodate the clash, and returns rows whose values have traded places:
+
+```rust
+use datafusion::prelude::*;
+use datafusion::error::Result;
+use datafusion::assert_batches_sorted_eq;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let west_sales = dataframe!(
+        "product" => ["A", "B"],
+        "revenue" => [100, 200]
+    )?;
+
+    // The same two columns, declared in the opposite order
+    let east_sales = dataframe!(
+        "revenue" => [100, 300],
+        "product" => ["A", "C"]
+    )?;
+
+    let all_sales = west_sales.union(east_sales)?;
+
+    let results = all_sales.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+---------+---------+",
+            "| product | revenue |",
+            "+---------+---------+",
+            "| 100     | A       |",  // east_sales revenue landed in product
+            "| 300     | C       |",
+            "| A       | 100     |",
+            "| B       | 200     |",
+            "+---------+---------+",
+        ],
+        &results
+    );
+    Ok(())
+}
+```
+
+:::{admonition} Positional misalignment produces wrong rows, not an error
+:class: warning
+
+Nothing marks that result as damaged: no error, no warning, and a schema that still reads `product, revenue`. Inspecting the schema beforehand does not expose it either — immediately after `.union()`, `DataFrame::schema()` reports the left frame's types, and the widening to `Utf8` shows up only once an action produces the result. Position-based alignment is trustworthy only while you own the column order on both sides; reach for [`.union_by_name()`] as soon as one schema arrives from somewhere you do not control.
+:::
+
+:::{admonition} SQL equivalent
+:class: note
+
+`UNION ALL`, and `UNION` for the deduplicating form. Both align by position, and both carry the same misalignment risk as these methods.
+:::
 
 ### Intersection and Difference
 
@@ -261,3 +416,12 @@ SELECT DISTINCT ON (customer) customer, order_date, amount
 FROM orders
 ORDER BY customer, order_date ASC;
 ```
+
+<!-- TODO (link definitions, see file-top item 7): the definitions below cover
+only the methods referenced from `### Positional Union`. The remaining
+reference-style links on this page (`.union_by_name_distinct()`,
+`.with_column_renamed()`, `.distinct_on()`) are still undefined. -->
+
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_distinct()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_distinct
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name

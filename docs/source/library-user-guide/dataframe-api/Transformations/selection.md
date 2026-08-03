@@ -284,7 +284,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-This remains a complete projection: `.schema()` supplies the candidate fields, Rust chooses which fields to retain, and `.select()` defines the output. For field metadata, qualification, nullability, and broader inspection patterns, see [Inspecting DataFrame Schemas][Schema-Management/schema-inspection.md].
+This remains a complete projection: `.schema()` supplies the candidate fields, Rust chooses which fields to retain, and `.select()` defines the output. For field metadata, qualification, nullability, and broader inspection patterns, see [Inspecting DataFrame Schemas][schema-management/schema-inspection.md].
 
 :::{admonition} Projection Pruning Depends on the Source
 :class: note

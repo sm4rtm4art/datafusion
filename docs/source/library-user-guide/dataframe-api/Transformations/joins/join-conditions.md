@@ -29,6 +29,7 @@ JOIN-TODO-026.
 -->
 <!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Key Methods table, first-H2 framing, and conclusion after this leaf stabilizes. -->
 <!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
+
 # Join Conditions
 
 :::{admonition} Style Note
@@ -52,9 +53,11 @@ In this document, code elements follow a consistent pattern:
 ```
 
 <!-- JOIN-TODO-004 JOIN-TODO-005: The construction boundary is established; revise this H2 subtree in the next iteration. -->
+
 ## Build Joins with Keys and Conditions
 
 <!-- JOIN-TODO-004: Move the signature and method-choice material into separate `.join()` and `.join_on()` construction subsections; preserve AND/OR behavior but remove physical-algorithm guarantees. -->
+
 The [`.join()`] method signature in the datafusion dataframe-API:
 
 ```rust
@@ -84,6 +87,7 @@ async fn main() -> datafusion::error::Result<()> {
 - [`.join_on()`] â€” Pass the full join condition as `Expr`s. Internally this wraps [`.join()`] with empty key lists and a combined filter expression (`expr_1 AND expr_2 ...`). Optimizer passes then extract equality predicates and treat them as equi-join keys.
 
 <!-- JOIN-TODO-004: Rewrite this claim; construction method does not guarantee a specific physical join algorithm. -->
+
 After optimization, both methods produce equivalent plansâ€”**no performance difference** for standard equi-joins. However, [`.join()`] is the "safer" choice: you explicitly declare equi-join keys, guaranteeing hash/sort-merge algorithms. With [`.join_on()`], if the optimizer can't extract equality predicates from your expression, it may fall back to nested loop joins.
 
 Pick whichever reads better for your use case.
@@ -124,8 +128,8 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Trade-off: DataFrame vs SQL**
 
-| DataFrame API Advantages                                                                                                                                                   | SQL Advantages                                                        |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| DataFrame API Advantages                                                                                                                                                     | SQL Advantages                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | **First-class Semi/Anti joins** â€” `JoinType::LeftAnti`, `LeftSemi` etc. are explicit; no workarounds needed (unlike PySpark where you'd use `LEFT JOIN` + `WHERE IS NULL`) | **Visual clarity** â€” Multi-table joins read naturally in SQL syntax   |
 | **Type-safe composition** â€” Build joins conditionally with `if/else`; compiler catches column typos                                                                        | **Familiar syntax** â€” Standard `ON` clause understood by any SQL user |
 | **Chained transformations** â€” `.join().filter().select()` flows naturally                                                                                                  | Copy-paste ready\*\* â€” Test queries directly in SQL tools             |
@@ -134,12 +138,14 @@ async fn main() -> datafusion::error::Result<()> {
 > **DataFusion-specific advantage:** Unlike many DataFrame libraries, DataFusion exposes the _full_ set of join types ([`LeftSemi`], [`RightSemi`], [`LeftAnti`], [`RightAnti`], [`LeftMark`], [`RightMark`]) as first-class operationsâ€”no need to emulate anti-joins with outer joins and null checks.
 
 <!-- JOIN-TODO-022: Decide whether source-system join guidance has a supported owner and scenario-specific evidence. -->
+
 **Performance note:** <br>
 For joins via row-based [`TableProvider`], consider whether the join should happen at the source. If both tables are in Postgres with foreign key indexes, the DB's index-backed joins may outperform transferring data to DataFusion. For cross-source joins or large analytical joins without indexes, DataFusion's hash/sort-merge algorithms excel.
 
 ---
 
 <!-- JOIN-TODO-004 JOIN-TODO-008 JOIN-TODO-016 JOIN-TODO-018: Move composite keys to construction, schema-name handling to composition, and remove the unsupported temporal percentage claim. -->
+
 ## Match Multiple Key Columns
 
 Join on multiple columns when a single key isn't enough to uniquely identify matchesâ€”common with composite keys or temporal constraints.
@@ -187,12 +193,15 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 > **Pro tip for time-dependent data:** <br>
+
 <!-- JOIN-TODO-016: Delete or replace this unsupported temporal mismatch statistic with a scenario-specific, sourced example. -->
+
 > Multi-key joins on temporal columns work well when truncated to appropriate granularity using [`date_trunc()`]. Joining on `DATE` (day) has minimal edge cases (~0.004% at midnight); joining on raw `TIMESTAMP` (milliseconds) risks silent mismatches.
 
 ---
 
 <!-- JOIN-TODO-004: Move to `.join_on()` construction; explain qualified conditions, AND reduction, explicit OR, and optimizer extraction without method-level performance promises. -->
+
 ## Join with Complex Conditions
 
 Sometimes you need more than simple column equality. Range joins ("orders placed within 7 days of signup"), inequality predicates ("amount > threshold"), or compound logic ("match on id AND status = 'active'") require expressions that [`.join()`] can't express with just column names.
@@ -251,6 +260,7 @@ async fn main() -> datafusion::error::Result<()> {
 > When using [`.join_on()`], column names may clash between tables. Use [`.alias()`] to qualify references: `col("customers.id")` vs `col("orders.id")`.
 
 <!-- JOIN-TODO-004 JOIN-TODO-006: Promote this correctness boundary within construction and show why an ON-like filter differs from a later `.filter()` for outer joins. -->
+
 ### The `filter` Argument on Outer Joins
 
 The [`.join()`] method's fifth parameter is [`filter: Option<Expr>`][join_filter_param]â€”easy to overlook in the signature but powerful for outer joins. This filter has **subtle but important semantics**: it applies only to _matched_ rows, not to preserved unmatched rows.

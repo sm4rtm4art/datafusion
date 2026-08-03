@@ -68,10 +68,9 @@ In this document, code elements follow a consistent pattern:
 transform the plan with [`LogicalPlanBuilder`], and reassemble.**
 
 Every DataFrame carries the full query context. The
-[`.into_parts()`] method destructures it into `(SessionState,
-LogicalPlan)`. From there, wrap the plan in a [`LogicalPlanBuilder`]
+[`.into_parts()`] method destructures it into `(SessionState, LogicalPlan)`. From there, wrap the plan in a [`LogicalPlanBuilder`]
 to chain transformations — filters, projections, joins — and call
-[`DataFrame::new(state, plan)`][`DataFrame::new()`] to reconstruct a
+[`DataFrame::new(state, plan)`][`dataframe::new()`] to reconstruct a
 new DataFrame. The result is a regular lazy DataFrame: you can continue
 chaining `.filter()`, `.select()`, `.aggregate()` and all other
 DataFrame operations, or execute it with `.collect()`.
@@ -81,7 +80,7 @@ The cycle has five steps:
 1. **Create a DataFrame** — using any creation method.
 2. **Extract the plan** — [`.into_parts()`] returns `(SessionState, LogicalPlan)`.
 3. **Modify the plan** — wrap it in [`LogicalPlanBuilder`] to apply transformations fluently.
-4. **Reconstruct** — [`DataFrame::new(state, plan)`][`DataFrame::new()`] creates a new DataFrame.
+4. **Reconstruct** — [`DataFrame::new(state, plan)`][`dataframe::new()`] creates a new DataFrame.
 5. **Execute** — proceed with `.collect()` or any other action.
 
 ```rust
@@ -223,13 +222,13 @@ dedicated [Building Logical Plans] guide.
 
 <!-- Link references -->
 
-[Building Logical Plans]: ../../library-user-guide/building-logical-plans.md
-[Substrait]: https://substrait.io/
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DataFrame::new()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.new
+[building logical plans]: ../../library-user-guide/building-logical-plans.md
+[substrait]: https://substrait.io/
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dataframe::new()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.new
 [`.into_parts()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts
 [`.logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.logical_plan
 [`.execute_logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.execute_logical_plan
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`LogicalPlanBuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
-[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html

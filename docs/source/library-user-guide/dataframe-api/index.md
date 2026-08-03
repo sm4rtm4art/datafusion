@@ -47,14 +47,13 @@ Test-sphinx
 
 The documentation follows the **lifecycle of a DataFrame**—from creation to execution (Inspiered by [the desctiption of physics of photons][photon]):
 
-| Phase             | Document                                      | What Happens                                    |
-| ----------------- | --------------------------------------------- | ----------------------------------------------- |
-| **Understanding** | [Concepts](concepts.md)                       | What are DataFrames and where do they live?     |
-| **Birth**         | [Creating DataFrames](creating-dataframes.md) | Instantiate from files, SQL, in-memory data     |
-| **Health**        | [Schema Management](schema-management.md)     | Inspect, validate, and evolve schema            |
-| **Life**          | [Transformations](transformations.md)         | Filter, join, aggregate, sort, enrich           |
-| **Death**         | [Writing & Executing](writing-dataframes.md)  | Materialize results or persist to storage       |
-
+| Phase             | Document                                      | What Happens                                |
+| ----------------- | --------------------------------------------- | ------------------------------------------- |
+| **Understanding** | [Concepts](concepts.md)                       | What are DataFrames and where do they live? |
+| **Birth**         | [Creating DataFrames](creating-dataframes.md) | Instantiate from files, SQL, in-memory data |
+| **Health**        | [Schema Management](schema-management.md)     | Inspect, validate, and evolve schema        |
+| **Life**          | [Transformations](transformations.md)         | Filter, join, aggregate, sort, enrich       |
+| **Death**         | [Writing & Executing](writing-dataframes.md)  | Materialize results or persist to storage   |
 
 ## Quick Navigation
 

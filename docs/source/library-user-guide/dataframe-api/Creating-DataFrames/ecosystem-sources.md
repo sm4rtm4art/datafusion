@@ -33,7 +33,7 @@ page maps what is available and shows the universal integration pattern.
 
 **Key concepts:**
 
-| Concept                  | Purpose                                                          |
+| Concept                  | Purpose                                                       |
 | ------------------------ | ------------------------------------------------------------- |
 | [`TableProvider`]        | Trait that bridges any external source to DataFusion          |
 | [`.register_table()`]    | Registers a `TableProvider` in the session catalog            |
@@ -232,15 +232,15 @@ versions, and feature status.
 
 <!-- Link references -->
 
-[Custom Table Provider Guide]: ../../custom-table-providers.md
-[Extensions List]: ../../extensions.md
-[When to Consider Lakehouse Table Formats]: ../Writing-DataFrames/writing-dataframes.md#when-to-consider-lakehouse-table-formats
-[DataFusion Table Providers]: https://github.com/datafusion-contrib/datafusion-table-providers
-[DataFusion Federation]: https://github.com/datafusion-contrib/datafusion-federation
-[DataFusion ORC]: https://github.com/datafusion-contrib/datafusion-orc
-[DataFusion JSON Functions]: https://github.com/datafusion-contrib/datafusion-functions-json
+[custom table provider guide]: ../../custom-table-providers.md
+[extensions list]: ../../extensions.md
+[when to consider lakehouse table formats]: ../Writing-DataFrames/writing-dataframes.md#when-to-consider-lakehouse-table-formats
+[datafusion table providers]: https://github.com/datafusion-contrib/datafusion-table-providers
+[datafusion federation]: https://github.com/datafusion-contrib/datafusion-federation
+[datafusion orc]: https://github.com/datafusion-contrib/datafusion-orc
+[datafusion json functions]: https://github.com/datafusion-contrib/datafusion-functions-json
 [`datafusion-contrib`]: https://github.com/datafusion-contrib
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
 [`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`TableProviderFactory`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProviderFactory.html
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`tableproviderfactory`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProviderFactory.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html

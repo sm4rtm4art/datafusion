@@ -151,12 +151,12 @@ External dependencies and unresolved approvals
 
 In this document, code elements follow a consistent pattern:
 
-* **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
-* **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
-* **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
-* **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
-* **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
-* **Actions:** (`.collect()`, `.show()`) trigger execution
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
 
 :::
 
@@ -219,8 +219,8 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Two ways to specify joins:**
 
-* [`.join()`] — Pass column names (`&[&str]`) for each side plus an optional `filter: Option<Expr>`. DataFusion builds equality predicates from the columns.
-* [`.join_on()`] — Pass the full join condition as `Expr`s. Internally this wraps [`.join()`] with empty key lists and a combined filter expression (`expr_1 AND expr_2 ...`). Optimizer passes then extract equality predicates and treat them as equi-join keys.
+- [`.join()`] — Pass column names (`&[&str]`) for each side plus an optional `filter: Option<Expr>`. DataFusion builds equality predicates from the columns.
+- [`.join_on()`] — Pass the full join condition as `Expr`s. Internally this wraps [`.join()`] with empty key lists and a combined filter expression (`expr_1 AND expr_2 ...`). Optimizer passes then extract equality predicates and treat them as equi-join keys.
 
 <!-- JOIN-TODO-004: Rewrite this claim; construction method does not guarantee a specific physical join algorithm. -->
 
@@ -268,10 +268,10 @@ async fn main() -> datafusion::error::Result<()> {
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | **First-class Semi/Anti joins** — `JoinType::LeftAnti`, `LeftSemi` etc. are explicit; no workarounds needed (unlike PySpark where you'd use `LEFT JOIN` + `WHERE IS NULL`) | **Visual clarity** — Multi-table joins read naturally in SQL syntax   |
 | **Type-safe composition** — Build joins conditionally with `if/else`; compiler catches column typos                                                                        | **Familiar syntax** — Standard `ON` clause understood by any SQL user |
-| **Chained transformations** — `.join().filter().select()` flows naturally                                                                                                  | Copy-paste ready** — Test queries directly in SQL tools               |
+| **Chained transformations** — `.join().filter().select()` flows naturally                                                                                                  | Copy-paste ready\*\* — Test queries directly in SQL tools             |
 | **Complex conditions** — [`.join_on()`] accepts any `Expr`, not just column equality                                                                                       | **Self-documenting** — SQL is often readable by non-programmers       |
 
-> **DataFusion-specific advantage:** Unlike many DataFrame libraries, DataFusion exposes the *full* set of join types ([`LeftSemi`], [`RightSemi`], [`LeftAnti`], [`RightAnti`], [`LeftMark`], [`RightMark`]) as first-class operations—no need to emulate anti-joins with outer joins and null checks.
+> **DataFusion-specific advantage:** Unlike many DataFrame libraries, DataFusion exposes the _full_ set of join types ([`LeftSemi`], [`RightSemi`], [`LeftAnti`], [`RightAnti`], [`LeftMark`], [`RightMark`]) as first-class operations—no need to emulate anti-joins with outer joins and null checks.
 
 **Performance note:** <br>
 For joins via row-based [`TableProvider`], consider whether the join should happen at the source. If both tables are in Postgres with foreign key indexes, the DB's index-backed joins may outperform transferring data to DataFusion. For cross-source joins or large analytical joins without indexes, DataFusion's hash/sort-merge algorithms excel.
@@ -291,11 +291,11 @@ Under the hood, DataFusion selects from [several join algorithms] based on your 
 | [**Piecewise Merge Join**] | Single range filter (`<`, `>`, `<=`, `>=`)—much faster than nested loop for these cases.       |
 | [**Cross Join**]           | Cartesian product—used for SQL [`CROSS JOIN`] and [`.join()`] with empty key lists.            |
 
-The optimizer *can* (based on configuration and statistics):
+The optimizer _can_ (based on configuration and statistics):
 
-* **Swap sides** to put the smaller table on the build side
-* **Choose partition mode**—broadcast small tables or hash-partition both sides
-* **Push dynamic filters**—min/max bounds from the build side skip irrelevant probe data (e.g., Parquet row groups)
+- **Swap sides** to put the smaller table on the build side
+- **Choose partition mode**—broadcast small tables or hash-partition both sides
+- **Push dynamic filters**—min/max bounds from the build side skip irrelevant probe data (e.g., Parquet row groups)
 
 These behaviors are tunable via [`datafusion.optimizer`] settings.
 
@@ -307,15 +307,15 @@ All join algorithms leverage [Arrow]'s columnar format: instead of copying rows,
 >
 > | Technique                          | Benefit                                                                                                                                          |
 > | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-> | **Columnar format (Arrow)**        | Read only the columns you need; SIMD instructions process thousands of keys in parallel*                                                         |
+> | **Columnar format (Arrow)**        | Read only the columns you need; SIMD instructions process thousands of keys in parallel\*                                                        |
 > | **Vectorized execution**           | Joins process batches of rows, not one at a time—simple inner loops let CPUs parallelize at the instruction level                                |
 > | **SQL = DataFrame**                | Both compile to the same `LogicalPlan`—identical optimizer benefits regardless of API choice                                                     |
 > | **Statistics-driven optimization** | Table metadata (row counts, min/max) guide join order and algorithm selection—[**16x faster** on TPC-H benchmarks][datafusion join optimization] |
 > | **Late materialization**           | During joins, only key columns + row indices are processed; other columns are fetched afterward                                                  |
 >
-> *SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../../user-guide/crate-configuration.md).
+> \*SIMD requires `RUSTFLAGS='-C target-cpu=native'`. See [Crate Configuration](../../../user-guide/crate-configuration.md).
 >
-> The result: you describe *what* to join, and the optimizer handles *how*—often matching or exceeding hand-tuned imperative code.
+> The result: you describe _what_ to join, and the optimizer handles _how_—often matching or exceeding hand-tuned imperative code.
 
 <!-- JOIN-TODO-006 JOIN-TODO-007 JOIN-TODO-015: Rebuild this as the single preservation decision table and add only a bounded specialist note for mark joins. -->
 
@@ -323,7 +323,7 @@ All join algorithms leverage [Arrow]'s columnar format: instead of copying rows,
 
 Joins control how rows from two tables are matched and combined. The key decisions are:
 
-1. what happens to rows that *don't* match
+1. what happens to rows that _don't_ match
 2. which columns appear in the result.
 
 Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and Anti joins answer existence questions without adding columns from the right table.
@@ -390,18 +390,18 @@ async fn main() -> datafusion::error::Result<()> {
 
 **When to use Inner Join:**
 
-* **Enrich data** — Attach related information (customer details → their orders)
-* **Filter by relationship** — Keep only rows that have a match on the other side
-* **Combine normalized tables** — Reassemble data split across multiple tables
+- **Enrich data** — Attach related information (customer details → their orders)
+- **Filter by relationship** — Keep only rows that have a match on the other side
+- **Combine normalized tables** — Reassemble data split across multiple tables
 
 **Not for set intersections!** <br>
-If you need rows that exist in *both* DataFrames (identical schemas, all columns compared), use [`.intersect()`] instead—that's a set operation, not a join. <br> For set operations like intersection and difference, see [Set Operations](set-operations.md#intersection-and-difference).
+If you need rows that exist in _both_ DataFrames (identical schemas, all columns compared), use [`.intersect()`] instead—that's a set operation, not a join. <br> For set operations like intersection and difference, see [Set Operations](set-operations.md#intersection-and-difference).
 
 > **⚠️ The hidden cost: [Survivorship bias][survivorship_bias]**
 >
 > Many join types silently drop non-matching rows—Inner, Semi, and Anti joins all filter out data. In the example above, Carol and order 104 simply vanish. Chain several such joins together and you may lose 60% of your data without noticing—you only see the "survivors" (rows that matched at every step).
 >
-> As a sanity check, if you need to see what's *missing*, use [Outer Joins](#intermediate-leftrightfull-joins) (or other oposit joins like left vs. right) instead—`NULL` values reveal exactly where data gaps exist.
+> As a sanity check, if you need to see what's _missing_, use [Outer Joins](#intermediate-leftrightfull-joins) (or other oposit joins like left vs. right) instead—`NULL` values reveal exactly where data gaps exist.
 
 <!-- JOIN-TODO-004 JOIN-TODO-008 JOIN-TODO-016 JOIN-TODO-018: Move composite keys to construction, schema-name handling to composition, and remove the unsupported temporal percentage claim. -->
 
@@ -650,9 +650,9 @@ Use [`.alias()`] to create two "views" of the same DataFrame, then join with qua
 
 **Common self-join patterns:**
 
-* **Hierarchy traversal:** employees → managers, categories → parent categories
-* **Sequential comparison:** this_year.sales vs last_year.sales (join on product_id)
-* **Finding pairs:** "Which products are often bought together?" (order_items self-join)
+- **Hierarchy traversal:** employees → managers, categories → parent categories
+- **Sequential comparison:** this_year.sales vs last_year.sales (join on product_id)
+- **Finding pairs:** "Which products are often bought together?" (order_items self-join)
 
 #### Right Join — Find Orphaned Records
 
@@ -702,13 +702,13 @@ Right Join is just Left Join with swapped tables. `A.join(B, Right)` = `B.join(A
 
 #### Full Join — Complete Reconciliation
 
-Keep **all rows from both tables**. Where there's no match, fill the "other side" with NULLs. This is the only join that guarantees you see *everything*—matched, unmatched left, AND unmatched right.
+Keep **all rows from both tables**. Where there's no match, fill the "other side" with NULLs. This is the only join that guarantees you see _everything_—matched, unmatched left, AND unmatched right.
 
 **When to use Full Join:**
 
-* **Data reconciliation** — Comparing two data sources to find ALL discrepancies
-* **Migration validation** — Ensuring old and new systems have the same records
-* **Audit trails** — "Show me what's in A but not B, what's in B but not A, and what's in both"
+- **Data reconciliation** — Comparing two data sources to find ALL discrepancies
+- **Migration validation** — Ensuring old and new systems have the same records
+- **Audit trails** — "Show me what's in A but not B, what's in B but not A, and what's in both"
 
 ```rust
 use datafusion::prelude::*;
@@ -871,9 +871,9 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Use cases for LeftSemi:**
 
-* Find active customers (have placed orders)
-* Find products that have been sold (exist in order_items)
-* Filter to "things that are referenced somewhere"
+- Find active customers (have placed orders)
+- Find products that have been sold (exist in order_items)
+- Filter to "things that are referenced somewhere"
 
 #### LeftAnti — "Which Rows Have No Matches?"
 
@@ -927,10 +927,10 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Use cases for LeftAnti:**
 
-* Find inactive customers (never ordered)
-* Find dead inventory (products never sold)
-* Data cleanup: "Find records missing required relationships"
-* Complement of Semi: `Semi ∪ Anti = Full Left Table`
+- Find inactive customers (never ordered)
+- Find dead inventory (products never sold)
+- Data cleanup: "Find records missing required relationships"
+- Complement of Semi: `Semi ∪ Anti = Full Left Table`
 
 #### Why Not Just Use Left Join + Filter?
 
@@ -976,9 +976,9 @@ async fn main() -> datafusion::error::Result<()> {
 
 Both produce the same result, but Anti join:
 
-* Doesn't create intermediate joined rows
-* Doesn't add (and then ignore) right-side columns
-* Optimizer can use more efficient algorithms (e.g., hash-based existence check)
+- Doesn't create intermediate joined rows
+- Doesn't add (and then ignore) right-side columns
+- Optimizer can use more efficient algorithms (e.g., hash-based existence check)
 
 > **Learn more:** See [Semi and Anti joins explained] for why these deserve first-class syntax in SQL.
 
@@ -993,7 +993,7 @@ Both produce the same result, but Anti join:
 
 **Chain [`.join()`] calls to combine 3+ tables—each join produces a new DataFrame that feeds into the next.**
 
-Real-world data is often normalized across multiple tables. A business question like "which customers have paid orders?" requires combining customers → orders → payments. Each chained Inner Join acts as a filter—only rows matching *all* join conditions survive.
+Real-world data is often normalized across multiple tables. A business question like "which customers have paid orders?" requires combining customers → orders → payments. Each chained Inner Join acts as a filter—only rows matching _all_ join conditions survive.
 
 ```rust
 use datafusion::prelude::*;
@@ -1239,12 +1239,12 @@ async fn main() -> datafusion::error::Result<()> {
 
 #### The `filter` Argument on Outer Joins
 
-The [`.join()`] method's fifth parameter is [`filter: Option<Expr>`][join_filter_param]—easy to overlook in the signature but powerful for outer joins. This filter has **subtle but important semantics**: it applies only to *matched* rows, not to preserved unmatched rows.
+The [`.join()`] method's fifth parameter is [`filter: Option<Expr>`][join_filter_param]—easy to overlook in the signature but powerful for outer joins. This filter has **subtle but important semantics**: it applies only to _matched_ rows, not to preserved unmatched rows.
 
 This distinction matters because:
 
-* A [`WHERE`] clause **after** the join would filter out unmatched rows (turning your Left Join into an Inner Join)
-* The `filter` argument applies **during** the join, controlling which matches are considered valid while still preserving unmatched rows
+- A [`WHERE`] clause **after** the join would filter out unmatched rows (turning your Left Join into an Inner Join)
+- The `filter` argument applies **during** the join, controlling which matches are considered valid while still preserving unmatched rows
 
 | Approach                                      | Behavior                         | Result                              |
 | --------------------------------------------- | -------------------------------- | ----------------------------------- |
@@ -1292,7 +1292,7 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 > **Mental model:** <br>
-> Think of `filter` as part of the *join condition*, not a `WHERE` after the join. It controls which matches are valid during the join itself.
+> Think of `filter` as part of the _join condition_, not a `WHERE` after the join. It controls which matches are valid during the join itself.
 
 > **Also applies to [`.join_on()`]:** <br>
 > Since [`.join_on()`] is implemented as [`.join()`] with empty key lists and combined `on_exprs` as `filter`, the same semantics apply.
@@ -1569,22 +1569,22 @@ async fn main() -> datafusion::error::Result<()> {
 
 | Node                 |                       Meaning                       | Performance                       |
 | -------------------- | :-------------------------------------------------: | --------------------------------- |
-| `HashJoinExec`       | Hash-based join (builds hash table from right side) | ✅ Fast for equi-joins             |
-| `SortMergeJoinExec`  |             Sort both sides, then merge             | ✅ Good for large sorted data      |
+| `HashJoinExec`       | Hash-based join (builds hash table from right side) | ✅ Fast for equi-joins            |
+| `SortMergeJoinExec`  |             Sort both sides, then merge             | ✅ Good for large sorted data     |
 | `NestedLoopJoinExec` |               Compares every row pair               | ⚠️ Slow — only for non-equi joins |
-| `CrossJoinExec`      |                  Cartesian product                  | ❌ Usually a bug                   |
+| `CrossJoinExec`      |                  Cartesian product                  | ❌ Usually a bug                  |
 
 **Signs of a healthy plan:**
 
-* Predicates pushed into `ParquetExec` or `CsvExec` (filter early)
-* `HashJoinExec` or `SortMergeJoinExec` for equi-joins
-* Smaller table on the **build side** (right side of hash join)
+- Predicates pushed into `ParquetExec` or `CsvExec` (filter early)
+- `HashJoinExec` or `SortMergeJoinExec` for equi-joins
+- Smaller table on the **build side** (right side of hash join)
 
 **⚠️ Warning signs:**
 
-* `NestedLoopJoinExec` when you expected equi-join → check if optimizer couldn't extract equality predicates
-* `CrossJoinExec` → accidental Cartesian product
-* Filters appearing **after** the join instead of pushed down
+- `NestedLoopJoinExec` when you expected equi-join → check if optimizer couldn't extract equality predicates
+- `CrossJoinExec` → accidental Cartesian product
+- Filters appearing **after** the join instead of pushed down
 
 ```text
 Example output (simplified):

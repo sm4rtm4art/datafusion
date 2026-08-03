@@ -433,4 +433,4 @@ implementation guides on both approaches.
 [parquet-pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
 [stringview-blog]: https://datafusion.apache.org/blog/2024/09/13/string-view-german-style-strings-part-1/
 [parquet-viewer]: https://parquet-viewer.xiangpeng.systems/
-[`ParquetFileReaderFactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/trait.ParquetFileReaderFactory.html
+[`parquetfilereaderfactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/trait.ParquetFileReaderFactory.html

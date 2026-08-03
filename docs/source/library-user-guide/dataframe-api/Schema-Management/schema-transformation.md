@@ -518,30 +518,30 @@ On the [`DFSchema`] layer, requalification controls how DataFusion resolves colu
 - [Inspecting and Validating Schemas](schema-inspection.md) — display, access, validation, and basic Arrow interop
 - [Anatomy of a Schema](schema-anatomy.md) — field-level properties, qualifiers, nullability, and metadata
 - [Schema Methods](schema-dataframe-methods.md) — DataFrame methods that add, remove, rename, or reshape columns
-:::
+  :::
 
 ---
 
 <!-- Link references -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DataFrame::alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
-[`DataFrame::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`DataFrame::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`FunctionalDependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`Schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[`SchemaRef`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`DFSchema::check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
-[`DFSchema::from_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
-[`DFSchema::join()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
-[`DFSchema::merge()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
-[`DFSchema::replace_qualifier()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.replace_qualifier
-[`DFSchema::strip_qualifiers()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.strip_qualifiers
-[`DFSchema::try_from_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dataframe::alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`dataframe::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`dataframe::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`functionaldependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`schemaref`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+[`dfschema::check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
+[`dfschema::from_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
+[`dfschema::join()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
+[`dfschema::merge()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
+[`dfschema::replace_qualifier()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.replace_qualifier
+[`dfschema::strip_qualifiers()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.strip_qualifiers
+[`dfschema::try_from_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
 [`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
 [`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
@@ -558,4 +558,4 @@ On the [`DFSchema`] layer, requalification controls how DataFusion resolves colu
 [`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
 [`.with_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_field_specific_qualified_schema
 [`.with_functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_functional_dependencies
-[Creating Schemas]: schema-creation.md
+[creating schemas]: schema-creation.md

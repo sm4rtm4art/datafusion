@@ -384,7 +384,7 @@ The next step is to explore the internal structure of [`DFSchema`] in detail —
 - [Applying Schemas](schema-application.md) — wiring schemas into readers at the read boundary
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking schemas before execution
 - [Type Coercion](type-coercion.md) — automatic type reconciliation and explicit casts
-:::
+  :::
 
 ### Further Reading
 

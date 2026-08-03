@@ -17,29 +17,26 @@
   under the License.
 -->
 
-
 # Changing Schemas with DataFrame Methods
 
 **DataFrame schema methods reshape the output contract lazily: they derive a new [`DFSchema`] from the columns you keep, compute, rename, remove, cast, or unnest.**
-
 
 Structured data processing depends on a schema contract — the column names, types, and nullability the engine expects at each step. In DataFusion, every [`DataFrame`] carries that contract as a [`DFSchema`], derived automatically as the methods you chain extend the [`LogicalPlan`]. This page is the reference for the methods that deliberately reshape it — and the boundary around the many that leave it untouched.
 
 The methods that change the schema fall into three families: projection-backed edits (`.select()`, `.with_column()`, renames, drops, and casts) that rebuild the field list on purpose; operation-derived changes (`.join()`, `.aggregate()`, `.window()`, set operations) where a new schema is a side effect of combining or grouping rows; and unnest-backed reshaping (`.unnest_columns()`) that flattens nested `Struct` and `List` fields. Each is shown in runnable code — and linked to the operation's own page where that operation is the real topic — because the recurring risk is the same: ambiguous or duplicate column names when fields are combined or renamed.
 
-
 **Key methods:**
 
-| Method                                           | Schema effect                                                      |
-| :----------------------------------------------- | :----------------------------------------------------------------- |
-| [`.select()`](#selecting-columns)                | Replace the output schema with expression-derived fields           |
-| [`.select_columns()`](#selecting-columns)        | Keep existing fields by name (errors on unknown names)             |
-| [`.select_exprs()`](#selecting-columns)          | Project from SQL strings (requires the `sql` feature)              |
-| [`.with_column()`](#adding-and-replacing-fields) | Append a field, or replace it in place if the name exists          |
-| [`.with_column_renamed()`](#renaming-and-removing-fields) | Rename a field (no-op if not found)                       |
+| Method                                                    | Schema effect                                                      |
+| :-------------------------------------------------------- | :----------------------------------------------------------------- |
+| [`.select()`](#selecting-columns)                         | Replace the output schema with expression-derived fields           |
+| [`.select_columns()`](#selecting-columns)                 | Keep existing fields by name (errors on unknown names)             |
+| [`.select_exprs()`](#selecting-columns)                   | Project from SQL strings (requires the `sql` feature)              |
+| [`.with_column()`](#adding-and-replacing-fields)          | Append a field, or replace it in place if the name exists          |
+| [`.with_column_renamed()`](#renaming-and-removing-fields) | Rename a field (no-op if not found)                                |
 | [`.drop_columns()`](#renaming-and-removing-fields)        | Keep the complement; remove fields by name (ignores unknown names) |
-| [`.fill_null()`](#normalizing-types-and-nulls)   | Replace NULLs; filled castable fields become NOT NULL              |
-| [`.unnest_columns()`](#reshaping-nested-fields)  | Expand `List`/`Struct` fields into a new shape                     |
+| [`.fill_null()`](#normalizing-types-and-nulls)            | Replace NULLs; filled castable fields become NOT NULL              |
+| [`.unnest_columns()`](#reshaping-nested-fields)           | Expand `List`/`Struct` fields into a new shape                     |
 
 :::{admonition} Style Note
 :class: note
@@ -72,13 +69,12 @@ At the DataFrame layer the schema is never hand-written: the engine derives a ne
 
 Wherever columns are combined or split — joining inputs or unnesting a nested column — watch for ambiguous or duplicate names, the most common schema surprise. The table below routes each method to where it is documented.
 
-| Method family | Effect on the schema | Where to read it |
-| :------------ | :------------------- | :--------------- |
-| **Schema-preserving methods** (**no visible effect**) — `.filter()`, `.sort()`, `.limit()`, `.distinct()`, `.repartition()` | The visible `DFSchema` passes through unchanged | This page — [Schema-Preserving Methods](#schema-preserving-methods) |
-| **Projection-backed schema edits** — `.select()`, `.select_columns()`, `.select_exprs()`, `.with_column()`, `.with_column_renamed()`, `.drop_columns()`, `.fill_null()`, casts inside projection methods | A projection derives a new `DFSchema` from the output expressions: fields can be kept, computed, renamed, removed, cast, or normalized | This page — [Projection-Backed Column Edits](#projection-backed-column-edits) |
-| **Operation-derived schemas** — `.join()`, `.union()`, `.union_by_name()`, `.aggregate()`, `.window()` | The operation derives its own output schema from input-combination, grouping, set, or window-expression rules; schema movement is a consequence, not the main topic | This page — [Operation-Derived Schema Changes](#operation-derived-schema-changes) |
-| **Unnest-backed nested reshaping** — `.unnest_columns()`, `.unnest_columns_with_options()` | An `Unnest` node expands selected nested fields: `Struct` fields split into child columns, while `List` fields expose their element type and may expand rows | This page — [Reshaping Nested Fields](#reshaping-nested-fields) |
-
+| Method family                                                                                                                                                                                            | Effect on the schema                                                                                                                                                | Where to read it                                                                  |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------------- |
+| **Schema-preserving methods** (**no visible effect**) — `.filter()`, `.sort()`, `.limit()`, `.distinct()`, `.repartition()`                                                                              | The visible `DFSchema` passes through unchanged                                                                                                                     | This page — [Schema-Preserving Methods](#schema-preserving-methods)               |
+| **Projection-backed schema edits** — `.select()`, `.select_columns()`, `.select_exprs()`, `.with_column()`, `.with_column_renamed()`, `.drop_columns()`, `.fill_null()`, casts inside projection methods | A projection derives a new `DFSchema` from the output expressions: fields can be kept, computed, renamed, removed, cast, or normalized                              | This page — [Projection-Backed Column Edits](#projection-backed-column-edits)     |
+| **Operation-derived schemas** — `.join()`, `.union()`, `.union_by_name()`, `.aggregate()`, `.window()`                                                                                                   | The operation derives its own output schema from input-combination, grouping, set, or window-expression rules; schema movement is a consequence, not the main topic | This page — [Operation-Derived Schema Changes](#operation-derived-schema-changes) |
+| **Unnest-backed nested reshaping** — `.unnest_columns()`, `.unnest_columns_with_options()`                                                                                                               | An `Unnest` node expands selected nested fields: `Struct` fields split into child columns, while `List` fields expose their element type and may expand rows        | This page — [Reshaping Nested Fields](#reshaping-nested-fields)                   |
 
 The rest of this page follows that order: the methods that leave the schema untouched, the projection edits you make on purpose, the operations that reshape it as a side effect, and finally nested reshaping with unnest.
 
@@ -101,9 +97,7 @@ Everything below is the smaller set of methods that do move the schema.
 
 **Projection-backed methods edit a `DataFrame` schema by rebuilding the output field list from selected, computed, renamed, or normalized columns.**
 
-
 Under the hood almost all of these methods compile to a projection: [`.drop_columns()`] becomes a [`.select()`] of the columns you keep, and [`.fill_null()`] becomes a [`.select()`] of `coalesce()` expressions. [`.select()`] is the reference point because it exposes projection directly: each expression in the select list becomes one output field in the derived schema. The convenience methods differ mostly in how they build that field list and how they react to unknown column names.
-
 
 :::{admonition} .alias() renames the qualifier, not the columns
 :class: seealso
@@ -344,7 +338,6 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
-
 ## Operation-Derived Schema Changes
 
 **Some operations change the schema as a side effect of their real work: `.join()`, `.aggregate()`, `.window()`, and the set operations each derive a new field list from combining or grouping rows — so their schema rules live with the operation, not on this page.**
@@ -399,7 +392,6 @@ DataFusion does not auto-suffix collisions the way some engines do — there is 
 :::
 
 ---
-
 
 ## Reshaping Nested Fields
 
@@ -499,16 +491,17 @@ Most do not — row-shaping and inspection methods pass it straight through. Tho
 - **Next:** [Transformations](../Transformations/index.md) — filter, join, aggregate, sort, and enrich data in the DataFrame lifecycle's "life" phase.
 - [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, and the name collisions that operation-derived methods can trigger.
 - [Type Coercion](type-coercion.md) — the cast rules behind expression-driven type changes.
-:::
+  :::
 
 ---
 
 <!-- Link references -->
+
 [coalesce()]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.coalesce.html
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`UnnestOptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`unnestoptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
 [`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
 [`.select_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns

@@ -29,6 +29,7 @@ JOIN-TODO-019, JOIN-TODO-021, JOIN-TODO-025, and JOIN-TODO-026.
 <!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Key Methods table, first-H2 framing, and conclusion after this leaf stabilizes. -->
 <!-- JOIN-TODO-007: Keep public mark joins as a bounded specialist note until a supported workflow is approved. -->
 <!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
+
 # Join Types
 
 :::{admonition} Style Note
@@ -52,6 +53,7 @@ In this document, code elements follow a consistent pattern:
 ```
 
 <!-- JOIN-TODO-006 JOIN-TODO-007 JOIN-TODO-015: Rebuild this as the single preservation decision table and add only a bounded specialist note for mark joins. -->
+
 ## Choose What the Join Preserves
 
 Joins control how rows from two tables are matched and combined. The key decisions are:
@@ -63,7 +65,7 @@ Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and 
 
 | Join Type            | Returns                   | Use Case                                    |
 | :------------------- | :------------------------ | :------------------------------------------ |
-| [`Inner`]            | Matches from both sides   | Standard joinâ€”only matching rows            |
+| [`Inner`]            | Matches from both sides   | Standard joinâ€”only matching rows          |
 | [`Left`]             | All left + matching right | Keep all left rows (NULL if no match)       |
 | [`Right`]            | All right + matching left | Keep all right rows (NULL if no match)      |
 | [`Full`]             | Everything from both      | See all data, matched or not                |
@@ -78,6 +80,7 @@ Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and 
 ---
 
 <!-- JOIN-TODO-006 JOIN-TODO-009: Rename and place this under preservation semantics; explain possible row multiplication and route coverage checks to validation. -->
+
 ## Return Matching Rows with an Inner Join
 
 This example establishes `customers_df` and `orders_df`â€”used throughout this section. Note: Carol has no orders, and order 104 has no matching customer (orphan).
@@ -143,17 +146,19 @@ If you need rows that exist in _both_ DataFrames (identical schemas, all columns
 (intermediate-leftrightfull-joins)=
 
 <!-- JOIN-TODO-006 JOIN-TODO-016: Consolidate outer-join preservation and null extension here; remove the unsupported "~90%" claim. -->
+
 ## Preserve Unmatched Rows with Outer Joins
 
 Where Inner Join keeps only the intersection (rows matching on both sides), **"partial" outer joins (left, right and full) preserve rows that don't match**â€”filling missing columns with `NULL`. This makes data gaps visible instead of silently dropping them.
 
-| Join Type | Keeps                                           | Typical Use Case                                        |
-| :-------- | :---------------------------------------------- | :------------------------------------------------------ |
+| Join Type | Keeps                                           | Typical Use Case                                          |
+| :-------- | :---------------------------------------------- | :-------------------------------------------------------- |
 | **Left**  | All left rows, matching right data if available | Customer reportsâ€”keep all customers, show orders if any |
 | **Right** | All right rows, matching left data if available | Orphan detectionâ€”find orders without valid customers    |
 | **Full**  | Everything from both sides                      | Data reconciliationâ€”find ALL discrepancies              |
 
 <!-- JOIN-TODO-016: Remove the unsourced "~90%" generalization; retain only neutral selection guidance. -->
+
 Left Join handles ~90% of outer join use cases. Right Join can usually be rewritten as Left Join by swapping tables. Full Join is for reconciliation scenarios.
 
 ### Left Join â€” Enrich Your Primary Data
@@ -264,7 +269,7 @@ Right Join is just Left Join with swapped tables. `A.join(B, Right)` = `B.join(A
 
 ### Full Join â€” Complete Reconciliation
 
-Keep **all rows from both tables**. Where there's no match, fill the "other side" with NULLs. This is the only join that guarantees you see _everything_â€”matched, unmatched left, AND unmatched right.
+Keep **all rows from both tables**. Where there's no match, fill the "other side" with NULLs. This is the only join that guarantees you see *everything*â€”matched, unmatched left, AND unmatched right.
 
 **When to use Full Join:**
 
@@ -362,6 +367,7 @@ This pattern is invaluable for ETL pipelines, data migration validation, and deb
 ---
 
 <!-- JOIN-TODO-006 JOIN-TODO-007 JOIN-TODO-017: Reframe these as existence/non-existence preservation choices; keep right variants, bound mark variants, and remove unconditional efficiency claims. -->
+
 ## Test for Matches with Semi and Anti Joins
 
 **What makes them special?** <br>
@@ -374,11 +380,11 @@ Semi and Anti joins are **filtering joins**â€”they filter the left table ba
 
 **Why use them instead of alternatives?**
 
-| Alternative                | Problem                                                             | Semi/Anti Advantage                                              |
-| :------------------------- | :------------------------------------------------------------------ | :--------------------------------------------------------------- |
+| Alternative                | Problem                                                             | Semi/Anti Advantage                                                |
+| :------------------------- | :------------------------------------------------------------------ | :----------------------------------------------------------------- |
 | Inner Join + Distinct      | Creates duplicates if right has multiple matches, then removes them | Semi join handles this automaticallyâ€”one output row per left row |
 | Left Join + WHERE NULL     | Joins everything first, then filters                                | Anti join filters during joinâ€”more efficient                     |
-| `IN (SELECT ...)` subquery | Can be slower, harder to optimize                                   | Semi join is the optimized physical plan for `IN`                |
+| `IN (SELECT ...)` subquery | Can be slower, harder to optimize                                   | Semi join is the optimized physical plan for `IN`                  |
 
 ### LeftSemi â€” "Which Rows Have Matches?"
 

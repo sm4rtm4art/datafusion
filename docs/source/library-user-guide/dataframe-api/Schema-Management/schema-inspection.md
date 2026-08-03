@@ -83,7 +83,7 @@ The schema you inspect originates from the data source. How it arrives depends o
 | [`TableProvider::schema()`]                             | `SchemaRef` (Arrow)               | Custom data sources, catalog tables                |
 | [`ctx.read_parquet(...)`][`.read_parquet()`]            | Arrow Schema from file metadata   | Self-describing formats (Parquet, Arrow IPC, Avro) |
 | `CsvReadOptions::new().schema(&schema)`                 | Explicit Arrow Schema you provide | Text formats requiring schema                      |
-| [`Schema::new(vec![Field::new(...)])`][`Schema::new()`] | Constructed Arrow Schema          | Programmatic schema definition                     |
+| [`Schema::new(vec![Field::new(...)])`][`schema::new()`] | Constructed Arrow Schema          | Programmatic schema definition                     |
 
 For a deeper treatment of schema origins and ownership, see [Schema Concepts](schema-concepts.md). For the internal structure of [`DFSchema`], see [Anatomy of a Schema](schema-anatomy.md).
 
@@ -306,7 +306,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 :::{admonition} ExprSchema is a trait — import required
 :class: note
-The `data_type()`, `nullable()`, and per-column `metadata()` methods come from the [`ExprSchema`] trait, not from [`DFSchema`] directly. Import it with `use datafusion::common::ExprSchema;` to bring the methods into scope. For the full trait definition, see the [API documentation][`ExprSchema`].
+The `data_type()`, `nullable()`, and per-column `metadata()` methods come from the [`ExprSchema`] trait, not from [`DFSchema`] directly. Import it with `use datafusion::common::ExprSchema;` to bring the methods into scope. For the full trait definition, see the [API documentation][`exprschema`].
 :::
 
 ### Qualified Field Access
@@ -605,7 +605,7 @@ fn main() -> datafusion::error::Result<()> {
 When field count matters, compare `.fields().len()` explicitly before calling [`.matches_arrow_schema()`] — the method only validates that overlapping positions have matching names.
 :::
 
-[`Iterator::zip()`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.zip
+[`iterator::zip()`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.zip
 
 ---
 
@@ -691,23 +691,23 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 - [Type Coercion](type-coercion.md) — automatic type alignment and explicit casting
 - [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, nullability handling
 - [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
-:::
+  :::
 
 ---
 
 <!-- Link references -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`Schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[`Schema::new()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html#method.new
-[`Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
-[`Column`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Column.html
-[`DataType`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
-[`ExprSchema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
-[`FunctionalDependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
-[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`schema::new()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html#method.new
+[`field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+[`column`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Column.html
+[`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
+[`exprschema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
+[`functionaldependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
+[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
 [`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
 [`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
 [`.to_string()`]: https://doc.rust-lang.org/std/string/trait.ToString.html
@@ -729,7 +729,7 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 [`.index_of_column_by_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column_by_name
 [`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
 [`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
-[`DFSchema::datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
+[`dfschema::datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
 [`.check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
 [`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.matches_arrow_schema
 [`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
@@ -738,8 +738,8 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 [`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
 [`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
 [`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
-[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
 [`.explain(false, false)`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
 [`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
-[`printSchema()`]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.printSchema.html
+[`printschema()`]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.printSchema.html

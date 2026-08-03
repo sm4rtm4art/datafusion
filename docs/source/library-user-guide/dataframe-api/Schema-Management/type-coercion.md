@@ -154,9 +154,10 @@ When a `Decimal128` value is mixed with a `Float` type, the result widens to `Fl
 
 **Each type family follows its own coercion rules — and the rules differ between arithmetic and comparison operators.**
 
-The hierarchy above defines *which* types widen, but the *operator* determines which coercion paths are available. Arithmetic operators (`+`, `-`, `*`, `/`) restrict to numeric families — both operands must be numeric, and the result follows the numeric widening hierarchy. Comparison operators (`=`, `>`, `<`, `!=`) are broader: they accept cross-family pairs like string vs. numeric and resolve them via type-specific coercion paths.
+The hierarchy above defines _which_ types widen, but the _operator_ determines which coercion paths are available. Arithmetic operators (`+`, `-`, `*`, `/`) restrict to numeric families — both operands must be numeric, and the result follows the numeric widening hierarchy. Comparison operators (`=`, `>`, `<`, `!=`) are broader: they accept cross-family pairs like string vs. numeric and resolve them via type-specific coercion paths.
 
 #### Numeric
+
 Widens to the smallest type that holds both ranges.
 
 - `Int32 + Int64` → `Int64`
@@ -164,6 +165,7 @@ Widens to the smallest type that holds both ranges.
 - `UInt64 + Int64` → `Decimal128(20, 0)` — neither type can hold the other's full range
 
 #### Temporal
+
 Dates promote to `Timestamp` when mixed with temporal types.
 
 - `Date32 + Timestamp(ns)` → `Timestamp(ns)`
@@ -171,6 +173,7 @@ Dates promote to `Timestamp` when mixed with temporal types.
 - Arithmetic requires matching timezones (UTC and `+00:00` are equivalent) — cast explicitly to align.
 
 #### Strings
+
 Coercion favors view types (`StringArray → StringViewArray` is cheap O(1); the reverse allocates).
 
 - `Utf8 + Utf8View` → `Utf8View`
@@ -178,11 +181,13 @@ Coercion favors view types (`StringArray → StringViewArray` is cheap O(1); the
 - Arithmetic: `Utf8 + Int32` → **Error** — strings are rejected.
 
 #### Boolean
+
 Does not auto-coerce to any other type family.
 
 - `Boolean + Int32` → **Error** — use `cast(col("flag"), DataType::Int32)`.
 
 #### NULL
+
 Adopts the other operand's type (safe widening).
 
 - `NULL + Int32` → `Int32`
@@ -328,7 +333,7 @@ When a query fails with a type coercion error, follow these steps:
 
 Automatic coercion covers safe widenings within the [coercion hierarchy](#the-coercion-hierarchy), but some conversions require explicit action: incompatible types in set operations, narrowing conversions (e.g., `Float64` to `Int32`), or cross-family conversions (e.g., `Boolean` to `Int32`). The two functions differ in failure behavior: [`cast()`] fails the query on unconvertible values (hard cast), while [`try_cast()`] returns `NULL` instead (soft cast). Choose based on whether partial results are acceptable.
 
-### Hard Cast — cast() 
+### Hard Cast — cast()
 
 **[`cast()`] converts a column to the target type and fails the query if any value cannot be converted.**
 
@@ -374,7 +379,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-### Soft Cast — try_cast() 
+### Soft Cast — try_cast()
 
 **[`try_cast()`] preserves partial results — unconvertible values become `NULL` instead of failing the query.**
 
@@ -433,17 +438,17 @@ Automatic coercion widens within type families and parses literals to match thei
 - [Schema Transformation](schema-transformation.md) — qualifier manipulation, combining schemas, nullability handling
 - [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
 - [Handling Null Values](../Concepts/null-handling.md) — NULL behavior in expressions, filters, and joins
-:::
+  :::
 
 <!-- Link references -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`DataType`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
-[`Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
-[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`SessionState`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
+[`field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
 [arrow data types]: https://arrow.apache.org/docs/format/Columnar.html#data-type-descriptions
 [`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
 [`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
@@ -459,5 +464,5 @@ Automatic coercion widens within type families and parses literals to match thei
 [`try_cast()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.try_cast.html
 [`comparison_coercion()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/binary/fn.comparison_coercion.html
 [`comparison_coercion_numeric()`]: https://docs.rs/datafusion/latest/datafusion/expr_common/type_coercion/binary/fn.comparison_coercion_numeric.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema

@@ -51,7 +51,6 @@ TODO(Docs): writing-dataframes.md - Persisting Data to Storage
 
 # Writing Concepts
 
-
 :::{admonition} Style Note
 :class: note
 :collapsible: closed
@@ -372,11 +371,9 @@ async fn main() -> Result<()> {
 >
 > - **Single file vs dataset directory:** <br>
 >   For file writes, `path` determines the default layout. A non-collection path with a file extension (for example `output.parquet`) writes a single file; a directory/collection path (for example `output_dir/`) writes multiple files.\
-> - **Partitioned writes:** <br>
->   [`.with_partition_by()`] creates hive-style directories such as `region=East/`. By default, DataFusion drops partition columns from the file payload and recovers them from directory names on read. Set `execution.keep_partition_by_columns = true` to keep partition columns in the written files.\
+> - **Partitioned writes:** <br> > [`.with_partition_by()`] creates hive-style directories such as `region=East/`. By default, DataFusion drops partition columns from the file payload and recovers them from directory names on read. Set `execution.keep_partition_by_columns = true` to keep partition columns in the written files.\
 
-> **Warning:** <br>
-> [`.write_parquet()`], [`.write_csv()`], and [`.write_json()`] currently support `InsertOp::Append` only. <br>
+> **Warning:** <br> > [`.write_parquet()`], [`.write_csv()`], and [`.write_json()`] currently support `InsertOp::Append` only. <br>
 > Use [`.with_insert_operation()`] with [`.write_table()`] when writing to a table sink.
 
 ### Writing to Parquet
@@ -555,8 +552,7 @@ COPY (SELECT ...) TO 'path' STORED AS CSV
 | Truncated rows   | [`.with_truncated_rows()`] | `true` to pad short rows with nulls      |
 | Compression      | [`.with_compression()`]    | `GZIP`, `ZSTD`, `BZIP2`, `XZ`            |
 
-> **How it works:** <br>
-> [`CsvOptions`] wraps Arrow's [`WriterBuilder`] for CSV serialization. Most options above have builder methods; fields like i.e. [`date_format`], [`timestamp_format`], [`null`], and [`quote`] must be set directly on the struct. [Compression][`.with_compression()`] is applied by DataFusion as a wrapper around the serialized output.
+> **How it works:** <br> > [`CsvOptions`] wraps Arrow's [`WriterBuilder`] for CSV serialization. Most options above have builder methods; fields like i.e. [`date_format`], [`timestamp_format`], [`null`], and [`quote`] must be set directly on the struct. [Compression][`.with_compression()`] is applied by DataFusion as a wrapper around the serialized output.
 
 ```rust
 use datafusion::prelude::*;
@@ -649,8 +645,7 @@ COPY (SELECT ...) TO 'path' STORED AS JSON
 | Compression | [`JsonOptions.compression`] | `GZIP`, `ZSTD`, `BZIP2`   |
 | Partitioned | [`.with_partition_by()`]    | `["region"]` → hive-style |
 
-> **Note:** <br>
-> [`JsonOptions`] is minimal—just :
+> **Note:** <br> > [`JsonOptions`] is minimal—just :
 
 - [`compression`][`jsonoptions.compression`]
 - [`schema_infer_max_rec`]
@@ -732,8 +727,7 @@ INSERT INTO sales SELECT * FROM new_data
 | In-memory staging       | [`MemTable`] for intermediate results             |
 | Transactional semantics | Provider controls commit/rollback behavior        |
 
-> **Key difference from file methods:** <br>
-> `.write_parquet()` / `.write_csv()` write directly to object storage. [`.write_table()` ]delegates to a registered table—the provider decides how and where data lands.
+> **Key difference from file methods:** <br> > `.write_parquet()` / `.write_csv()` write directly to object storage. [`.write_table()` ]delegates to a registered table—the provider decides how and where data lands.
 
 #### Insert Operations
 
@@ -746,8 +740,7 @@ Use [`DataFrameWriteOptions::with_insert_operation(...)`][`with_insert_operation
 | [`InsertOp::Replace`][`replace`]     | `REPLACE INTO`     | Replace conflicting rows (upsert semantics) | Few providers                  |
 
 > **Warning:** <br>
-> Not all providers support all operations. <br>
-> [`MemTable`] currently supports [`Append`] only. Check your provider's documentation for supported operations. See [docs.rs][`memtable::insert_into`]
+> Not all providers support all operations. <br> > [`MemTable`] currently supports [`Append`] only. Check your provider's documentation for supported operations. See [docs.rs][`memtable::insert_into`]
 
 #### Schema Compatibility
 
@@ -755,8 +748,7 @@ The DataFrame schema must be **logically equivalent** to the target table's sche
 
 If schemas don't match, use [`.select()`] with [`.alias()`] to reorder/rename, or [`.cast_to()`] to align types before writing.
 
-> **See also:** <br>
-> [Schema Management](./schema-management.md) covers type coercion rules, validation patterns, and debugging mismatches in depth.
+> **See also:** <br> > [Schema Management](./schema-management.md) covers type coercion rules, validation patterns, and debugging mismatches in depth.
 
 #### Built-in TableProvider Implementations
 

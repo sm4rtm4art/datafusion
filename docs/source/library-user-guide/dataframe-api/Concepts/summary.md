@@ -98,15 +98,15 @@ These references supplement the Concepts section. Each sub-page also links to it
 
 ### API Docs (docs.rs)
 
-| Type / Trait                                                                                                                                         | Description                                                       |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [`SessionContext` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html)                           | Entry point: register data sources, create DataFrames, run SQL    |
+| Type / Trait                                                                                                                                         | Description                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [`SessionContext` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html)                           | Entry point: register data sources, create DataFrames, run SQL            |
 | [`SessionState` (datafusion)](https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html)                         | Structural clone of config/catalog/runtime used during planning/execution |
-| [`DataFrame` (datafusion)](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html)                                             | Lazy plan builder; actions trigger execution                      |
-| [`LogicalPlan` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html)                         | Logical representation produced by SQL and DataFrames             |
-| [`LogicalPlanBuilder` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html) | Lower-level builder for `LogicalPlan`                             |
-| [`ExecutionPlan` (datafusion)](https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html)                                  | Physical plan trait executed by the runtime                       |
-| [`TableProvider` (datafusion)](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html)                                     | Data source abstraction used by `SessionContext`                  |
+| [`DataFrame` (datafusion)](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html)                                             | Lazy plan builder; actions trigger execution                              |
+| [`LogicalPlan` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html)                         | Logical representation produced by SQL and DataFrames                     |
+| [`LogicalPlanBuilder` (datafusion-expr)](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/builder/struct.LogicalPlanBuilder.html) | Lower-level builder for `LogicalPlan`                                     |
+| [`ExecutionPlan` (datafusion)](https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html)                                  | Physical plan trait executed by the runtime                               |
+| [`TableProvider` (datafusion)](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html)                                     | Data source abstraction used by `SessionContext`                          |
 
 ---
 

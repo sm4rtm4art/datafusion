@@ -1115,12 +1115,14 @@ async fn main() -> Result<()> {
 When you call an action like [`.collect()`], the lazy plan crosses the ACTION boundary and enters a multi-phase pipeline. What seems to be a simple filter operation to you, is followed by a series of optimizations and transformations by DataFusion's optimizer. Most of the time you don't have to care for this, since the out of the box query engine deals in most of the cases automatically in the background with the optimizers. DataFusion maintains a large set of optimizer rules—only the **applicable ones fire** based on your specific plan structure:
 
 1. **Logical Optimization** ([21+ optimizer rules][optimizer-rules], multiple passes):
+
    - Predicate pushdown (move filters closer to scans)
    - Projection pruning (remove unused columns)
    - Common subexpression elimination
    - Constant folding and simplification
 
 2. **Physical Planning** ([19+ physical rules][physical-rules]):
+
    - Choose concrete algorithms (HashJoin vs SortMergeJoin)
    - Insert repartitioning for parallelism
    - Add sorts where needed

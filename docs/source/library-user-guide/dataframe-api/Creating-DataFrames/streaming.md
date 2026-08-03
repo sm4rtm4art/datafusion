@@ -527,20 +527,20 @@ implement the full `TableProvider` trait directly.
 
 <!-- Link references -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`SessionContext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
 [`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
 [`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
 [`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
-[`StreamTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTable.html
-[`StreamConfig`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamConfig.html
-[`StreamProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/trait.StreamProvider.html
-[`FileStreamProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.FileStreamProvider.html
-[`StreamTableFactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTableFactory.html
-[`StreamingTable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.StreamingTable.html
-[`PartitionStream`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/trait.PartitionStream.html
-[`StreamingTableExec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/struct.StreamingTableExec.html
-[`RecordBatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
-[`SanityCheckPlan`]: https://docs.rs/datafusion/latest/datafusion/physical_optimizer/sanity_checker/struct.SanityCheckPlan.html
+[`streamtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTable.html
+[`streamconfig`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamConfig.html
+[`streamprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/trait.StreamProvider.html
+[`filestreamprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.FileStreamProvider.html
+[`streamtablefactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTableFactory.html
+[`streamingtable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.StreamingTable.html
+[`partitionstream`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/trait.PartitionStream.html
+[`streamingtableexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/struct.StreamingTableExec.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[`sanitycheckplan`]: https://docs.rs/datafusion/latest/datafusion/physical_optimizer/sanity_checker/struct.SanityCheckPlan.html

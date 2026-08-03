@@ -17,7 +17,6 @@
   under the License.
 -->
 
-
 <!--TODO (Stage 2 scaffold, approved 2026-07-18)
 
 PAGE ROLE
@@ -56,11 +55,11 @@ STAGE PLAN
 
 Analytical queries often need more than the right rows: they need those rows in a meaningful sequence and sometimes only a bounded portion of that sequence. In DataFusion, `.sort()` and `.sort_by()` establish order, while `.limit(skip, fetch)` skips rows and bounds the result without evaluating a predicate. This page shows how sort-key precedence, direction, null placement, and method order determine which rows are returned, then combines sorting and limiting for deterministic global Top-N results. Because limiting is positional, place it deliberately and establish a sufficiently complete sort order whenever the selected rows must be reproducible.
 
-| Method | Purpose |
-| --- | --- |
-| [`.sort()`](#defining-a-sort-order) | Define sort-key precedence, direction, and null placement explicitly. |
-| [`.sort_by()`](#defining-a-sort-order) | Apply the fixed `ASC NULLS LAST` policy to each sort expression. |
-| [`.limit()`](#taking-a-bounded-slice) | Skip input rows and return an optionally bounded result. |
+| Method                                 | Purpose                                                               |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| [`.sort()`](#defining-a-sort-order)    | Define sort-key precedence, direction, and null placement explicitly. |
+| [`.sort_by()`](#defining-a-sort-order) | Apply the fixed `ASC NULLS LAST` policy to each sort expression.      |
+| [`.limit()`](#taking-a-bounded-slice)  | Skip input rows and return an optionally bounded result.              |
 
 :::{admonition} Style Note
 :class: note
@@ -218,11 +217,11 @@ When `fetch` is `Some(n)`, DataFusion can stop consuming input after enough rows
 
 The first argument, `skip`, specifies how many input rows to discard before returning any rows. The second argument, `fetch`, sets the maximum number of following rows:
 
-| Call | Result |
-| --- | --- |
-| `.limit(0, Some(n))` | Return at most `n` input rows. |
-| `.limit(skip, Some(n))` | Skip `skip` rows, then return at most `n` rows. |
-| `.limit(skip, None)` | Skip `skip` rows, then return all remaining rows. |
+| Call                    | Result                                            |
+| ----------------------- | ------------------------------------------------- |
+| `.limit(0, Some(n))`    | Return at most `n` input rows.                    |
+| `.limit(skip, Some(n))` | Skip `skip` rows, then return at most `n` rows.   |
+| `.limit(skip, None)`    | Skip `skip` rows, then return all remaining rows. |
 
 These arguments correspond to SQL [`OFFSET` and `LIMIT`][sql-limit]. The following example establishes an order by `order_id`, skips the first ordered row, and returns the next two rows.
 
@@ -265,7 +264,6 @@ async fn main() -> datafusion::error::Result<()> {
 Without a sufficiently complete sort order, `.limit()` still bounds the result, but the selected rows do not represent a deterministic business-defined ordering such as the earliest, latest, highest, or lowest values.
 
 :::
-
 
 ---
 

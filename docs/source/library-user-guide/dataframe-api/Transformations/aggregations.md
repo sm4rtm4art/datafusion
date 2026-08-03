@@ -90,12 +90,12 @@ query. Both APIs use the same DataFusion optimizer and execution engine.
 
 One expression in [`group_expr`][aggregate-method] produces one result row for each distinct key. Multiple grouping expressions produce one result row for each distinct combination of their values. Each expression in [`aggr_expr`][aggregate-method] adds a summary column at that grain.
 
-| Method argument | Representative expressions | Purpose |
-| :-------------- | :------------------------- | :------ |
-| [`group_expr`][aggregate-method] | [`col("customer_id")`][col-function] | Group rows by one value |
-| [`group_expr`][aggregate-method] | [`col("customer_id")`][col-function], [`col("product")`][col-function] | Group rows by a combination of values |
-| [`aggr_expr`][aggregate-method] | [`sum(col("amount"))`][sum-function], [`avg(col("amount"))`][avg-function] | Calculate totals or averages for each group |
-| [`aggr_expr`][aggregate-method] | [`min(col("amount"))`][min-function], [`max(col("amount"))`][max-function], [`count_all()`][count-all-function] | Calculate ranges or counts for each group |
+| Method argument                  | Representative expressions                                                                                      | Purpose                                     |
+| :------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------ |
+| [`group_expr`][aggregate-method] | [`col("customer_id")`][col-function]                                                                            | Group rows by one value                     |
+| [`group_expr`][aggregate-method] | [`col("customer_id")`][col-function], [`col("product")`][col-function]                                          | Group rows by a combination of values       |
+| [`aggr_expr`][aggregate-method]  | [`sum(col("amount"))`][sum-function], [`avg(col("amount"))`][avg-function]                                      | Calculate totals or averages for each group |
+| [`aggr_expr`][aggregate-method]  | [`min(col("amount"))`][min-function], [`max(col("amount"))`][max-function], [`count_all()`][count-all-function] | Calculate ranges or counts for each group   |
 
 Use [`.alias()`][expr-alias-method] to give aggregate-result columns stable names for later transformations, sorting, and assertions.
 
@@ -294,14 +294,14 @@ The important decisions concern what contributes to each result. A count may rep
 
 The following families cover common aggregation decisions without replacing the complete expression and function references.
 
-| Analytical question | Representative expressions | Key decision |
-| :------------------ | :------------------------- | :----------- |
-| What is the total, average, or range? | [`sum()`][sum-function], [`avg()`][avg-function], [`min()`][min-function], [`max()`][max-function] | Choose the measure that describes the group |
-| How many rows or values are present? | [`count_all()`][count-all-function], [`count()`][count-function], [`count_distinct()`][count-distinct-function] | Distinguish rows, non-null values, and distinct values |
-| Which values or rows should contribute to one summary? | [`when(...).otherwise(...)`][case-builder], aggregate [`.filter(...).build()?`][expr-function-ext] | Map each row to a conditional value or exclude non-matching rows from one aggregate |
-| What does the distribution or relationship look like? | [`median()`][median-function], [`stddev()`][stddev-function], [`corr()`][corr-function] | Select the statistic that answers the question and supports the input types |
-| Is a compact estimate appropriate for the required accuracy and scale? | [`approx_distinct()`][approx-distinct-function], [`approx_median()`][approx-median-function], [`approx_percentile_cont()`][approx-percentile-function] | Review the named function's algorithm, controls, and documented guarantees |
-| Should grouped values remain available in one field? | [`array_agg()`][array-agg-function], [`string_agg()`][string-agg-function] | Choose the result type and specify ordering when element order carries meaning |
+| Analytical question                                                    | Representative expressions                                                                                                                             | Key decision                                                                        |
+| :--------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------- |
+| What is the total, average, or range?                                  | [`sum()`][sum-function], [`avg()`][avg-function], [`min()`][min-function], [`max()`][max-function]                                                     | Choose the measure that describes the group                                         |
+| How many rows or values are present?                                   | [`count_all()`][count-all-function], [`count()`][count-function], [`count_distinct()`][count-distinct-function]                                        | Distinguish rows, non-null values, and distinct values                              |
+| Which values or rows should contribute to one summary?                 | [`when(...).otherwise(...)`][case-builder], aggregate [`.filter(...).build()?`][expr-function-ext]                                                     | Map each row to a conditional value or exclude non-matching rows from one aggregate |
+| What does the distribution or relationship look like?                  | [`median()`][median-function], [`stddev()`][stddev-function], [`corr()`][corr-function]                                                                | Select the statistic that answers the question and supports the input types         |
+| Is a compact estimate appropriate for the required accuracy and scale? | [`approx_distinct()`][approx-distinct-function], [`approx_median()`][approx-median-function], [`approx_percentile_cont()`][approx-percentile-function] | Review the named function's algorithm, controls, and documented guarantees          |
+| Should grouped values remain available in one field?                   | [`array_agg()`][array-agg-function], [`string_agg()`][string-agg-function]                                                                             | Choose the result type and specify ordering when element order carries meaning      |
 
 Aggregate expressions can be composed with general [`Expr`][expr-type] values. Comparison expressions such as [`.gt_eq()`][expr-gt-eq-method] and [`.lt()`][expr-lt-method], together with logical expressions such as [`.and()`][expr-and-method], [`.or()`][expr-or-method], and [`.not()`][expr-not-method], build boolean conditions. Conditional expressions created with [`when(...).otherwise(...)`][case-builder] use those conditions to choose the value contributed by each row. Aggregate [`.filter(...).build()?`][expr-function-ext] uses a condition more narrowly to include or exclude rows from one aggregate expression. See the [Expression API](../../../user-guide/expressions.md) for the complete comparison, logical, and conditional expression APIs.
 
@@ -318,13 +318,13 @@ Large distinct-count and percentile analyses can require substantial aggregate s
 
 Consider three similar questions: How many orders contributed to the summary? How many orders contain a coupon code? How many different coupon codes were used? DataFusion answers them with different aggregate-expression functions, while similarly named DataFrame APIs perform different operations.
 
-| API | Kind | Result |
-| :-- | :--- | :----- |
-| [`count_all()`][count-all-function] | Aggregate-expression function | Counts every row contributing to each group |
-| [`count(expr)`][count-function] | Aggregate-expression function | Counts rows where `expr` is not `NULL` |
-| [`count_distinct(expr)`][count-distinct-function] | Aggregate-expression function | Counts distinct non-null values of `expr` |
-| [`DataFrame::count().await?`][dataframe-count-method] | DataFrame action | Executes the current plan and returns its number of result rows |
-| [`.distinct()`][distinct-method] | DataFrame transformation | Removes duplicate rows from a [`DataFrame`][dataframe-type] |
+| API                                                   | Kind                          | Result                                                          |
+| :---------------------------------------------------- | :---------------------------- | :-------------------------------------------------------------- |
+| [`count_all()`][count-all-function]                   | Aggregate-expression function | Counts every row contributing to each group                     |
+| [`count(expr)`][count-function]                       | Aggregate-expression function | Counts rows where `expr` is not `NULL`                          |
+| [`count_distinct(expr)`][count-distinct-function]     | Aggregate-expression function | Counts distinct non-null values of `expr`                       |
+| [`DataFrame::count().await?`][dataframe-count-method] | DataFrame action              | Executes the current plan and returns its number of result rows |
+| [`.distinct()`][distinct-method]                      | DataFrame transformation      | Removes duplicate rows from a [`DataFrame`][dataframe-type]     |
 
 The following global aggregate uses a focused six-order frame with an optional coupon code. Six orders contribute to the summary, three contain a coupon code, and those values contain two distinct codes.
 
@@ -464,10 +464,10 @@ After choosing the output grain and aggregate expressions, decide which stage ea
 
 Both method orders produce valid logical plans, but they answer different analytical questions:
 
-| Pipeline | Predicate sees | Analytical effect | SQL equivalent |
-| :------- | :------------- | :---------------- | :------------- |
-| `.filter(...).aggregate(...)` | Detail-row columns | Excludes rows from every downstream aggregate expression | `WHERE` |
-| `.aggregate(...).filter(...)` | Grouping and aliased summary columns | Removes completed summary rows without recalculating them | `HAVING` |
+| Pipeline                      | Predicate sees                       | Analytical effect                                         | SQL equivalent |
+| :---------------------------- | :----------------------------------- | :-------------------------------------------------------- | :------------- |
+| `.filter(...).aggregate(...)` | Detail-row columns                   | Excludes rows from every downstream aggregate expression  | `WHERE`        |
+| `.aggregate(...).filter(...)` | Grouping and aliased summary columns | Removes completed summary rows without recalculating them | `HAVING`       |
 
 The following pipeline first totals only orders worth at least `70` for each customer. It then retains customers whose qualifying total is at least `180`.
 
@@ -571,8 +571,8 @@ When individual rows cannot answer an analytical question, [`.aggregate()`][aggr
 
 ---
 
+<!-- REFERENCES -->
 
-<!-- REFERENCES --> 
 [aggregate-expression-api]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/index.html
 [aggregate-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
 [approx-distinct-function]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_distinct.html

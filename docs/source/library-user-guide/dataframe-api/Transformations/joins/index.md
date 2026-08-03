@@ -161,6 +161,7 @@ External dependencies and unresolved approvals
 
 <!-- MOVE HANDSHAKE: Routing and cheat-sheet material arrived from ../joins.md. The unchanged source is a temporary coordinator comparison artifact, not a seventh published page. -->
 <!-- JOIN-TODO-001 JOIN-TODO-024 JOIN-TODO-026 JOIN-TODO-027: Finalize the page group and parent navigation after the leaves stabilize. -->
+
 # Joining DataFrames
 
 **Use this page group to choose how rows relate, what a join preserves, how joined results compose, and how to validate the outcome.**
@@ -178,13 +179,14 @@ join-validation
 ```
 
 <!-- JOIN-TODO-015 JOIN-TODO-027: The inherited cheat sheet is now a routing table; finalize its rows after the leaves stabilize. -->
-| Page | Go here to | Routing scent |
-| --- | --- | --- |
-| [Join Concepts](join-concepts.md) | Understand logical inputs, matching, preservation, schema, and cardinality | Mental model and API choice |
-| [Join Conditions](join-conditions.md) | Express the relationship between rows | [`.join()`], [`.join_on()`], composite keys, filters |
-| [Join Types](join-types.md) | Choose which matches and non-matches survive | `Inner`, outer, semi, and anti joins |
-| [Join Workflows](join-workflows.md) | Shape schemas and compose larger relationships | [`.alias()`], [`.select()`], self-joins, multi-way joins |
-| [Join Validation](join-validation.md) | Check coverage, multiplication, `NULL` keys, and plans | Cartesian products, troubleshooting, [`.explain()`] |
+
+| Page                                  | Go here to                                                                 | Routing scent                                            |
+| ------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [Join Concepts](join-concepts.md)     | Understand logical inputs, matching, preservation, schema, and cardinality | Mental model and API choice                              |
+| [Join Conditions](join-conditions.md) | Express the relationship between rows                                      | [`.join()`], [`.join_on()`], composite keys, filters     |
+| [Join Types](join-types.md)           | Choose which matches and non-matches survive                               | `Inner`, outer, semi, and anti joins                     |
+| [Join Workflows](join-workflows.md)   | Shape schemas and compose larger relationships                             | [`.alias()`], [`.select()`], self-joins, multi-way joins |
+| [Join Validation](join-validation.md) | Check coverage, multiplication, `NULL` keys, and plans                     | Cartesian products, troubleshooting, [`.explain()`]      |
 
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
 [`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain

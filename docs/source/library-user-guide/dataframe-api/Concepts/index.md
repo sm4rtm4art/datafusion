@@ -50,7 +50,7 @@ Use the following documents to navigate the conceptual architecture of DataFusio
 | **[Builder vs. Parser](builder-parser.md)**              |    Two API's <br> One engine     | Detailed comparison between SQL string parsing and the programmatic DataFrame builder.    |
 | **[Anatomy of a DataFrame](anatomy-dataframe.md)**       |     Internals of a DataFrame     | Deep dive into the inner workings, exploring the `LogicalPlan` and `SessionState`.        |
 | **[Expressions](expressions.md)**                        |         Row-Level Logic          | Expressions and how they are used to build the `LogicalPlan`.                             |
-| **[Handling Null Values](null-handling.md)**              |         NULL Semantics           | Three-valued logic, null propagation in filters, joins, aggregates, and sorts.            |
+| **[Handling Null Values](null-handling.md)**             |          NULL Semantics          | Three-valued logic, null propagation in filters, joins, aggregates, and sorts.            |
 | **[Execution Lifecycle](execution-lifecycle.md)**        |       Lazy Materialization       | Detailed breakdown of the logical optimizer, physical planner, and async execution.       |
 | **[The Bigger Picture](bigger-picture.md)**              | Historical context and evolution | Where DataFusion fits historically (e.g., Volcano model vs. modern vectorized execution). |
 | **[Summary](summary.md)**                                |            Conclusion            | A wrap-up of core concepts, next steps, and further reading resources.                    |

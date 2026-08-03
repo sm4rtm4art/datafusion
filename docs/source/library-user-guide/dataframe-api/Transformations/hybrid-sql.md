@@ -29,14 +29,14 @@
   later.
 -->
 
-<!--TODO (storyline and ownership review, 2026-07-18) 
+<!--TODO (storyline and ownership review, 2026-07-18)
 1. Reframe this page around one reader question: when should a pipeline use SQL, DataFrame methods, or a deliberate boundary between them?
 2. Preserve the fair comparison: SQL and the DataFrame API build LogicalPlans for the same optimizer and execution engine. Compare ergonomics, composition, parameterization, error timing, and application integration — not execution speed.
-3. Own the supported API bridges, subject to repository verification: - SessionContext::sql() - DataFrame::into_view() - DataFrame::parse_sql_expr() - DataFrame::select_exprs() - DataFrame::with_param_values() 
-4. Remove or relocate material that does not directly serve API mixing, including broad NoSQL comparisons, federation architecture, storage-engine recommendations, and unrelated external-system surveys. 
-5. Correct advocacy and overbroad claims: - Rust does not compile-time validate string column names against a runtime schema. - SQL can be safely parameterized. - DataFrame construction is not universally safer or clearer. - Equivalent plans do not gain speed merely from the authoring API. 
-6. Keep detailed transformation behavior on its owning method page. selection.md should hand off .select_exprs() here rather than duplicate its tutorial. 
-7. End with a transition from choosing or mixing APIs to composing a DataFrame plan through Rust variables, functions, ownership, and control flow in builder-patterns.md. 
+3. Own the supported API bridges, subject to repository verification: - SessionContext::sql() - DataFrame::into_view() - DataFrame::parse_sql_expr() - DataFrame::select_exprs() - DataFrame::with_param_values()
+4. Remove or relocate material that does not directly serve API mixing, including broad NoSQL comparisons, federation architecture, storage-engine recommendations, and unrelated external-system surveys.
+5. Correct advocacy and overbroad claims: - Rust does not compile-time validate string column names against a runtime schema. - SQL can be safely parameterized. - DataFrame construction is not universally safer or clearer. - Equivalent plans do not gain speed merely from the authoring API.
+6. Keep detailed transformation behavior on its owning method page. selection.md should hand off .select_exprs() here rather than duplicate its tutorial.
+7. End with a transition from choosing or mixing APIs to composing a DataFrame plan through Rust variables, functions, ownership, and control flow in builder-patterns.md.
 8. Replace legacy blockquotes, <br> formatting, .show() proof examples, and unverified output during subtree implementation. -->
 
 # Mixing SQL and DataFrames

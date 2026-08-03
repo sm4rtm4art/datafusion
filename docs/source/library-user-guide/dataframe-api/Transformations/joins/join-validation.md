@@ -29,6 +29,7 @@ JOIN-TODO-026.
 -->
 <!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Key Methods table, first-H2 framing, and conclusion after this leaf stabilizes. -->
 <!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
+
 # Join Validation
 
 :::{admonition} Style Note
@@ -52,14 +53,15 @@ In this document, code elements follow a consistent pattern:
 ```
 
 <!-- JOIN-TODO-005 JOIN-TODO-011 JOIN-TODO-014: Correct the trigger and safe-diagnosis advice; distinguish intentional SQL CROSS JOIN; convert warning styling to MyST. -->
+
 ## Avoid Accidental Cartesian Products
 
 Empty join keys produce a **Cartesian product**â€”every left row paired with every right row. This is almost never intentional and can crash your query or exhaust memory.
 
-| Left rows | Right rows | Result rows       | Scale                            |
-| --------- | ---------- | ----------------- | -------------------------------- |
-| 3         | 4          | 12                | Tiny dataset, still 4Ã— larger    |
-| 1,000     | 1,000      | 1,000,000         | 1 million rows                   |
+| Left rows | Right rows | Result rows       | Scale                              |
+| --------- | ---------- | ----------------- | ---------------------------------- |
+| 3         | 4          | 12                | Tiny dataset, still 4Ã— larger     |
+| 1,000     | 1,000      | 1,000,000         | 1 million rows                     |
 | 1,000,000 | 1,000,000  | 1,000,000,000,000 | **1 trillion rows** â€” will crash |
 
 ```rust
@@ -117,6 +119,7 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 <!-- JOIN-TODO-011: Unequal key-array lengths error during planning; only a genuinely empty inner-join condition becomes a cross join. `.count()` still executes the explosive plan. -->
+
 **âš ï¸ Warning:** <br>
 If a join returns unexpectedly many rows, check your keys. An empty or mismatched key array silently produces a Cartesian product. Use [`.count()`] before [`.collect()`] to verify.
 
@@ -126,6 +129,7 @@ Use SQL via [`ctx.sql("SELECT ... FROM a CROSS JOIN b")`][`sessioncontext::sql()
 ---
 
 <!-- JOIN-TODO-009 JOIN-TODO-010 JOIN-TODO-011 JOIN-TODO-012: Rebuild this as validation by symptom: coverage, multiplication, NULL policy, Cartesian risk, schema, and wrong matches. -->
+
 ## Validate and Inspect Join Results
 
 Joins can silently produce unexpected results. When something looks wrong, check these common issues:
@@ -138,6 +142,7 @@ Joins can silently produce unexpected results. When something looks wrong, check
 | **Wrong matches**   | Keys have different types (string vs int), encoding issues                | Compare types: `df.schema().field_with_name("key")?.data_type()`            |
 
 <!-- JOIN-TODO-009 JOIN-TODO-012: Delete output/left "retention" percentages and fixed thresholds; validate distinct matched keys, unmatched keys, multiplicity, and schema separately. -->
+
 ### Check Match Coverage and Row Multiplication
 
 DataFusion doesn't have built-in join validation, but you can build a simple check to catch silent data loss:
@@ -189,7 +194,7 @@ async fn main() -> datafusion::error::Result<()> {
 | ------------ | ---------------------- | ---------------------------------- |
 | **Inner**    | Varies by data overlap | < 50% often indicates key mismatch |
 | **Left**     | 100% of left rows      | < 100% means something is wrong    |
-| **LeftSemi** | â‰¤ 100% (filtered)      | 0% = no matches at all             |
+| **LeftSemi** | â‰¤ 100% (filtered)    | 0% = no matches at all             |
 | **LeftAnti** | Complement of Semi     | 100% = nothing matched             |
 
 ### Inspect Key Coverage
@@ -246,6 +251,7 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 <!-- JOIN-TODO-010: Preserve default NULL non-matching behavior, but remove sentinel replacement as a universal fix and describe filter_null_join_keys only as an optimization. -->
+
 ### Account for NULL Join Keys
 
 In SQL semantics, `NULL = NULL` returns `UNKNOWN` (not `TRUE`), so NULL keys **never match**. This silently drops rows.
@@ -275,10 +281,12 @@ async fn main() -> datafusion::error::Result<()> {
 ```
 
 <!-- JOIN-TODO-010: Explain this setting as an optimizer behavior, not a semantic NULL-matching option. -->
+
 > **Config option:** <br>
 > DataFusion has [`datafusion.optimizer.filter_null_join_keys`][`datafusion.optimizer`] to automatically filter NULL keys.
 
 <!-- JOIN-TODO-013: Turn this into bounded `.explain()` guidance; `analyze = true` executes the plan and is not a safe first diagnostic for suspected explosion. -->
+
 ### Inspect the Planned Join
 
 DataFusion's [`.explain()`] is your window into how the query optimizer transformed your join. It reveals which algorithm was selected, whether predicates were pushed down, and potential performance issues.
@@ -316,12 +324,12 @@ async fn main() -> datafusion::error::Result<()> {
 
 **What to look for in the plan:**
 
-| Node                 |                       Meaning                       | Performance                       |
-| -------------------- | :-------------------------------------------------: | --------------------------------- |
-| `HashJoinExec`       | Hash-based join (builds hash table from right side) | âœ… Fast for equi-joins            |
-| `SortMergeJoinExec`  |             Sort both sides, then merge             | âœ… Good for large sorted data     |
+| Node                 |                       Meaning                       | Performance                            |
+| -------------------- | :-------------------------------------------------: | -------------------------------------- |
+| `HashJoinExec`       | Hash-based join (builds hash table from right side) | âœ… Fast for equi-joins                |
+| `SortMergeJoinExec`  |             Sort both sides, then merge             | âœ… Good for large sorted data         |
 | `NestedLoopJoinExec` |               Compares every row pair               | âš ï¸ Slow â€” only for non-equi joins |
-| `CrossJoinExec`      |                  Cartesian product                  | âŒ Usually a bug                  |
+| `CrossJoinExec`      |                  Cartesian product                  | âŒ Usually a bug                       |
 
 **Signs of a healthy plan:**
 
@@ -344,6 +352,7 @@ HashJoinExec: mode=Partitioned, join_type=Inner
 ```
 
 <!-- JOIN-TODO-013: Retain only with an explicit execution warning and after non-executing plan inspection. -->
+
 > **Pro tip:** Use `.explain(true, true)?` (analyze=true) to see actual row counts and timing after executionâ€”helps identify which join leg is the bottleneck.
 
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias

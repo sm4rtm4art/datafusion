@@ -279,8 +279,7 @@ Each method suits different scenarios:
 - **[`.execute_stream()`]**: Large results, avoids buffering the full result set, backpressure support
 - **[`.execute_stream_partitioned()`]**: Maximum throughput with parallel consumers
 
-> **Common misconception: execution parallelism vs result shape** <br>
-> [`.collect()`] and [`.collect_partitioned()`] both execute the physical plan (often in parallel across partitions). The difference is the output shape: [`.collect()`] merges partitions into one buffer, while [`.collect_partitioned()`] keeps a separate buffer per partition. Execution parallelism is primarily controlled by partitioning (for example, `datafusion.execution.target_partitions`) and explicit [`.repartition()`] steps.
+> **Common misconception: execution parallelism vs result shape** <br> > [`.collect()`] and [`.collect_partitioned()`] both execute the physical plan (often in parallel across partitions). The difference is the output shape: [`.collect()`] merges partitions into one buffer, while [`.collect_partitioned()`] keeps a separate buffer per partition. Execution parallelism is primarily controlled by partitioning (for example, `datafusion.execution.target_partitions`) and explicit [`.repartition()`] steps.
 
 These are action methods on [`DataFrame`], so they work the same whether the `DataFrame` was created from SQL (via `SessionContext::sql(...)`) or built via the DataFrame API (via builder methods like [`.filter()`] and [`.select()`]).
 
@@ -301,8 +300,7 @@ For more precise decisions, you can estimate memory usage:
 > **Pre-flight sizing with [`.count()`]:** <br>
 > If you have no information about output size, you can run a count first and choose between buffered and streaming execution.
 >
-> **Performance note:** <br>
-> [`.count()`] executes a plan. If you call [`.count()`] and then call [`.collect()`] on the same `DataFrame`, you are effectively running the query twice. For large datasets, default to [`.execute_stream()`] or estimate size from file metadata (file sizes, Parquet row group statistics) instead.
+> **Performance note:** <br> > [`.count()`] executes a plan. If you call [`.count()`] and then call [`.collect()`] on the same `DataFrame`, you are effectively running the query twice. For large datasets, default to [`.execute_stream()`] or estimate size from file metadata (file sizes, Parquet row group statistics) instead.
 >
 > ```rust
 > use datafusion::prelude::*;
@@ -397,8 +395,7 @@ Most SQL clients return a single merged cursor/stream of rows and do not expose 
 
 Unlike [`.collect()`] (which merges partitions into a single `Vec<RecordBatch>`), [`.collect_partitioned()`] keeps partitions separate. Use [`.repartition()`] with [`Partitioning`] to create partitions explicitly.
 
-> **Warning:** <br>
-> [`.collect_partitioned()`] still buffers the full result set in memory (just partitioned). For large outputs, prefer [`.execute_stream_partitioned()`] to stream per-partition results.
+> **Warning:** <br> > [`.collect_partitioned()`] still buffers the full result set in memory (just partitioned). For large outputs, prefer [`.execute_stream_partitioned()`] to stream per-partition results.
 
 ```rust
 use datafusion::prelude::*;
@@ -588,15 +585,12 @@ async fn main() -> Result<()> {
 > **Warning:** <br>
 > Caching everything is usually an anti-pattern: it forces materialization, consumes RAM, and can reduce pushdown opportunities to the original data source.
 >
-> **Warning: the optimization barrier** <br>
-> [`.cache()`] creates an in-memory `MemTable`, which becomes the new data source. Filters and projections applied _after_ caching run against the cached data and cannot be pushed down to the original file readers (for example, Parquet row group pruning).
+> **Warning: the optimization barrier** <br> > [`.cache()`] creates an in-memory `MemTable`, which becomes the new data source. Filters and projections applied _after_ caching run against the cached data and cannot be pushed down to the original file readers (for example, Parquet row group pruning).
 >
 > - **Good:** <br>
->   Apply filters/projections first, then cache: <br>
->   `let cached = df.filter(col("region").eq(lit("East")))?.cache().await?;`
+>   Apply filters/projections first, then cache: <br> > `let cached = df.filter(col("region").eq(lit("East")))?.cache().await?;`
 > - **Bad:** <br>
->   Cache first, then filter (reads the full cached result): <br>
->   `let filtered = df.cache().await?.filter(col("region").eq(lit("East")))?;`
+>   Cache first, then filter (reads the full cached result): <br> > `let filtered = df.cache().await?.filter(col("region").eq(lit("East")))?;`
 >
 > **Cache when:** <br>
 >
@@ -971,11 +965,9 @@ async fn main() -> Result<()> {
 >
 > - **Single file vs dataset directory:** <br>
 >   For file writes, `path` determines the default layout. A non-collection path with a file extension (for example `output.parquet`) writes a single file; a directory/collection path (for example `output_dir/`) writes multiple files.\
-> - **Partitioned writes:** <br>
->   [`.with_partition_by()`] creates hive-style directories such as `region=East/`. By default, DataFusion drops partition columns from the file payload and recovers them from directory names on read. Set `execution.keep_partition_by_columns = true` to keep partition columns in the written files.\
+> - **Partitioned writes:** <br> > [`.with_partition_by()`] creates hive-style directories such as `region=East/`. By default, DataFusion drops partition columns from the file payload and recovers them from directory names on read. Set `execution.keep_partition_by_columns = true` to keep partition columns in the written files.\
 
-> **Warning:** <br>
-> [`.write_parquet()`], [`.write_csv()`], and [`.write_json()`] currently support `InsertOp::Append` only. <br>
+> **Warning:** <br> > [`.write_parquet()`], [`.write_csv()`], and [`.write_json()`] currently support `InsertOp::Append` only. <br>
 > Use [`.with_insert_operation()`] with [`.write_table()`] when writing to a table sink.
 
 ### Writing to Parquet
@@ -1154,8 +1146,7 @@ COPY (SELECT ...) TO 'path' STORED AS CSV
 | Truncated rows   | [`.with_truncated_rows()`] | `true` to pad short rows with nulls      |
 | Compression      | [`.with_compression()`]    | `GZIP`, `ZSTD`, `BZIP2`, `XZ`            |
 
-> **How it works:** <br>
-> [`CsvOptions`] wraps Arrow's [`WriterBuilder`] for CSV serialization. Most options above have builder methods; fields like i.e. [`date_format`], [`timestamp_format`], [`null`], and [`quote`] must be set directly on the struct. [Compression][`.with_compression()`] is applied by DataFusion as a wrapper around the serialized output.
+> **How it works:** <br> > [`CsvOptions`] wraps Arrow's [`WriterBuilder`] for CSV serialization. Most options above have builder methods; fields like i.e. [`date_format`], [`timestamp_format`], [`null`], and [`quote`] must be set directly on the struct. [Compression][`.with_compression()`] is applied by DataFusion as a wrapper around the serialized output.
 
 ```rust
 use datafusion::prelude::*;
@@ -1248,8 +1239,7 @@ COPY (SELECT ...) TO 'path' STORED AS JSON
 | Compression | [`JsonOptions.compression`] | `GZIP`, `ZSTD`, `BZIP2`   |
 | Partitioned | [`.with_partition_by()`]    | `["region"]` → hive-style |
 
-> **Note:** <br>
-> [`JsonOptions`] is minimal—just :
+> **Note:** <br> > [`JsonOptions`] is minimal—just :
 
 - [`compression`][`jsonoptions.compression`]
 - [`schema_infer_max_rec`]
@@ -1331,8 +1321,7 @@ INSERT INTO sales SELECT * FROM new_data
 | In-memory staging       | [`MemTable`] for intermediate results             |
 | Transactional semantics | Provider controls commit/rollback behavior        |
 
-> **Key difference from file methods:** <br>
-> `.write_parquet()` / `.write_csv()` write directly to object storage. [`.write_table()` ]delegates to a registered table—the provider decides how and where data lands.
+> **Key difference from file methods:** <br> > `.write_parquet()` / `.write_csv()` write directly to object storage. [`.write_table()` ]delegates to a registered table—the provider decides how and where data lands.
 
 #### Insert Operations
 
@@ -1345,8 +1334,7 @@ Use [`DataFrameWriteOptions::with_insert_operation(...)`][`with_insert_operation
 | [`InsertOp::Replace`][`replace`]     | `REPLACE INTO`     | Replace conflicting rows (upsert semantics) | Few providers                  |
 
 > **Warning:** <br>
-> Not all providers support all operations. <br>
-> [`MemTable`] currently supports [`Append`] only. Check your provider's documentation for supported operations. See [docs.rs][`memtable::insert_into`]
+> Not all providers support all operations. <br> > [`MemTable`] currently supports [`Append`] only. Check your provider's documentation for supported operations. See [docs.rs][`memtable::insert_into`]
 
 #### Schema Compatibility
 
@@ -1354,8 +1342,7 @@ The DataFrame schema must be **logically equivalent** to the target table's sche
 
 If schemas don't match, use [`.select()`] with [`.alias()`] to reorder/rename, or [`.cast_to()`] to align types before writing.
 
-> **See also:** <br>
-> [Schema Management](./schema-management.md) covers type coercion rules, validation patterns, and debugging mismatches in depth.
+> **See also:** <br> > [Schema Management](./schema-management.md) covers type coercion rules, validation patterns, and debugging mismatches in depth.
 
 #### Built-in TableProvider Implementations
 

@@ -29,6 +29,7 @@ JOIN-TODO-022, JOIN-TODO-023, JOIN-TODO-025, and JOIN-TODO-026.
 <!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Concepts Covered table, and conclusion after this leaf stabilizes. -->
 <!-- JOIN-TODO-020: This leaf temporarily owns inherited deep execution material pending an approved extraction destination. -->
 <!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
+
 # Join Concepts
 
 :::{admonition} Style Note
@@ -53,6 +54,7 @@ In this document, code elements follow a consistent pattern:
 
 <!-- JOIN-TODO-002 JOIN-TODO-003: Preserved from the orientation pass. -->
 <!-- JOIN-TODO-023: Broaden this unapproved opener so logical left/right inputs may derive from the same DataFrame. -->
+
 ## Relate Rows Across DataFrames
 
 **A join crosses the frame boundary by relating rows from two logical inputs; the matching relationship determines which rows pair, and the join type determines which matches and non-matches the result preserves.**
@@ -77,6 +79,7 @@ With the frame boundary established, the first practical decision is how to expr
 ---
 
 <!-- JOIN-TODO-013 JOIN-TODO-016: Trim this to plan interpretation or move it to the execution owner; verify all operator, optimizer, Arrow, SIMD, late-materialization, and benchmark claims. -->
+
 ## How Joins Execute
 
 Under the hood, DataFusion selects from [several join algorithms] based on your data:
@@ -119,6 +122,7 @@ All join algorithms leverage [Arrow]'s columnar format: instead of copying rows,
 ---
 
 <!-- JOIN-TODO-015 JOIN-TODO-016: Add the missing conclusion before Further Reading; prune links and remove unsupported promotional descriptions. -->
+
 ## Further Reading
 
 Joins are fundamental yet often misunderstood. These resources provide deeper understanding:

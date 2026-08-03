@@ -28,6 +28,7 @@ JOIN-TODO-021, JOIN-TODO-025, and JOIN-TODO-026.
 -->
 <!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Key Methods table, first-H2 framing, and conclusion after this leaf stabilizes. -->
 <!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
+
 # Join Workflows
 
 :::{admonition} Style Note
@@ -51,6 +52,7 @@ In this document, code elements follow a consistent pattern:
 ```
 
 <!-- JOIN-TODO-004 JOIN-TODO-008 JOIN-TODO-016 JOIN-TODO-018: Schema-shaping material split from the inherited multi-key subtree; distinguish qualification and ambiguity from actual schema errors. -->
+
 ## Shape the Result Schema
 
 **To avoid duplicate columns**, use different column names on the right side, then select only what you need:
@@ -120,6 +122,7 @@ DataFusion's [`.join()`] preserves columns from both sides. When join keys share
 (self-joins-and-qualified-columns)=
 
 <!-- JOIN-TODO-008: Move self-joins to composition after the shared aliasing, qualification, renaming, and projection guidance. -->
+
 ## Join a DataFrame to Itself
 
 A **self-join** joins a table with itself—essential for hierarchical data. Left Join preserves all rows even if they have no match (like Alice, who has no referrer).
@@ -176,6 +179,7 @@ Use [`.alias()`] to create two "views" of the same DataFrame, then join with qua
 ---
 
 <!-- JOIN-TODO-008 JOIN-TODO-016: Move to composition; teach preservation and readability at each leg without prescribing a physical build side or unsupported planning benefits. -->
+
 ## Chain Joins Across Multiple DataFrames
 
 **Chain [`.join()`] calls to combine 3+ tables—each join produces a new DataFrame that feeds into the next.**
@@ -253,6 +257,7 @@ async fn main() -> datafusion::error::Result<()> {
 > Use Left Joins at intermediate steps if you need to preserve unmatched rows (e.g., customers without payments).
 
 <!-- JOIN-TODO-016: Keep logical sequencing/readability advice only; verify or remove optimizer-reordering, build-right, and planning-overhead prescriptions. -->
+
 ### Join Order Matters
 
 The order you chain joins affects both **readability** and **performance**. General principles:
@@ -309,6 +314,7 @@ async fn main() -> datafusion::error::Result<()> {
 > The optimizer reorders joins when beneficial, but good initial ordering reduces planning overhead. Use [`.explain()`] to see the actual execution plan.
 
 <!-- JOIN-TODO-008 JOIN-TODO-018: Merge with the shared result-schema guidance and distinguish qualification/ambiguity from actual schema errors. -->
+
 ### Managing Column Proliferation
 
 Multi-way joins accumulate columns from every table. With each join, you get **all columns from both sides**—including duplicate key columns. Chain [`.select()`] at the end to keep only what you need:

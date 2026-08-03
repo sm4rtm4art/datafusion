@@ -26,19 +26,18 @@
 5. DONE (2026-07-16) — hub-table anchors repaired to authoritative pages.
 -->
 
-<!--TODO (page-role reassessment, 2026-07-18) 
+<!--TODO (page-role reassessment, 2026-07-18)
 1. Reassess whether this page should remain in the Transformations toctree. Its current classifier/router role does not fit cleanly with the surrounding action-oriented transformation pages.
-2. Do not preserve the page merely because it already exists. Determine whether it owns a distinct reader problem that cannot be handled by the index, hybrid-sql.md, builder-patterns.md, or the individual method pages. 
-3. Current redistribution proposal: 
+2. Do not preserve the page merely because it already exists. Determine whether it owns a distinct reader problem that cannot be handled by the index, hybrid-sql.md, builder-patterns.md, or the individual method pages.
+3. Current redistribution proposal:
   - SQL-equivalent versus DataFrame convenience comparisons: move to the relevant method pages.
-  - SQL/DataFrame interface choice and bridge methods: move to hybrid-sql.md. 
-  - Rust control flow, branching, reuse, and pipeline functions: move to or remain in builder-patterns.md. 
-  - .unnest_columns() and related reshaping methods: move to or remain in reshaping.md. 
-  - .describe() and validation-oriented inspection: assess for data-quality.md. 
-  - general method routing: retain only where it improves the Transformations index. 
+  - SQL/DataFrame interface choice and bridge methods: move to hybrid-sql.md.
+  - Rust control flow, branching, reuse, and pipeline functions: move to or remain in builder-patterns.md.
+  - .unnest_columns() and related reshaping methods: move to or remain in reshaping.md.
+  - .describe() and validation-oriented inspection: assess for data-quality.md.
+  - general method routing: retain only where it improves the Transformations index.
 4. Reassess the existing capability taxonomy. "API-level", "native convenience", "SQL-equivalent", and "bridge" may be useful locally, but may not justify a full page.
 5. If the page is removed, preserve useful content through explicit move handshakes and repair all incoming links before deleting it. 6. Do not implement deletion or redistribution until the closing-section architecture has been approved. -->
-
 
 # DataFrame-Native Capabilities
 

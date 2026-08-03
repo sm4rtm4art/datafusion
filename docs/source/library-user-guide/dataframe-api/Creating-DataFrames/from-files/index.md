@@ -45,7 +45,6 @@ In this document, code elements follow a consistent pattern:
 
 :::
 
-
 ```{toctree}
 :maxdepth: 1
 :caption: DataFusion supported file formats

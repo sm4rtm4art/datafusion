@@ -402,6 +402,6 @@ The Arrow [`Schema`] and its individual [`Field`] properties (`name`, `data_type
 - **[Inspecting and Validating Schemas](schema-inspection.md):** Hands-on patterns for programmatic field access and schema comparison.
 - **[Transforming Schemas](schema-transformation.md):** Qualifier manipulation, schema combining, and functional dependency methods.
 - **[Type Coercion](type-coercion.md):** How DataFusion automatically reconciles types when they do not match.
-:::
+  :::
 
 <!-- Literature references -->

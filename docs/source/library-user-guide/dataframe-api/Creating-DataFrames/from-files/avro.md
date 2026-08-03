@@ -49,7 +49,6 @@ In this document, code elements follow a consistent pattern:
 
 :::
 
-
 ```{contents}
 :local:
 :depth: 2

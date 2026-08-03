@@ -49,7 +49,6 @@ TODO(Docs): executing-dataframes.md - Materializing Results to RAM
 
 ## DataFrame Execution
 
-
 :::{admonition} Style Note
 :class: note
 :collapsible: closed
@@ -82,8 +81,6 @@ This section covers methods that keep results in memory—as `RecordBatch` objec
 | **Write**   | Disk (persistent) | [`.write_parquet()`], [`.write_csv()`], [`.write_json()`], [`.write_table()`] |
 
 > **Note:** Both execute and write methods process data internally as `RecordBatch` streams—Arrow's fundamental unit of columnar data. The difference is where results end up: memory (RAM) or storage (disk). With the individual I/O costs.
-
-
 
 :::{admonition} Style Note
 :class: note
@@ -231,8 +228,7 @@ Each method suits different scenarios:
 - **[`.execute_stream()`]**: Large results, avoids buffering the full result set, backpressure support
 - **[`.execute_stream_partitioned()`]**: Maximum throughput with parallel consumers
 
-> **Common misconception: execution parallelism vs result shape** <br>
-> [`.collect()`] and [`.collect_partitioned()`] both execute the physical plan (often in parallel across partitions). The difference is the output shape: [`.collect()`] merges partitions into one buffer, while [`.collect_partitioned()`] keeps a separate buffer per partition. Execution parallelism is primarily controlled by partitioning (for example, `datafusion.execution.target_partitions`) and explicit [`.repartition()`] steps.
+> **Common misconception: execution parallelism vs result shape** <br> > [`.collect()`] and [`.collect_partitioned()`] both execute the physical plan (often in parallel across partitions). The difference is the output shape: [`.collect()`] merges partitions into one buffer, while [`.collect_partitioned()`] keeps a separate buffer per partition. Execution parallelism is primarily controlled by partitioning (for example, `datafusion.execution.target_partitions`) and explicit [`.repartition()`] steps.
 
 These are action methods on [`DataFrame`], so they work the same whether the `DataFrame` was created from SQL (via `SessionContext::sql(...)`) or built via the DataFrame API (via builder methods like [`.filter()`] and [`.select()`]).
 
@@ -253,8 +249,7 @@ For more precise decisions, you can estimate memory usage:
 > **Pre-flight sizing with [`.count()`]:** <br>
 > If you have no information about output size, you can run a count first and choose between buffered and streaming execution.
 >
-> **Performance note:** <br>
-> [`.count()`] executes a plan. If you call [`.count()`] and then call [`.collect()`] on the same `DataFrame`, you are effectively running the query twice. For large datasets, default to [`.execute_stream()`] or estimate size from file metadata (file sizes, Parquet row group statistics) instead.
+> **Performance note:** <br> > [`.count()`] executes a plan. If you call [`.count()`] and then call [`.collect()`] on the same `DataFrame`, you are effectively running the query twice. For large datasets, default to [`.execute_stream()`] or estimate size from file metadata (file sizes, Parquet row group statistics) instead.
 >
 > ```rust
 > use datafusion::prelude::*;
@@ -349,8 +344,7 @@ Most SQL clients return a single merged cursor/stream of rows and do not expose 
 
 Unlike [`.collect()`] (which merges partitions into a single `Vec<RecordBatch>`), [`.collect_partitioned()`] keeps partitions separate. Use [`.repartition()`] with [`Partitioning`] to create partitions explicitly.
 
-> **Warning:** <br>
-> [`.collect_partitioned()`] still buffers the full result set in memory (just partitioned). For large outputs, prefer [`.execute_stream_partitioned()`] to stream per-partition results.
+> **Warning:** <br> > [`.collect_partitioned()`] still buffers the full result set in memory (just partitioned). For large outputs, prefer [`.execute_stream_partitioned()`] to stream per-partition results.
 
 ```rust
 use datafusion::prelude::*;
@@ -540,15 +534,12 @@ async fn main() -> Result<()> {
 > **Warning:** <br>
 > Caching everything is usually an anti-pattern: it forces materialization, consumes RAM, and can reduce pushdown opportunities to the original data source.
 >
-> **Warning: the optimization barrier** <br>
-> [`.cache()`] creates an in-memory `MemTable`, which becomes the new data source. Filters and projections applied _after_ caching run against the cached data and cannot be pushed down to the original file readers (for example, Parquet row group pruning).
+> **Warning: the optimization barrier** <br> > [`.cache()`] creates an in-memory `MemTable`, which becomes the new data source. Filters and projections applied _after_ caching run against the cached data and cannot be pushed down to the original file readers (for example, Parquet row group pruning).
 >
 > - **Good:** <br>
->   Apply filters/projections first, then cache: <br>
->   `let cached = df.filter(col("region").eq(lit("East")))?.cache().await?;`
+>   Apply filters/projections first, then cache: <br> > `let cached = df.filter(col("region").eq(lit("East")))?.cache().await?;`
 > - **Bad:** <br>
->   Cache first, then filter (reads the full cached result): <br>
->   `let filtered = df.cache().await?.filter(col("region").eq(lit("East")))?;`
+>   Cache first, then filter (reads the full cached result): <br> > `let filtered = df.cache().await?.filter(col("region").eq(lit("East")))?;`
 >
 > **Cache when:** <br>
 >

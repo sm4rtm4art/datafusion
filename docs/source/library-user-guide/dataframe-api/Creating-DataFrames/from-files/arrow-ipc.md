@@ -30,7 +30,6 @@ representation, so reading requires minimal conversion. DataFusion reads IPC
 **files** from disk or object stores via `ctx.read_arrow()` — it does not
 natively connect to live message brokers.
 
-
 :::{admonition} Style Note
 :class: note
 :collapsible: closed
@@ -45,7 +44,6 @@ In this document, code elements follow a consistent pattern:
 - **Actions:** (`.collect()`, `.show()`) trigger execution
 
 :::
-
 
 ```{contents}
 :local:

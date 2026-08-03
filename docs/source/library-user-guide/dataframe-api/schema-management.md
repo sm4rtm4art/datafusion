@@ -252,8 +252,7 @@ Schema {
 
 In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 
-> **Important:**
-> `Field` is an **Arrow type** ( [`arrow::datatypes::Field`]), not a DataFusion type. DFSchema _wraps_ an Arrow [`Schema`] and adds query-planning context on top.
+> **Important:** > `Field` is an **Arrow type** ( [`arrow::datatypes::Field`]), not a DataFusion type. DFSchema _wraps_ an Arrow [`Schema`] and adds query-planning context on top.
 
 ```text
 ┌───────────────────────────────────────────────────────────┐
@@ -286,7 +285,7 @@ In the hierarchy of the DataFrame Schema, we are now at the [`Field`] level.
 | [`TableProvider::schema()`]                             | `SchemaRef` (Arrow)               | Custom data sources, catalog tables |
 | [`ctx.read_parquet(...)`][`.read_parquet()`]            | Arrow Schema from file metadata   | Self-describing formats             |
 | [`ctx.read_csv(...).schema(...)`]                       | Explicit Arrow Schema you provide | Text formats requiring schema       |
-| [`Schema::new(vec![Field::new(...)])`][`Schema::new()`] | Constructed Arrow Schema          | Programmatic schema definition      |
+| [`Schema::new(vec![Field::new(...)])`][`schema::new()`] | Constructed Arrow Schema          | Programmatic schema definition      |
 
 > **Key insight:**<br> When you call [`df.schema()`], you get a `&DFSchema`. To access the underlying Arrow Schema, use [`.inner()`] (returns `&SchemaRef`) or [`.as_arrow()`] (returns `&Schema`). The Arrow Schema is what file writers (Parquet, IPC) and Arrow compute kernels expect.
 
@@ -356,7 +355,7 @@ When combining DataFrames with [`.union_by_name()`], differences in column count
 > This flexibility applies to [`.union_by_name()`] only. The positional [`.union()`] requires **identical column counts** in both DataFrames—any mismatch will fail during planning.
 
 > **Important:**
-> While [`.union_by_name()`] handles _missing_ columns automatically, it does **not** silently handle _type mismatches_ for columns that exist in both DataFrames. When the same column name appears with different types (e.g., `Int32` vs `Int64`), DataFusion's [type coercion analyzer][`TypeCoercion`] attempts to find a common type. If no safe coercion path exists, the query will fail during analysis—forcing you to be explicit about how to resolve the ambiguity.
+> While [`.union_by_name()`] handles _missing_ columns automatically, it does **not** silently handle _type mismatches_ for columns that exist in both DataFrames. When the same column name appears with different types (e.g., `Int32` vs `Int64`), DataFusion's [type coercion analyzer][`typecoercion`] attempts to find a common type. If no safe coercion path exists, the query will fail during analysis—forcing you to be explicit about how to resolve the ambiguity.
 
 (column-types)=
 
@@ -428,7 +427,7 @@ DataFusion supports metadata at two levels, both accessible via [`DFSchema`]:
 - **Schema-level**: [`df.schema().metadata()`][`dfschema::metadata`] — annotations for the entire dataset
 - **Field-level**: [`field.metadata()`][`field.metadata()`] — annotations per column (accessed via [`df.schema().fields()`] or [`df.schema().inner().fields()`][`.inner()`])
 
-For the full metadata API, see the [`DFSchema` documentation][`DFSchema`].
+For the full metadata API, see the [`DFSchema` documentation][`dfschema`].
 
 ---
 
@@ -951,7 +950,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 ### Additional DFSchema Methods
 
-For a complete reference of all [`DFSchema`] methods, see the [API documentation][`DFSchema`]. Beyond the core methods shown above, these are useful for field access and column-level inspection:
+For a complete reference of all [`DFSchema`] methods, see the [API documentation][`dfschema`]. Beyond the core methods shown above, these are useful for field access and column-level inspection:
 
 | Method                                          | Returns                                  | Purpose                                          |
 | ----------------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
@@ -1074,8 +1073,7 @@ In most workflows, [`DFSchema`] is created automatically when you register table
 | `DFSchema::try_from_qualified_schema(qualifier, &schema)`             | `impl Into<TableReference>` + `&Schema`            | All same qualifier | Qualify every field with one table name    |
 | `DFSchema::from_field_specific_qualified_schema(qualifiers, &schema)` | `Vec<Option<TableReference>>` + `&SchemaRef`       | Per-field          | Different qualifier per field              |
 
-> **Note:**
-> `try_from`, `from_unqualified_fields`, and `try_from_qualified_schema` call [`.check_names()`][`check_names()`] and return `Result`—they will error on duplicate field names. `empty()` always succeeds. For qualifier transformations on an existing `DFSchema`, see [Aligning Qualifiers](#aligning-qualifiers).
+> **Note:** > `try_from`, `from_unqualified_fields`, and `try_from_qualified_schema` call [`.check_names()`][`check_names()`] and return `Result`—they will error on duplicate field names. `empty()` always succeeds. For qualifier transformations on an existing `DFSchema`, see [Aligning Qualifiers](#aligning-qualifiers).
 
 ### Default Values
 
@@ -2228,7 +2226,7 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 <!-- ADD NEW REFERENCES BELOW  THEY WILL BE SORTET TOMOOROW !--->
 
 [`.with_functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_functional_dependencies
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`has_column_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column
 [`field_with_*`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
 [`df.schema().fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
@@ -2239,7 +2237,7 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 
 <!-- DataFusion: DFSchema & Schema Methods -->
 
-[`&SchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
+[`&schemaref`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
 [`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
 [`.columns()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.columns
 [`.data_type(&column)`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.data_type
@@ -2267,15 +2265,15 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 [`.to_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.to_string
 [`.tree_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.tree_string
 [`df.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`dfschema::field_with_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_name
 [`check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
 [dfschema::join]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
 [`dfschema::logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
 [dfschema::merge]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
 [`dfschema::metadata`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
-[`ExprSchema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
-[`Schema::new()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html#method.new
+[`exprschema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
+[`schema::new()`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html#method.new
 [`schemaref`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/type.SchemaRef.html
 [`with_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_field_specific_qualified_schema
 
@@ -2308,14 +2306,14 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 [`avg()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/average/index.html
 [`coalesce`]: https://docs.rs/datafusion-functions/latest/datafusion_functions/core/expr_fn/fn.coalesce.html
 [`col()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/fn.col.html
-[`Column`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Column.html
-[`Constraints`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Constraints.html
+[`column`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Column.html
+[`constraints`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Constraints.html
 [`count()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/count/index.html
 [`max()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
 [`median()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/median/index.html
 [`min()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/min_max/index.html
 [`stddev()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/stddev/index.html
-[`TypeCoercion`]: https://docs.rs/datafusion/latest/datafusion/expr/type_coercion/struct.TypeCoercion.html
+[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/expr/type_coercion/struct.TypeCoercion.html
 [`typesignature`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.TypeSignature.html
 
 <!-- DataFusion: Context, IO & Configuration -->
@@ -2333,10 +2331,10 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 [`schema_infer_max_records`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
 [`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
 [`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`SessionState.catalog_list`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html#method.catalog_list
+[`sessionstate.catalog_list`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html#method.catalog_list
 [`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html
-[`TableProvider::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
-[`TableScan.projected_schema`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.TableScan.html#structfield.projected_schema
+[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html#tymethod.schema
+[`tablescan.projected_schema`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.TableScan.html#structfield.projected_schema
 [`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
 
 <!-- DataFusion: Errors & Logical Plans -->
@@ -2345,27 +2343,27 @@ Resources for understanding Arrow’s type system, schema metadata, and DataFusi
 [`datafusionerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html
 [`datafusionerror::plan`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.Plan
 [`datafusionerror::schemaerror`]: https://docs.rs/datafusion/latest/datafusion/common/enum.DataFusionError.html#variant.SchemaError
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`LogicalPlan.schema()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html#method.schema
-[`LogicalPlanBuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`logicalplan.schema()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html#method.schema
+[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
 
 <!-- Arrow & Data Types -->
 
 [`arrow` crate]: https://docs.rs/arrow/latest/arrow/
 [`arrow schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
 [`arrow::compute::can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
-[`arrow::datatypes::Field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+[`arrow::datatypes::field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
 [`can_cast_types()`]: https://docs.rs/arrow/latest/arrow/compute/fn.can_cast_types.html
-[`DataType::Timestamp(...)`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html#variant.Timestamp
+[`datatype::timestamp(...)`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html#variant.Timestamp
 [`datatype`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/enum.DataType.html
 [`field.metadata()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html#method.metadata
 [`field`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Field.html
-[`List`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.List.html
-[`Map`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Map.html
+[`list`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.List.html
+[`map`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Map.html
 [`null`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/sqlparser/dialect/keywords/constant.NULL.html
 [`schema`]: https://docs.rs/datafusion/latest/datafusion/common/arrow/datatypes/struct.Schema.html
-[`Struct`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Struct.html
-[`Union`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Union.html
+[`struct`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Struct.html
+[`union`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Union.html
 
 <!-- External References & Standards -->
 

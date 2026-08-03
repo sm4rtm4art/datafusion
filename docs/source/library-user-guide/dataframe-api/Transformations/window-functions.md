@@ -631,9 +631,9 @@ In the DataFrame API, `.window()` adds analytical columns that remain available 
 
 <!-- DataFrame API -->
 
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`.window()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.window
-[`DataFrame::window()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.window
+[`dataframe::window()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.window
 [`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
 [`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
 [`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
@@ -641,10 +641,10 @@ In the DataFrame API, `.window()` adds analytical columns that remain available 
 
 <!-- Expressions and builder API -->
 
-[`Expr`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.Expr.html
-[`Expr::WindowFunction`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.Expr.html#variant.WindowFunction
-[`Expr::AggregateFunction`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.Expr.html#variant.AggregateFunction
-[`ExprFunctionExt`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr_fn/trait.ExprFunctionExt.html
+[`expr`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.Expr.html
+[`expr::windowfunction`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.Expr.html#variant.WindowFunction
+[`expr::aggregatefunction`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.Expr.html#variant.AggregateFunction
+[`exprfunctionext`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr_fn/trait.ExprFunctionExt.html
 [`.partition_by()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr_fn/trait.ExprFunctionExt.html#tymethod.partition_by
 [`.order_by()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr_fn/trait.ExprFunctionExt.html#tymethod.order_by
 [`.window_frame()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr_fn/trait.ExprFunctionExt.html#tymethod.window_frame
@@ -668,21 +668,21 @@ In the DataFrame API, `.window()` adds analytical columns that remain available 
 [`count()`]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.count.html
 [`sum_udaf()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/sum/fn.sum_udaf.html
 [`avg_udaf()`]: https://docs.rs/datafusion-functions-aggregate/latest/datafusion_functions_aggregate/average/fn.avg_udaf.html
-[`AggregateUDF`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/struct.AggregateUDF.html
-[`WindowFunction`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/struct.WindowFunction.html
-[`WindowFunction::new(...)`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/struct.WindowFunction.html#method.new
-[`WindowFunctionDefinition::AggregateUDF(...)`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.WindowFunctionDefinition.html#variant.AggregateUDF
-[`WindowFrame`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/window_frame/struct.WindowFrame.html
+[`aggregateudf`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/struct.AggregateUDF.html
+[`windowfunction`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/struct.WindowFunction.html
+[`windowfunction::new(...)`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/struct.WindowFunction.html#method.new
+[`windowfunctiondefinition::aggregateudf(...)`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/expr/enum.WindowFunctionDefinition.html#variant.AggregateUDF
+[`windowframe`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/window_frame/struct.WindowFrame.html
 
 <!-- DataFusion documentation -->
 
-[Transformation Concepts]: transformation-concepts.md
-[DataFusion SQL Window Functions]: https://datafusion.apache.org/user-guide/sql/window_functions.html
-[DataFusion `SELECT` syntax]: https://datafusion.apache.org/user-guide/sql/select.html
-[Built-in Rust window-expression helpers]: https://docs.rs/datafusion-functions-window/latest/datafusion_functions_window/expr_fn/index.html
+[transformation concepts]: transformation-concepts.md
+[datafusion sql window functions]: https://datafusion.apache.org/user-guide/sql/window_functions.html
+[datafusion `select` syntax]: https://datafusion.apache.org/user-guide/sql/select.html
+[built-in rust window-expression helpers]: https://docs.rs/datafusion-functions-window/latest/datafusion_functions_window/expr_fn/index.html
 
 <!-- External conceptual resources -->
 
-[PostgreSQL Window Functions Tutorial]: https://www.postgresql.org/docs/current/tutorial-window.html
-[DuckDB Window Functions]: https://duckdb.org/docs/stable/sql/functions/window_functions
-[Polars Window Functions]: https://docs.pola.rs/user-guide/expressions/window-functions/
+[postgresql window functions tutorial]: https://www.postgresql.org/docs/current/tutorial-window.html
+[duckdb window functions]: https://duckdb.org/docs/stable/sql/functions/window_functions
+[polars window functions]: https://docs.pola.rs/user-guide/expressions/window-functions/

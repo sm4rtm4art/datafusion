@@ -324,7 +324,7 @@ Most systems standardize on UTC timestamps end-to-end. When joining columns with
 
 **Struct, List, and Map preserve hierarchical relationships that flattening into parallel scalar columns would destroy.**
 
-Event payloads, nested JSON, and Parquet groups carry fields that belong together — a user's address is a single object with street, city, and postal code, not three unrelated columns. Flattening those into top-level scalars discards the grouping and makes schema evolution fragile. Arrow's [`Struct`][`DataType::Struct`], [`List`][`DataType::List`], and [`Map`][`DataType::Map`] types encode the hierarchy directly in the schema, keeping the relationship between fields intact and queryable. For the high-level placement of nested types inside a schema, see [Nested Types in Anatomy of a Schema](schema-anatomy.md#nested-types).
+Event payloads, nested JSON, and Parquet groups carry fields that belong together — a user's address is a single object with street, city, and postal code, not three unrelated columns. Flattening those into top-level scalars discards the grouping and makes schema evolution fragile. Arrow's [`Struct`][`datatype::struct`], [`List`][`datatype::list`], and [`Map`][`datatype::map`] types encode the hierarchy directly in the schema, keeping the relationship between fields intact and queryable. For the high-level placement of nested types inside a schema, see [Nested Types in Anatomy of a Schema](schema-anatomy.md#nested-types).
 
 | Type       | Shape                                | Arrow variant        | Use for                              |
 | :--------- | :----------------------------------- | :------------------- | :----------------------------------- |
@@ -471,12 +471,12 @@ Six constructors cover the combinations. Qualifier strategy determines how field
 
 | Constructor                                                                                                               | Input                                              | Qualifiers   | `check_names()` | Purpose                                 |
 | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------ | :-------------: | --------------------------------------- |
-| [`DFSchema::try_from(schema)`][`DFSchema::try_from`]                                                                      | [`Schema`] or [`SchemaRef`]                        | all `None`   |        —        | Wrap an Arrow schema without qualifiers |
+| [`DFSchema::try_from(schema)`][`dfschema::try_from`]                                                                      | [`Schema`] or [`SchemaRef`]                        | all `None`   |        —        | Wrap an Arrow schema without qualifiers |
 | [`DFSchema::empty()`]                                                                                                     | —                                                  | —            |        —        | Zero-field schema                       |
-| [`DFSchema::from_unqualified_fields(fields, metadata)`][`DFSchema::from_unqualified_fields`]                              | [`Fields`] + `HashMap<String, String>`             | all `None`   |        ✓        | Arrow fields with schema-level metadata |
-| [`DFSchema::new_with_metadata(qualified_fields, metadata)`][`DFSchema::new_with_metadata`]                                | `Vec<(Option<TableReference>, Arc<Field>)>` + meta | per-field    |        ✓        | Full control over qualifier per field   |
-| [`DFSchema::try_from_qualified_schema(qualifier, &schema)`][`DFSchema::try_from_qualified_schema`]                        | `impl Into<TableReference>` + `&Schema`            | same for all |        ✓        | Qualify every field with one table name |
-| [`DFSchema::from_field_specific_qualified_schema(qualifiers, &schema)`][`DFSchema::from_field_specific_qualified_schema`] | `Vec<Option<TableReference>>` + `&SchemaRef`       | per-field    |        ✓        | Different qualifier per field           |
+| [`DFSchema::from_unqualified_fields(fields, metadata)`][`dfschema::from_unqualified_fields`]                              | [`Fields`] + `HashMap<String, String>`             | all `None`   |        ✓        | Arrow fields with schema-level metadata |
+| [`DFSchema::new_with_metadata(qualified_fields, metadata)`][`dfschema::new_with_metadata`]                                | `Vec<(Option<TableReference>, Arc<Field>)>` + meta | per-field    |        ✓        | Full control over qualifier per field   |
+| [`DFSchema::try_from_qualified_schema(qualifier, &schema)`][`dfschema::try_from_qualified_schema`]                        | `impl Into<TableReference>` + `&Schema`            | same for all |        ✓        | Qualify every field with one table name |
+| [`DFSchema::from_field_specific_qualified_schema(qualifiers, &schema)`][`dfschema::from_field_specific_qualified_schema`] | `Vec<Option<TableReference>>` + `&SchemaRef`       | per-field    |        ✓        | Different qualifier per field           |
 
 :::{admonition} `try_from` allows duplicate field names
 :class: caution
@@ -547,50 +547,50 @@ The natural next step is [Applying Schemas](schema-application.md) — wiring th
 - [Inspecting and Validating Schemas](schema-inspection.md) — checking a defined schema before execution
 - [Transforming Schemas](schema-transformation.md) — qualifiers, combining, nullability on existing schemas
 - [Anatomy of a Schema](schema-anatomy.md) — field-level reference for [`DataType`], nullability, metadata
-:::
+  :::
 
 <!-- Link references -->
 
-[`Schema`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
-[`Schema::new`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.new
-[`Schema::new_with_metadata()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.new_with_metadata
-[`SchemaRef`]: https://docs.rs/arrow-schema/latest/arrow_schema/type.SchemaRef.html
-[`Field`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Field.html
-[`Field::with_metadata()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Field.html#method.with_metadata
-[`Fields`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Fields.html
-[`DataType`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html
-[`DataType::Struct`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Struct
-[`DataType::List`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.List
-[`DataType::Map`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Map
-[`DataType::Timestamp`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Timestamp
-[`Decimal128`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Decimal128
-[`Decimal256`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Decimal256
-[`Int64`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Int64
-[`Utf8`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Utf8
-[`Boolean`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Boolean
-[`Float64`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Float64
-[`LargeUtf8`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeUtf8
-[`LargeBinary`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeBinary
-[`LargeList`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeList
-[`Arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
-[`DFSchema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`DFSchemaRef`]: https://docs.rs/datafusion/latest/datafusion/common/type.DFSchemaRef.html
-[`DFSchema::try_from`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#impl-TryFrom%3CSchema%3E-for-DFSchema
-[`DFSchema::empty()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.empty
-[`DFSchema::from_unqualified_fields`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_unqualified_fields
-[`DFSchema::new_with_metadata`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.new_with_metadata
-[`DFSchema::try_from_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
-[`DFSchema::from_field_specific_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
+[`schema`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
+[`schema::new`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.new
+[`schema::new_with_metadata()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.new_with_metadata
+[`schemaref`]: https://docs.rs/arrow-schema/latest/arrow_schema/type.SchemaRef.html
+[`field`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Field.html
+[`field::with_metadata()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Field.html#method.with_metadata
+[`fields`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Fields.html
+[`datatype`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html
+[`datatype::struct`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Struct
+[`datatype::list`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.List
+[`datatype::map`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Map
+[`datatype::timestamp`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Timestamp
+[`decimal128`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Decimal128
+[`decimal256`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Decimal256
+[`int64`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Int64
+[`utf8`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Utf8
+[`boolean`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Boolean
+[`float64`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.Float64
+[`largeutf8`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeUtf8
+[`largebinary`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeBinary
+[`largelist`]: https://docs.rs/arrow-schema/latest/arrow_schema/enum.DataType.html#variant.LargeList
+[`arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`dfschemaref`]: https://docs.rs/datafusion/latest/datafusion/common/type.DFSchemaRef.html
+[`dfschema::try_from`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#impl-TryFrom%3CSchema%3E-for-DFSchema
+[`dfschema::empty()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.empty
+[`dfschema::from_unqualified_fields`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_unqualified_fields
+[`dfschema::new_with_metadata`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.new_with_metadata
+[`dfschema::try_from_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
+[`dfschema::from_field_specific_qualified_schema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
 [`check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
-[`LogicalPlan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`TableProvider`]: https://docs.rs/datafusion/latest/datafusion/datasource/provider/trait.TableProvider.html
-[`MemTable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.MemTable.html
-[`ListingTable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
-[`ParquetReadOptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
-[`Constraints`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Constraints.html
-[`DataFrame`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/provider/trait.TableProvider.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.MemTable.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`parquetreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
+[`constraints`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Constraints.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`ctx.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
 [`ctx.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
 [`ctx.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`CsvReadOptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
-[`NdJsonReadOptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema_infer_max_records
+[`csvreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`ndjsonreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema_infer_max_records

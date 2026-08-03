@@ -339,7 +339,7 @@ The `ExtractEquijoinPredicate` optimizer rule detects `IsNotDistinctFrom` predic
 
 :::{admonition} API gap: no convenience method
 :class: caution
-DataFusion does not yet provide a convenience method like `col("a").is_not_distinct_from(col("b"))`. The `binary_expr()` + `Operator::IsNotDistinctFrom` pattern shown above is the current DataFrame API approach. For advanced use cases, [`LogicalPlanBuilder::join_detailed()`][`LogicalPlanBuilder`] accepts a [`NullEquality`] parameter directly.
+DataFusion does not yet provide a convenience method like `col("a").is_not_distinct_from(col("b"))`. The `binary_expr()` + `Operator::IsNotDistinctFrom` pattern shown above is the current DataFrame API approach. For advanced use cases, [`LogicalPlanBuilder::join_detailed()`][`logicalplanbuilder`] accepts a [`NullEquality`] parameter directly.
 :::
 
 :::{admonition} SQL equivalent
@@ -502,7 +502,6 @@ async fn main() -> Result<()> {
 `CASE WHEN status IS NULL THEN 'UNKNOWN' ELSE status END`
 :::
 
-
 ### `DISTINCT` and Null Values
 
 `DISTINCT` operations treat all NULL values as equal — multiple NULLs collapse into a single NULL in the output. This follows the SQL standard and differs from comparison semantics where `NULL ≠ NULL`.
@@ -576,7 +575,7 @@ The key patterns to remember:
 - [Schema Inference](../Schema-Management/schema-inference.md) — why inferred schemas default to `nullable = true`
 - [Type Coercion](../Schema-Management/type-coercion.md) — how type mismatches interact with nullability during expression planning
 - [Expressions](expressions.md) — how `Expr` trees propagate nullability through the plan
-:::
+  :::
 
 ---
 
@@ -592,8 +591,8 @@ With null semantics understood, the next section covers what happens when you tr
 [`nullif()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.nullif.html
 [`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.nvl.html
 [`.fill_null()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.fill_null
-[`NullEquality`]: https://docs.rs/datafusion/latest/datafusion/common/enum.NullEquality.html
+[`nullequality`]: https://docs.rs/datafusion/latest/datafusion/common/enum.NullEquality.html
 [`isnan()`]: https://docs.rs/datafusion/latest/datafusion/functions/math/fn.isnan.html
 [`nanvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/math/fn.nanvl.html
-[`LogicalPlanBuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
 [`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort

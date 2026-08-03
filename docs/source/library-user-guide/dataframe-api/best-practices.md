@@ -2331,12 +2331,14 @@ DataFusion excels at data-level validation—checking ranges, detecting duplicat
 **Use external validators when you encounter:**
 
 1. **Complex format validation** that requires parsing algorithms:
+
    - Email addresses, phone numbers, URLs
    - Financial identifiers (IBAN, BIC, credit card numbers)
    - Geographic data (postal codes, coordinates)
    - Industry standards (ISBN, VIN, MAC addresses)
 
 2. **Business rule engines** that maintain state across records:
+
    - Order workflow state machines
    - Approval chain validation
    - Complex discount eligibility rules

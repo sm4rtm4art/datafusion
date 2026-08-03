@@ -34,7 +34,6 @@
 
 <!--TODO (placement and ownership review, 2026-07-18) 1. Reassess this page's position in the Transformations reading order after the core relational and API-composition arcs are approved. 2. Keep unnesting and other genuine DataFrame reshaping methods here. 3. Distinguish reshaping from aggregation/window "across rows" analysis: reshaping may change schema, cardinality, or grain, but it does not compute analytical values across existing row groups. 4. Reassess manual melt/unpivot patterns for overlap with set-operations.md and hybrid-sql.md. Route SQL-native alternatives rather than duplicating them. 5. Do not move the page solely to preserve the current proximity to dataframe-specifics.md; that page's standalone role is under review. -->
 
-
 # Reshaping Data
 
 :::{admonition} Style Note
