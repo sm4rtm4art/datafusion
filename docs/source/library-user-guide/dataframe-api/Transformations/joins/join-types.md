@@ -83,43 +83,52 @@ Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and 
 
 ## Return Matching Rows with an Inner Join
 
-This example establishes `customers_df` and `orders_df`â€”used throughout this section. Note: Carol has no orders, and order 104 has no matching customer (orphan).
+**An Inner join emits one combined row per matching key pair and drops every row that has no match on the other side.**
+
+The example data is deliberately imperfect: Carol has no orders, and order 104 carries `customer_id = 99`, which no customer row matches — so neither appears in the result.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // Sample data: customers_df [id, name] â€” Carol has no orders
+    // customers_df [id, name] — Carol has no orders
     let customers_df = dataframe!(
         "id" => [1, 2, 3],
         "name" => ["Alice", "Bob", "Carol"]
     )?;
 
-    // Sample data: orders_df [order_id, customer_id, amount] â€” order 104 is orphaned
+    // orders_df [order_id, customer_id, amount] — order 104 has no customer
     let orders_df = dataframe!(
         "order_id" => [101, 102, 103, 104],
         "customer_id" => [1, 1, 2, 99],
         "amount" => [100, 200, 150, 300]
     )?;
 
-    // Inner join: only matching rows (Carol excluded, order 104 excluded)
-    let result = customers_df.clone().join(
-        orders_df.clone(),
+    // build lazy plan: keep only rows that match on both sides
+    let matched_df = customers_df.join(
+        orders_df,
         JoinType::Inner,
         &["id"],
         &["customer_id"],
-        None
+        None,
     )?;
 
-    result.show().await?;
-    // +----+-------+----------+-------------+--------+
-    // | id | name  | order_id | customer_id | amount |
-    // +----+-------+----------+-------------+--------+
-    // | 1  | Alice | 101      | 1           | 100    |
-    // | 1  | Alice | 102      | 1           | 200    |
-    // | 2  | Bob   | 103      | 2           | 150    |
-    // +----+-------+----------+-------------+--------+
+    // execute
+    let batches = matched_df.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+----------+-------------+--------+",
+            "| id | name  | order_id | customer_id | amount |",
+            "+----+-------+----------+-------------+--------+",
+            "| 1  | Alice | 101      | 1           | 100    |",
+            "| 1  | Alice | 102      | 1           | 200    |",
+            "| 2  | Bob   | 103      | 2           | 150    |",
+            "+----+-------+----------+-------------+--------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
@@ -127,19 +136,19 @@ async fn main() -> datafusion::error::Result<()> {
 
 **When to use Inner Join:**
 
-- **Enrich data** â€” Attach related information (customer details â†’ their orders)
-- **Filter by relationship** â€” Keep only rows that have a match on the other side
-- **Combine normalized tables** â€” Reassemble data split across multiple tables
+- **Enrich data** — Attach related information (customer details → their orders)
+- **Filter by relationship** — Keep only rows that have a match on the other side
+- **Combine normalized tables** — Reassemble data split across multiple tables
 
-**Not for set intersections!** <br>
-If you need rows that exist in _both_ DataFrames (identical schemas, all columns compared), use [`.intersect()`] insteadâ€”that's a set operation, not a join.
-<br> For set operations like intersection and difference, see [Set Operations](../set-operations.md#intersection-and-difference).
+Comparing whole rows between two `DataFrame`s with identical schemas is a set operation rather than a join: use [`.intersect()`] for that. For intersection and difference, see [Set Operations](../set-operations.md#intersection-and-difference).
 
-> **âš ï¸ The hidden cost: [Survivorship bias][survivorship_bias]**
->
-> Many join types silently drop non-matching rowsâ€”Inner, Semi, and Anti joins all filter out data. In the example above, Carol and order 104 simply vanish. Chain several such joins together and you may lose 60% of your data without noticingâ€”you only see the "survivors" (rows that matched at every step).
->
-> As a sanity check, if you need to see what's _missing_, use [Outer Joins](#intermediate-leftrightfull-joins) (or other oposit joins like left vs. right) insteadâ€”`NULL` values reveal exactly where data gaps exist.
+:::{admonition} Survivorship bias hides the rows a join dropped
+:class: caution
+
+Inner, Semi, and Anti joins remove non-matching rows without reporting them: Carol and order 104 are simply absent above. Chain several such joins and the loss compounds, because each step keeps only the rows that survived the previous one — the classic [survivorship bias][survivorship_bias].
+
+To see what a join discarded, reach for the type that preserves the side you care about: an [Outer Join](#intermediate-leftrightfull-joins) marks the missing side with `NULL`, `Left` keeps rows `Inner` would drop, and `Right` does the same for the other input.
+:::
 
 ---
 

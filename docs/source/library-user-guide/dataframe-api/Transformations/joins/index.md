@@ -17,6 +17,7 @@
   under the License.
 -->
 
+<!-- WIP: openings deferred -->
 <!--
 JOIN REVISION TODO REGISTER
 
@@ -25,13 +26,29 @@ publishing editorial notes. Resolve these items during later section-by-section
 revision; do not treat this register as page content. Inline comments with the
 same JOIN-TODO IDs mark the current passages that need attention.
 
+Author-approved Plan freeze (2026-08-04):
+- Promote WIP-join-concepts.md ownership and storyline as the Plan baseline for
+  the published join-concepts.md leaf (not the thin migration leaf's physical
+  operator catalog).
+- join-concepts owns the cognitive mental model: logical inputs; matching,
+  preservation, cardinality, and payload; immediate result schema vs rows;
+  binary lazy LogicalPlan node; brief SQL vs DataFrame orientation; contrasts
+  with filters and set operations; self/multi-way as reuse of the same model.
+- Out of join-concepts (handoff only): physical operator catalog, build/probe,
+  partition modes, config knobs; method construction; per-type preservation
+  catalogues; alias/project how-to; coverage/NULL/Cartesian/.explain recipes;
+  unsourced performance claims.
+- Transfer done: WIP body is now in join-concepts.md. WIP retains the
+  co-authoring record only. Next session: tighten join-concepts.md with fresh
+  eyes (altitude, sibling overlap). Openings stay provisional until Polish.
+
 Iteration policy: revise one H2 subtree at a time. Resolve issues that belong to
 the active subtree during that iteration. When a new finding belongs to a later
 subtree or needs a broader decision, add a stable JOIN-TODO ID here and a matching
 inline marker instead of expanding the current iteration.
 
 Target storyline:
-1. Relate rows across DataFrames.
+1. Relate rows across DataFrames (join-concepts mental model).
 2. Build joins with keys and conditions.
 3. Choose what the join preserves.
 4. Compose join workflows.
@@ -126,24 +143,26 @@ External dependencies and unresolved approvals
   not supplied. Confirm page order and whether
   customers_df/orders_df/payments_df is the approved running dataset before
   normalizing examples.
-- JOIN-TODO-020 [deferred; plan-inspection pass] `join-concepts.md` is the
-  approved temporary owner for inherited execution-concept material. Identify
-  the long-term owner for deep execution and optimizer material before
-  extraction; do not let it dominate the join-concepts page.
-- JOIN-TODO-021 [final pass] Confirm scope across the join page group:
-  join-concepts.md owns topic-specific join semantics; join-conditions.md owns
-  construction; join-types.md owns preservation choices; join-workflows.md
-  owns composition and schema shaping; join-validation.md owns correctness and
-  bounded plan inspection. transformation-concepts.md retains the broader
-  frame-boundary model and set-operations.md owns whole-row combination.
+- JOIN-TODO-020 [superseded by Plan freeze 2026-08-04] Deep physical execution
+  material leaves join-concepts. Keep only vocabulary needed elsewhere via a
+  one-line handoff; long-term owner remains join-validation (bounded
+  `.explain()`) or a future execution page — do not restore the operator catalog
+  into join-concepts.
+- JOIN-TODO-021 [resolved in Plan freeze 2026-08-04] Scope across the join page
+  group: join-concepts.md owns the cognitive mental model (see Plan freeze);
+  join-conditions.md owns construction; join-types.md owns preservation
+  choices; join-workflows.md owns composition and schema shaping;
+  join-validation.md owns correctness and bounded plan inspection.
+  transformation-concepts.md retains the broader frame-boundary model and
+  set-operations.md owns whole-row combination.
 - JOIN-TODO-022 [deferred; execution-ownership pass] Decide whether guidance on
   joining inside a source system versus in DataFusion has a supported owner and
   an action-oriented use case. Do not restore the removed broad Postgres-versus-
   DataFusion performance comparison without authoritative, scenario-specific
   support.
-- JOIN-TODO-023 [join-concepts discussion pass] Broaden the unapproved
-  conceptual opener so left and right are logical inputs and do not imply two
-  distinct source DataFrames; account explicitly for self-derived sides.
+- JOIN-TODO-023 [resolved 2026-08-05 in join-concepts first-H2 rework] The
+  opener now states that a join's two sides are logical inputs which may be two
+  views of the same DataFrame as readily as two separate sources.
 - JOIN-TODO-024 [navigation integration pass] Update the parent
   Transformations/index.md toctree and incoming links to route through this
   group, then retire or redirect the old `joins.md` route only after that
@@ -157,10 +176,23 @@ External dependencies and unresolved approvals
 - JOIN-TODO-027 [landing finalization pass] Revisit the curated landing table
   after the five leaves stabilize; keep only routing scent that adds value
   beyond the toctree.
+- JOIN-TODO-028 [SQL user-guide cross-ref pass] There is no dedicated
+  `user-guide/sql/join.md`. Primary SQL join reference is
+  `user-guide/sql/select.md` § JOIN clause (INNER/OUTER/NATURAL/CROSS/SEMI/ANTI/
+  LATERAL; pipe JOIN later). Adjacent: `user-guide/sql/subqueries.md` (EXISTS/IN
+  as join alternatives; correlated rewrite to JOIN; LATERAL pointer). Config/
+  execution knobs live in `user-guide/configs.md` (e.g. filter_null_join_keys,
+  repartition_joins, prefer_hash_join) — hand off to join-validation or a future
+  execution owner, not join-concepts body. Suggested leaf map after headings
+  stabilize: concepts → one seealso to select.md#join-clause (+ optional
+  subqueries for existence); conditions → ON/USING/NATURAL/LATERAL;
+  types → matching type headings; workflows → self-join/LATERAL as needed;
+  validation → config links only, not a config dump. Verify relative paths and
+  anchors in JOIN-TODO-026.
 -->
 
 <!-- MOVE HANDSHAKE: Routing and cheat-sheet material arrived from ../joins.md. The unchanged source is a temporary coordinator comparison artifact, not a seventh published page. -->
-<!-- JOIN-TODO-001 JOIN-TODO-024 JOIN-TODO-026 JOIN-TODO-027: Finalize the page group and parent navigation after the leaves stabilize. -->
+<!-- JOIN-TODO-001 JOIN-TODO-024 JOIN-TODO-026 JOIN-TODO-027 JOIN-TODO-028: Finalize the page group, parent navigation, and SQL cross-refs after the leaves stabilize. -->
 
 # Joining DataFrames
 
