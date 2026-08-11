@@ -17,20 +17,43 @@
   under the License.
 -->
 
-<!--
-MOVE HANDSHAKE: Join-family orientation and inner, outer, semi, and anti join
-material arrived from ../joins.md. The migration source remains unchanged for
-coordinator comparison.
-
-LOCAL TODO OWNERS: JOIN-TODO-001, JOIN-TODO-006, JOIN-TODO-007,
-JOIN-TODO-009, JOIN-TODO-014, JOIN-TODO-015, JOIN-TODO-016, JOIN-TODO-017,
-JOIN-TODO-019, JOIN-TODO-021, JOIN-TODO-025, and JOIN-TODO-026.
--->
-<!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Key Methods table, first-H2 framing, and conclusion after this leaf stabilizes. -->
-<!-- JOIN-TODO-007: Keep public mark joins as a bounded specialist note until a supported workflow is approved. -->
-<!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
-
 # Join Types
+
+**Predict a joined `DataFrame` from `JoinType`: which matched or unmatched rows survive and which input fields the result carries.**
+
+Choose among inner, outer, semi, anti, and mark joins from the result shape your pipeline needs. Mirrored Left/Right examples show how each family changes preservation and payload, while match multiplicity explains why pair-producing joins can multiply rows but one-sided joins do not. Use [Join Validation](join-validation.md) when key coverage, `NULL` behavior, or unexpected cardinality needs diagnosis.
+
+:::{admonition} New to Joins?
+:class: seealso
+
+This page assumes basic join familiarity. See [Join Concepts](join-concepts.md) for DataFusion matching, preservation, payload, and cardinality, or the [PostgreSQL joins tutorial][postgresql-join-tutorial] for a general SQL introduction.
+:::
+
+**Key Methods**
+
+| Method                                                        | Purpose                                                                              |
+| :------------------------------------------------------------ | :----------------------------------------------------------------------------------- |
+| [`.join()`](join-conditions.md#join-named-equality-keys)      | Build a named-key join; pass a [`JoinType`][jointype] to select preservation         |
+| [`.join_on()`](join-conditions.md#join_on-boolean-conditions) | Build a Boolean-condition join; pass a [`JoinType`][jointype] to select preservation |
+
+(jointype-catalogue)=
+
+## `JoinType` catalogue
+
+| `JoinType`    | Result rows                                                         | Result fields                                                                                   |
+| :------------ | :------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------- |
+| [`Inner`]     | Matching pairs only; unmatched rows from either side are discarded. | Left and right fields.                                                                          |
+| [`Left`]      | Matching pairs plus every unmatched left row.                       | Left and right fields; right fields are `NULL` for unmatched left rows and planned as nullable. |
+| [`Right`]     | Matching pairs plus every unmatched right row.                      | Left and right fields; left fields are `NULL` for unmatched right rows and planned as nullable. |
+| [`Full`]      | Matching pairs plus every unmatched row from both sides.            | Left and right fields; fields from the absent side are `NULL` and planned as nullable.          |
+| [`LeftSemi`]  | Left rows that have a match.                                        | Left fields only.                                                                               |
+| [`RightSemi`] | Right rows that have a match.                                       | Right fields only.                                                                              |
+| [`LeftAnti`]  | Left rows that do not have a match.                                 | Left fields only.                                                                               |
+| [`RightAnti`] | Right rows that do not have a match.                                | Right fields only.                                                                              |
+| [`LeftMark`]  | Every left row.                                                     | Left fields plus a non-null Boolean `mark` field.                                               |
+| [`RightMark`] | Every right row.                                                    | Right fields plus a non-null Boolean `mark` field.                                              |
+
+Matching and condition construction live in [Join Conditions](join-conditions.md). The result model behind these variants lives in [Join Concepts](join-concepts.md).
 
 :::{admonition} Style Note
 :class: note
@@ -44,6 +67,8 @@ In this document, code elements follow a consistent pattern:
 - **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
 - **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
 - **Actions:** (`.collect()`, `.show()`) trigger execution
+- **Input roles:** Base DataFrame = method receiver/left input; Extension
+  DataFrame = right argument/right input; `JoinType` controls preservation.
 
 :::
 
@@ -52,40 +77,29 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-<!-- JOIN-TODO-006 JOIN-TODO-007 JOIN-TODO-015: Rebuild this as the single preservation decision table and add only a bounded specialist note for mark joins. -->
+## Choose `JoinType` by the Result You Need
 
-## Choose What the Join Preserves
+**Choose `JoinType` from the rows and fields the result must retain: matching pairs, unmatched rows, one-sided existence results, or one side annotated with match status.**
 
-Joins control how rows from two tables are matched and combined. The key decisions are:
+A join condition decides which input-row pairs match. The [`JoinType`] argument then decides which matching and unmatched rows the result [`DataFrame`] emits and whether its planned schema carries fields from both inputs, one input, or one input plus a `mark` field.
 
-1.  what happens to rows that _don't_ match
-2.  which columns appear in the result.
+Pair-producing types can emit several result rows for one input row when several matches exist. Semi, anti, and mark types emit at most one row per selected-side input-row occurrence. A missing match is not a failure: [`JoinType`] decides whether that row disappears, is null-extended, survives, or is annotated.
 
-Inner joins discard non-matches; outer joins preserve them with NULLs. Semi and Anti joins answer existence questions without adding columns from the right table.
+:::{admonition} Choose the API That Makes the Relationship Clear
+:class: note
 
-| Join Type            | Returns                   | Use Case                                    |
-| :------------------- | :------------------------ | :------------------------------------------ |
-| [`Inner`]            | Matches from both sides   | Standard joinâ€”only matching rows          |
-| [`Left`]             | All left + matching right | Keep all left rows (NULL if no match)       |
-| [`Right`]            | All right + matching left | Keep all right rows (NULL if no match)      |
-| [`Full`]             | Everything from both      | See all data, matched or not                |
-| [`LeftSemi`]         | Left rows WITH matches    | "Which left rows have a match?"             |
-| [`LeftAnti`]         | Left rows WITHOUT matches | "Which left rows have NO match?"            |
-| ~~Cross~~ (SQL only) | Cartesian product         | All combinations (see Anti-Pattern section) |
-
-> **Note:** The DataFrame API has no `JoinType::Cross`. Cartesian products are represented as `Inner` joins with empty key lists or as [`CROSS JOIN`] in SQL.
-
-> **Learn more:** You may want to check out this source [Join tutorial] or [Semi and Anti joins explained].
+DataFrame join methods accept the public [`JoinType`] variants, including [`LeftMark`] and `RightMark`. SQL directly spells inner, outer, semi, and anti joins and also offers [`USING`], [`NATURAL JOIN`], [`CROSS JOIN`], and [`LATERAL`]; these are SQL forms or condition syntax, not additional [`JoinType`]‚ values. Use SQL when one of these forms states the relationship more clearly and DataFrame methods when programmatic Rust composition is clearer. Both APIs enter the same planning and execution pipeline; see [Join Conditions](join-conditions.md#when-the-dataframe-api-has-no-dedicated-join-form) for the construction boundary.
+:::
 
 ---
 
-<!-- JOIN-TODO-006 JOIN-TODO-009: Rename and place this under preservation semantics; explain possible row multiplication and route coverage checks to validation. -->
+## Keep Only Matching Pairs with `Inner`
 
-## Return Matching Rows with an Inner Join
+**`Inner` emits one result row for every matching input-row pair, carries fields from both inputs, and omits rows with no match.**
 
-**An Inner join emits one combined row per matching key pair and drops every row that has no match on the other side.**
+Use `Inner` when matched payload from both inputs is required but unmatched rows have no place in the result.
 
-The example data is deliberately imperfect: Carol has no orders, and order 104 carries `customer_id = 99`, which no customer row matches — so neither appears in the result.
+The join condition identifies matching pairs, and `JoinType::Inner` excludes input rows that participate in no pair; the result schema carries fields from both inputs. Match multiplicity controls cardinality: one input row matching N rows contributes N result rows. In the fixture, Alice matches two orders, Bob one, Carol none, and order 104 none.
 
 ```rust
 use datafusion::prelude::*;
@@ -106,7 +120,7 @@ async fn main() -> datafusion::error::Result<()> {
         "amount" => [100, 200, 150, 300]
     )?;
 
-    // build lazy plan: keep only rows that match on both sides
+    // build lazy plan
     let matched_df = customers_df.join(
         orders_df,
         JoinType::Inner,
@@ -134,160 +148,101 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-**When to use Inner Join:**
-
-- **Enrich data** — Attach related information (customer details → their orders)
-- **Filter by relationship** — Keep only rows that have a match on the other side
-- **Combine normalized tables** — Reassemble data split across multiple tables
-
-Comparing whole rows between two `DataFrame`s with identical schemas is a set operation rather than a join: use [`.intersect()`] for that. For intersection and difference, see [Set Operations](../set-operations.md#intersection-and-difference).
-
-:::{admonition} Survivorship bias hides the rows a join dropped
-:class: caution
-
-Inner, Semi, and Anti joins remove non-matching rows without reporting them: Carol and order 104 are simply absent above. Chain several such joins and the loss compounds, because each step keeps only the rows that survived the previous one — the classic [survivorship bias][survivorship_bias].
-
-To see what a join discarded, reach for the type that preserves the side you care about: an [Outer Join](#intermediate-leftrightfull-joins) marks the missing side with `NULL`, `Left` keeps rows `Inner` would drop, and `Right` does the same for the other input.
-:::
+Dropped rows leave no marker in an `Inner` result, so an apparently valid result can hide incomplete key coverage. Empty or unexpectedly large results usually indicate condition or data-cardinality issues rather than an `Inner` execution failure. Use [Join Validation](join-validation.md) for key coverage, `NULL` handling, and duplicate keys; choose semi joins when only one input's fields are needed, and outer joins when unmatched rows must remain visible.
 
 ---
 
-(intermediate-leftrightfull-joins)=
-
-<!-- JOIN-TODO-006 JOIN-TODO-016: Consolidate outer-join preservation and null extension here; remove the unsupported "~90%" claim. -->
-
 ## Preserve Unmatched Rows with Outer Joins
 
-Where Inner Join keeps only the intersection (rows matching on both sides), **"partial" outer joins (left, right and full) preserve rows that don't match**â€”filling missing columns with `NULL`. This makes data gaps visible instead of silently dropping them.
+**Outer joins preserve unmatched rows from one or both inputs by emitting `NULL` for fields belonging to the missing match.**
 
-| Join Type | Keeps                                           | Typical Use Case                                          |
-| :-------- | :---------------------------------------------- | :-------------------------------------------------------- |
-| **Left**  | All left rows, matching right data if available | Customer reportsâ€”keep all customers, show orders if any |
-| **Right** | All right rows, matching left data if available | Orphan detectionâ€”find orders without valid customers    |
-| **Full**  | Everything from both sides                      | Data reconciliationâ€”find ALL discrepancies              |
+Outer joins extend matching-pair behavior with unmatched-row preservation. Matching pairs still emit one row per pair and may multiply.
 
-<!-- JOIN-TODO-016: Remove the unsourced "~90%" generalization; retain only neutral selection guidance. -->
+The selected variant determines which unmatched input rows survive and which opposite-side fields are null-extended. Use outer joins when input coverage matters: every customer, every order, or rows from both sources must remain visible without a match.
 
-Left Join handles ~90% of outer join use cases. Right Join can usually be rewritten as Left Join by swapping tables. Full Join is for reconciliation scenarios.
+### Preserve One Input with `Left` and `Right`
 
-### Left Join â€” Enrich Your Primary Data
+**`Left` preserves every left row and `Right` preserves every right row; each null-extends fields from the side without a match.**
 
-Keep **all rows from the left table**, enrich with matching data from the right table. No match? Right-side columns become `NULL`.
+In method-call terms, the receiver/base `DataFrame` is left and the argument/extension `DataFrame` is right. `Left` preserves the receiver and `Right` preserves the argument; both carry fields from both inputs. Use either when one input must remain complete while matching payload is attached. Swapping inputs mirrors row-preservation logic but changes call-side roles and result-field order.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // customers_df:
-    // +----+-------+
-    // | id | name  |
-    // +----+-------+
-    // | 1  | Alice |
-    // | 2  | Bob   |
-    // | 3  | Carol |  â† Has no orders
-    // +----+-------+
     let customers_df = dataframe!(
         "id" => [1, 2, 3],
         "name" => ["Alice", "Bob", "Carol"]
     )?;
-
-    // orders_df:
-    // +----------+-------------+--------+
-    // | order_id | customer_id | amount |
-    // +----------+-------------+--------+
-    // | 101      | 1           | 100    |
-    // | 102      | 1           | 200    |
-    // | 103      | 2           | 150    |
-    // | 104      | 99          | 300    |  â† Orphan
-    // +----------+-------------+--------+
     let orders_df = dataframe!(
         "order_id" => [101, 102, 103, 104],
         "customer_id" => [1, 1, 2, 99],
         "amount" => [100, 200, 150, 300]
     )?;
 
-    // "All customers with their orders (if any)"
+    // build lazy plans
     let left_result = customers_df.clone().join(
         orders_df.clone(),
         JoinType::Left,
         &["id"],
         &["customer_id"],
-        None
+        None,
     )?;
-
-    left_result.show().await?;
-    // +----+-------+----------+-------------+--------+
-    // | id | name  | order_id | customer_id | amount |
-    // +----+-------+----------+-------------+--------+
-    // | 1  | Alice | 101      | 1           | 100    |
-    // | 1  | Alice | 102      | 1           | 200    |
-    // | 2  | Bob   | 103      | 2           | 150    |
-    // | 3  | Carol |          |             |        |  â† Preserved with NULLs
-    // +----+-------+----------+-------------+--------+
-
-    Ok(())
-}
-```
-
-### Right Join â€” Find Orphaned Records
-
-Keep all rows from the right tableâ€”useful for finding records that reference non-existent parents (like order 104 referencing customer 99).
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let customers_df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
-
-    let orders_df = dataframe!(
-        "order_id" => [101, 102, 103, 104],
-        "customer_id" => [1, 1, 2, 99],
-        "amount" => [100, 200, 150, 300]
-    )?;
-
-    // "All orders, showing customer info (if customer exists)"
-    let right_result = customers_df.clone().join(
-        orders_df.clone(),
+    let right_result = customers_df.join(
+        orders_df,
         JoinType::Right,
         &["id"],
         &["customer_id"],
-        None
+        None,
     )?;
 
-    right_result.show().await?;
-    // +----+-------+----------+-------------+--------+
-    // | id | name  | order_id | customer_id | amount |
-    // +----+-------+----------+-------------+--------+
-    // | 1  | Alice | 101      | 1           | 100    |
-    // | 1  | Alice | 102      | 1           | 200    |
-    // | 2  | Bob   | 103      | 2           | 150    |
-    // |    |       | 104      | 99          | 300    |  â† Orphan! No customer 99
-    // +----+-------+----------+-------------+--------+
+    // execute
+    let left_batches = left_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+----------+-------------+--------+",
+            "| id | name  | order_id | customer_id | amount |",
+            "+----+-------+----------+-------------+--------+",
+            "| 1  | Alice | 101      | 1           | 100    |",
+            "| 1  | Alice | 102      | 1           | 200    |",
+            "| 2  | Bob   | 103      | 2           | 150    |",
+            "| 3  | Carol |          |             |        |",
+            "+----+-------+----------+-------------+--------+",
+        ],
+        &left_batches
+    );
+    let right_batches = right_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+----------+-------------+--------+",
+            "| id | name  | order_id | customer_id | amount |",
+            "+----+-------+----------+-------------+--------+",
+            "| 1  | Alice | 101      | 1           | 100    |",
+            "| 1  | Alice | 102      | 1           | 200    |",
+            "| 2  | Bob   | 103      | 2           | 150    |",
+            "|    |       | 104      | 99          | 300    |",
+            "+----+-------+----------+-------------+--------+",
+        ],
+        &right_batches
+    );
 
     Ok(())
 }
 ```
 
-**Tip:** <br>
-Right Join is just Left Join with swapped tables. `A.join(B, Right)` = `B.join(A, Left)`. Most teams use Left Join exclusively for consistencyâ€”put your "main" table first.
+Duplicate matches can still multiply preserved rows, and a post-join filter on null-extended fields can remove them. See [Join Conditions](join-conditions.md) for predicate placement and [Join Validation](join-validation.md) for coverage and multiplication.
 
-### Full Join â€” Complete Reconciliation
+### Preserve Unmatched Rows from Both Inputs with `Full`
 
-Keep **all rows from both tables**. Where there's no match, fill the "other side" with NULLs. This is the only join that guarantees you see *everything*â€”matched, unmatched left, AND unmatched right.
+**`Full` preserves unmatched rows from both inputs while still emitting one result row for every matching pair.**
 
-**When to use Full Join:**
-
-- **Data reconciliation** â€” Comparing two data sources to find ALL discrepancies
-- **Migration validation** â€” Ensuring old and new systems have the same records
-- **Audit trails** â€” "Show me what's in A but not B, what's in B but not A, and what's in both"
+`Full` carries fields from both inputs; because either side may be absent, all result fields are planned as nullable. Use it when unmatched rows from both sources must remain visible, such as key-coverage or reconciliation workflows.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
@@ -302,220 +257,198 @@ async fn main() -> datafusion::error::Result<()> {
         "amount" => [100, 200, 150, 300]
     )?;
 
-    // "Show me everything: matched, unmatched left, AND unmatched right"
-    let full_result = customers_df.clone().join(
-        orders_df.clone(),
-        JoinType::Full,
-        &["id"],
-        &["customer_id"],
-        None
-    )?;
-
-    full_result.show().await?;
-    // +----+-------+----------+-------------+--------+
-    // | id | name  | order_id | customer_id | amount |
-    // +----+-------+----------+-------------+--------+
-    // | 1  | Alice | 101      | 1           | 100    |  â† Matched
-    // | 1  | Alice | 102      | 1           | 200    |  â† Matched
-    // | 2  | Bob   | 103      | 2           | 150    |  â† Matched
-    // | 3  | Carol |          |             |        |  â† Left only (no orders)
-    // |    |       | 104      | 99          | 300    |  â† Right only (orphan)
-    // +----+-------+----------+-------------+--------+
-
-    Ok(())
-}
-```
-
-**Data Quality Pattern:** Full Join + NULL filters = powerful reconciliation tool:
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let customers_df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
-
-    let orders_df = dataframe!(
-        "order_id" => [101, 102, 103, 104],
-        "customer_id" => [1, 1, 2, 99],
-        "amount" => [100, 200, 150, 300]
-    )?;
-
+    // build lazy plan
     let full_result = customers_df.join(
         orders_df,
         JoinType::Full,
         &["id"],
         &["customer_id"],
-        None
+        None,
     )?;
 
-    // Find customers WITHOUT orders (left-only)
-    let inactive = full_result.clone().filter(col("order_id").is_null())?;
-
-    // Find orphaned orders (right-only, invalid customer_id)
-    let orphans = full_result.clone().filter(col("id").is_null())?;
-
-    // Find matched records (both sides present)
-    let matched = full_result.filter(
-        col("id").is_not_null().and(col("order_id").is_not_null())
-    )?;
-
-    inactive.show().await?;
-    orphans.show().await?;
-    matched.show().await?;
+    // execute
+    let batches = full_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+----------+-------------+--------+",
+            "| id | name  | order_id | customer_id | amount |",
+            "+----+-------+----------+-------------+--------+",
+            "| 1  | Alice | 101      | 1           | 100    |",
+            "| 1  | Alice | 102      | 1           | 200    |",
+            "| 2  | Bob   | 103      | 2           | 150    |",
+            "| 3  | Carol |          |             |        |",
+            "|    |       | 104      | 99          | 300    |",
+            "+----+-------+----------+-------------+--------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
 ```
 
-This pattern is invaluable for ETL pipelines, data migration validation, and debugging referential integrity issues.
+Matching duplicates can still multiply, and `Full` exposes unmatched rows but does not compare non-key values. Use [Join Validation](join-validation.md) to check unmatched keys and reconciliation results.
 
 ---
 
-<!-- JOIN-TODO-006 JOIN-TODO-007 JOIN-TODO-017: Reframe these as existence/non-existence preservation choices; keep right variants, bound mark variants, and remove unconditional efficiency claims. -->
+## Return or Annotate One Input by Match Existence
 
-## Test for Matches with Semi and Anti Joins
+**Existence joins avoid pair multiplication: semi and anti joins select rows from one input, while mark joins retain every row from that input and append match status.**
 
-**What makes them special?** <br>
-Semi and Anti joins are **filtering joins**â€”they filter the left table based on existence in the right table, but **never add columns** from the right table. This is fundamentally different from Inner/Left/Right/Full joins which combine data.
+Variants prefixed `Left` select the receiver/base input, and variants prefixed `Right` select the argument/extension input. Semi retains selected-side rows with at least one match, anti retains selected-side rows without a match, and mark retains all selected-side rows with match status. The tested input contributes no payload fields, multiple matches do not multiply outputs, and duplicate row occurrences on the selected side remain separate occurrences.
 
-| Join Type    | Question                         | Returns                           | SQL Equivalent                               |
-| :----------- | :------------------------------- | :-------------------------------- | :------------------------------------------- |
-| **LeftSemi** | "Which left rows HAVE a match?"  | Left columns only, matched rows   | `WHERE EXISTS (SELECT 1 FROM right ...)`     |
-| **LeftAnti** | "Which left rows have NO match?" | Left columns only, unmatched rows | `WHERE NOT EXISTS (SELECT 1 FROM right ...)` |
+Use an inner or outer join when fields from both inputs are required. DataFusion SQL directly names `LEFT SEMI`, `RIGHT SEMI`, `LEFT ANTI`, and `RIGHT ANTI` joins; mark joins have no direct `JOIN` spelling, though SQL planning can introduce them for `EXISTS` decorrelation.
 
-**Why use them instead of alternatives?**
+### Return Rows with Matches Using `LeftSemi` and `RightSemi`
 
-| Alternative                | Problem                                                             | Semi/Anti Advantage                                                |
-| :------------------------- | :------------------------------------------------------------------ | :----------------------------------------------------------------- |
-| Inner Join + Distinct      | Creates duplicates if right has multiple matches, then removes them | Semi join handles this automaticallyâ€”one output row per left row |
-| Left Join + WHERE NULL     | Joins everything first, then filters                                | Anti join filters during joinâ€”more efficient                     |
-| `IN (SELECT ...)` subquery | Can be slower, harder to optimize                                   | Semi join is the optimized physical plan for `IN`                  |
+**`LeftSemi` returns left rows with at least one match and `RightSemi` returns right rows with at least one match; each emits only the selected side's fields.**
 
-### LeftSemi â€” "Which Rows Have Matches?"
-
-Returns left rows that have **at least one match** in the right table. Even if a customer has 10 orders, they appear only once.
+Semi joins provide relationship-based filtering without tested-side payload. They emit at most one result per selected input-row occurrence regardless of match multiplicity, and omit a selected row when no match exists.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // customers_df:                 orders_df:
-    // +----+-------+                +----------+-------------+--------+
-    // | id | name  |                | order_id | customer_id | amount |
-    // +----+-------+                +----------+-------------+--------+
-    // | 1  | Alice |                | 101      | 1           | 100    |
-    // | 2  | Bob   |                | 102      | 1           | 200    |
-    // | 3  | Carol |                | 103      | 2           | 150    |
-    // +----+-------+                | 104      | 99          | 300    |
-    //                               +----------+-------------+--------+
     let customers_df = dataframe!(
         "id" => [1, 2, 3],
         "name" => ["Alice", "Bob", "Carol"]
     )?;
-
     let orders_df = dataframe!(
         "order_id" => [101, 102, 103, 104],
         "customer_id" => [1, 1, 2, 99],
         "amount" => [100, 200, 150, 300]
     )?;
 
-    // "Which customers have placed at least one order?"
-    let active_customers = customers_df.clone().join(
+    // build lazy plans
+    let left_result = customers_df.clone().join(
         orders_df.clone(),
         JoinType::LeftSemi,
         &["id"],
         &["customer_id"],
-        None
+        None,
+    )?;
+    let right_result = customers_df.join(
+        orders_df,
+        JoinType::RightSemi,
+        &["id"],
+        &["customer_id"],
+        None,
     )?;
 
-    active_customers.show().await?;
-    // +----+-------+
-    // | id | name  |
-    // +----+-------+
-    // | 1  | Alice |  â† Has 2 orders, appears once
-    // | 2  | Bob   |  â† Has 1 order
-    // +----+-------+
-    // Note: Carol (id=3) excludedâ€”no orders
-    // Note: No order columns! Just filtered customers.
+    // execute
+    let left_batches = left_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+",
+            "| id | name  |",
+            "+----+-------+",
+            "| 1  | Alice |",
+            "| 2  | Bob   |",
+            "+----+-------+",
+        ],
+        &left_batches
+    );
+    let right_batches = right_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+-------------+--------+",
+            "| order_id | customer_id | amount |",
+            "+----------+-------------+--------+",
+            "| 101      | 1           | 100    |",
+            "| 102      | 1           | 200    |",
+            "| 103      | 2           | 150    |",
+            "+----------+-------------+--------+",
+        ],
+        &right_batches
+    );
 
     Ok(())
 }
 ```
 
-**Use cases for LeftSemi:**
+Unexpected omissions route to [Join Validation](join-validation.md) for condition, key, and `NULL` checks. Use `Inner` if fields from both inputs are needed.
 
-- Find active customers (have placed orders)
-- Find products that have been sold (exist in order_items)
-- Filter to "things that are referenced somewhere"
+### Return Rows Without Matches Using `LeftAnti` and `RightAnti`
 
-### LeftAnti â€” "Which Rows Have No Matches?"
+**`LeftAnti` returns unmatched left rows and `RightAnti` returns unmatched right rows; each emits only the selected side's fields.**
 
-Returns left rows that have **zero matches** in the right table. The inverse of Semi join.
+Anti joins find selected-side rows lacking a relationship. Matches are exclusion tests only and add no payload, while a no-match retains the selected row.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // customers_df:                 orders_df:
-    // +----+-------+                +----------+-------------+--------+
-    // | id | name  |                | order_id | customer_id | amount |
-    // +----+-------+                +----------+-------------+--------+
-    // | 1  | Alice |                | 101      | 1           | 100    |
-    // | 2  | Bob   |                | 102      | 1           | 200    |
-    // | 3  | Carol |                | 103      | 2           | 150    |
-    // +----+-------+                | 104      | 99          | 300    |
-    //                               +----------+-------------+--------+
     let customers_df = dataframe!(
         "id" => [1, 2, 3],
         "name" => ["Alice", "Bob", "Carol"]
     )?;
-
     let orders_df = dataframe!(
         "order_id" => [101, 102, 103, 104],
         "customer_id" => [1, 1, 2, 99],
         "amount" => [100, 200, 150, 300]
     )?;
 
-    // "Which customers have NEVER placed an order?"
-    let inactive_customers = customers_df.clone().join(
+    // build lazy plans
+    let left_result = customers_df.clone().join(
         orders_df.clone(),
         JoinType::LeftAnti,
         &["id"],
         &["customer_id"],
-        None
+        None,
+    )?;
+    let right_result = customers_df.join(
+        orders_df,
+        JoinType::RightAnti,
+        &["id"],
+        &["customer_id"],
+        None,
     )?;
 
-    inactive_customers.show().await?;
-    // +----+-------+
-    // | id | name  |
-    // +----+-------+
-    // | 3  | Carol |  â† No orders found
-    // +----+-------+
-    // Alice and Bob excludedâ€”they have orders
+    // execute
+    let left_batches = left_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+",
+            "| id | name  |",
+            "+----+-------+",
+            "| 3  | Carol |",
+            "+----+-------+",
+        ],
+        &left_batches
+    );
+    let right_batches = right_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+-------------+--------+",
+            "| order_id | customer_id | amount |",
+            "+----------+-------------+--------+",
+            "| 104      | 99          | 300    |",
+            "+----------+-------------+--------+",
+        ],
+        &right_batches
+    );
 
     Ok(())
 }
 ```
 
-**Use cases for LeftAnti:**
+An outer-join-plus-`NULL`-filter pipeline is not universally interchangeable when the tested indicator may itself be nullable. Route predicate and `NULL` diagnosis to [Join Conditions](join-conditions.md) and [Join Validation](join-validation.md).
 
-- Find inactive customers (never ordered)
-- Find dead inventory (products never sold)
-- Data cleanup: "Find records missing required relationships"
-- Complement of Semi: `Semi âˆª Anti = Full Left Table`
+### Annotate Match Existence: `LeftMark` and `RightMark`
 
-### Why Not Just Use Left Join + Filter?
+**`LeftMark` and `RightMark` retain every selected-side row and append `mark = true` when at least one match exists, otherwise `false`.**
 
-A common question: "Can't I just do Left Join and filter for NULLs?"
+`LeftMark` returns left fields plus `mark`, and `RightMark` returns right fields plus `mark`. The tested side contributes no fields, and match multiplicity does not multiply selected rows. The current DataFusion mark is non-null and two-valued (`true`/`false`, never `NULL`).
+
+Mark joins are public specialist variants for retaining every selected-side row while carrying existence status; their source-documented role is `EXISTS` decorrelation in disjunctive predicates.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
@@ -523,60 +456,87 @@ async fn main() -> datafusion::error::Result<()> {
         "id" => [1, 2, 3],
         "name" => ["Alice", "Bob", "Carol"]
     )?;
-
     let orders_df = dataframe!(
         "order_id" => [101, 102, 103, 104],
         "customer_id" => [1, 1, 2, 99],
         "amount" => [100, 200, 150, 300]
     )?;
 
-    // âŒ Less efficient: Join everything, then filter
-    let inactive_v1 = customers_df.clone()
-        .join(orders_df.clone(), JoinType::Left, &["id"], &["customer_id"], None)?
-        .filter(col("order_id").is_null())?;
+    // build lazy plans
+    let left_result = customers_df.clone().join(
+        orders_df.clone(),
+        JoinType::LeftMark,
+        &["id"],
+        &["customer_id"],
+        None,
+    )?;
+    let right_result = customers_df.join(
+        orders_df,
+        JoinType::RightMark,
+        &["id"],
+        &["customer_id"],
+        None,
+    )?;
 
-    // âœ… More efficient: Anti join filters during the join
-    let inactive_v2 = customers_df.clone()
-        .join(orders_df.clone(), JoinType::LeftAnti, &["id"], &["customer_id"], None)?;
-
-    // Both produce the same result:
-    // +----+-------+
-    // | id | name  |
-    // +----+-------+
-    // | 3  | Carol |
-    // +----+-------+
-    inactive_v1.show().await?;
-    inactive_v2.show().await?;
+    // execute
+    let left_batches = left_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+-------+",
+            "| id | name  | mark  |",
+            "+----+-------+-------+",
+            "| 1  | Alice | true  |",
+            "| 2  | Bob   | true  |",
+            "| 3  | Carol | false |",
+            "+----+-------+-------+",
+        ],
+        &left_batches
+    );
+    let right_batches = right_result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+-------------+--------+-------+",
+            "| order_id | customer_id | amount | mark  |",
+            "+----------+-------------+--------+-------+",
+            "| 101      | 1           | 100    | true  |",
+            "| 102      | 1           | 200    | true  |",
+            "| 103      | 2           | 150    | true  |",
+            "| 104      | 99          | 300    | false |",
+            "+----------+-------------+--------+-------+",
+        ],
+        &right_batches
+    );
 
     Ok(())
 }
 ```
 
-Both produce the same result, but Anti join:
+Use semi or anti joins when rows should be selected rather than annotated. Repeated mark joins can create repeated `mark` field names; route renaming and projection to [Join Workflows](join-workflows.md).
 
-- Doesn't create intermediate joined rows
-- Doesn't add (and then ignore) right-side columns
-- Optimizer can use more efficient algorithms (e.g., hash-based existence check)
+---
 
-> **Learn more:** See [Semi and Anti joins explained] for why these deserve first-class syntax in SQL.
+## Conclusion
 
-> **Other variants:** <br>
-> DataFusion's [`JoinType`] also includes `RightSemi`, `RightAnti`, and mark variants for advanced use cases. For most DataFrame work, stick to left variants and swap input tables if needed.
+After a join condition identifies matching pairs, `JoinType` determines which matches and nonmatches survive and whether the result carries fields from both inputs, one input, or one input plus `mark`. Use `Inner` for matched two-sided payload, outer variants for unmatched-row preservation, semi and anti for one-sided existence selection, and mark for annotation; hand off key coverage, `NULL` behavior, and unexpected multiplication to [Join Validation](join-validation.md) before treating the result as complete.
 
-> **Mark joins:** <br> > [`LeftMark`]/[`RightMark`] are used internally to decorrelate `EXISTS` subqueries. They return all rows from one side plus an extra boolean "mark" column indicating whether any match exists on the other side. Most DataFrame code won't use them directly, but you may see them in `EXPLAIN` plans for complex SQL with `EXISTS` predicates.
+### Further Reading
 
-[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
-[`jointype`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
-[`full`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Full "All rows from both tables (NULL where no match)"
-[`inner`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Inner "Only rows with matches in both tables"
-[`left`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Left "All left rows + matching right rows (NULL if no match)"
-[`right`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.Right "All right rows + matching left rows (NULL if no match)"
-[`leftanti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
-[`leftsemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
-[`leftmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
-[`rightmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
-[`cross join`]: ../../../../user-guide/sql/select.md#cross-join
-[join tutorial]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/ "Why Venn diagrams mislead when explaining joins"
-[semi and anti joins explained]: https://blog.jooq.org/semi-join-and-anti-join-should-have-its-own-syntax-in-sql/ "Why Semi/Anti joins deserve first-class syntax"
-[survivorship_bias]: https://en.wikipedia.org/wiki/Survivorship_bias
-[set operations]: ../set-operations.md
+- [Join Concepts](join-concepts.md) — Understand matching, preservation, payload, and cardinality.
+- [Join Conditions](join-conditions.md) — Construct named-key and Boolean-condition joins.
+- [Join Workflows](join-workflows.md) — Compose joins in larger `DataFrame` pipelines.
+- [Join Validation](join-validation.md) — Diagnose key coverage, `NULL` behavior, and multiplication.
+- [DataFusion SQL JOIN reference](../../../../user-guide/sql/select.md#join-clause) — Use SQL join syntax.
+- [PostgreSQL joins tutorial][postgresql-join-tutorial] — Review a general SQL introduction.
+
+[`full`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.Full
+[`inner`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.Inner
+[`left`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.Left
+[`leftanti`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.LeftAnti
+[`leftmark`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.LeftMark
+[`leftsemi`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.LeftSemi
+[`right`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.Right
+[`rightanti`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.RightAnti
+[`rightmark`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.RightMark
+[`rightsemi`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html#variant.RightSemi
+[jointype]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html
+[postgresql-join-tutorial]: https://www.postgresql.org/docs/current/tutorial-join.html

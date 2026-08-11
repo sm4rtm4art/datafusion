@@ -27,16 +27,16 @@ The methods that change the schema fall into three families: projection-backed e
 
 **Key methods:**
 
-| Method                                                    | Schema effect                                                      |
-| :-------------------------------------------------------- | :----------------------------------------------------------------- |
-| [`.select()`](#selecting-columns)                         | Replace the output schema with expression-derived fields           |
-| [`.select_columns()`](#selecting-columns)                 | Keep existing fields by name (errors on unknown names)             |
-| [`.select_exprs()`](#selecting-columns)                   | Project from SQL strings (requires the `sql` feature)              |
-| [`.with_column()`](#adding-and-replacing-fields)          | Append a field, or replace it in place if the name exists          |
-| [`.with_column_renamed()`](#renaming-and-removing-fields) | Rename a field (no-op if not found)                                |
-| [`.drop_columns()`](#renaming-and-removing-fields)        | Keep the complement; remove fields by name (ignores unknown names) |
-| [`.fill_null()`](#normalizing-types-and-nulls)            | Replace NULLs; filled castable fields become NOT NULL              |
-| [`.unnest_columns()`](#reshaping-nested-fields)           | Expand `List`/`Struct` fields into a new shape                     |
+| Method                     | Schema effect                                                      |
+| :------------------------- | :----------------------------------------------------------------- |
+| [`.select()`]              | Replace the output schema with expression-derived fields           |
+| [`.select_columns()`]      | Keep existing fields by name (errors on unknown names)             |
+| [`.select_exprs()`]        | Project from SQL strings (requires the `sql` feature)              |
+| [`.with_column()`]         | Append a field, or replace it in place if the name exists          |
+| [`.with_column_renamed()`] | Rename a field (no-op if not found)                                |
+| [`.drop_columns()`]        | Keep the complement; remove fields by name (ignores unknown names) |
+| [`.fill_null()`]           | Replace NULLs; filled castable fields become NOT NULL              |
+| [`.unnest_columns()`]      | Expand `List`/`Struct` fields into a new shape                     |
 
 :::{admonition} Style Note
 :class: note
@@ -102,7 +102,7 @@ Under the hood almost all of these methods compile to a projection: [`.drop_colu
 :::{admonition} .alias() renames the qualifier, not the columns
 :class: seealso
 
-[`.alias()`] re-qualifies every output field through a `SubqueryAlias` node — a relation-level rename, not a projection — so it sits outside these column edits. See [Schema Transformation](schema-transformation.md) for qualifier handling.
+[`.alias()`] re-qualifies every output field through a `SubqueryAlias` node — a relation-level rename, not a projection — so it sits outside these column edits. See [Schema Transformation][schema-transformation] for qualifier handling.
 :::
 
 One sharp edge cuts across these methods: they disagree on what an **unknown column name** does. Check the call you are making against this table before relying on it.
@@ -272,7 +272,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Change a field's type with a `cast()` expression inside a projection, and replace its NULLs with [`.fill_null()`] — both edits flow through the projection node.**
 
-Type and NULL normalization both change the values a downstream plan node receives, but they enter the DataFrame API through different surfaces. Casts are expression-level edits, not DataFrame methods: you pass `cast()`, `try_cast()`, or `Expr::cast_to()` into [`.select()`] or [`.with_column()`], and the projected field takes the expression's type. The coercion rules that govern implicit casts live in [Type Coercion](type-coercion.md).
+Type and NULL normalization both change the values a downstream plan node receives, but they enter the DataFrame API through different surfaces. Casts are expression-level edits, not DataFrame methods: you pass `cast()`, `try_cast()`, or `Expr::cast_to()` into [`.select()`] or [`.with_column()`], and the projected field takes the expression's type. The coercion rules that govern implicit casts live in [Type Coercion][type-coercion].
 
 ```rust
 use datafusion::prelude::*;
@@ -348,9 +348,9 @@ Some operations introduce new columns, combine columns from multiple inputs, or 
 | :-------------------------------------------- | :-------------------------------------------------------------------------------------- | :--------------------------------------------------------- |
 | [`.aggregate()`]                              | Replaces the input fields with grouping expressions and aggregate-expression fields     | [Aggregations](../Transformations/aggregations.md)         |
 | [`.window()`]                                 | Adds or projects window-expression fields through `.select()` or `.with_column()`       | [Window Functions](../Transformations/window-functions.md) |
-| [`.join()`], [`.join_on()`]                   | Combines fields from both inputs and may introduce qualifier or duplicate-name concerns | [Joins](../Transformations/joins.md)                       |
+| [`.join()`], [`.join_on()`]                   | Combines fields from both inputs and may introduce qualifier or duplicate-name concerns | [Joins](../Transformations/joins/index.md)                 |
 | [`.union()`], [`.intersect()`], [`.except()`] | Requires compatible input schemas and preserves the set-operation output shape          | [Set Operations](../Transformations/set-operations.md)     |
-| [`.union_by_name()`]                          | Aligns fields by name and may introduce NULLs for missing columns                       | [Schema Transformation](schema-transformation.md)          |
+| [`.union_by_name()`]                          | Aligns fields by name and may introduce NULLs for missing columns                       | [Schema Transformation][schema-transformation]             |
 
 These effects span the full range: `.aggregate()` collapses rows into group and aggregate fields, while `.window()` is the mirror case — it appends its result to the existing fields and keeps every row. The aggregation below shows the boundary — the schema changes, but grouping and aggregate-expression rules govern the change, not a schema-editing method.
 
@@ -387,8 +387,7 @@ async fn main() -> datafusion::error::Result<()> {
 :::{admonition} Colliding names are qualified, not renamed
 :class: caution
 
-DataFusion does not auto-suffix collisions the way some engines do — there is no `id_1`, `id_2`. When `.join()` brings a column named `id` from both inputs, each keeps its table qualifier (`left.id`, `right.id`), and a later bare reference to `id` fails with an ambiguous-reference error. Two colliding columns with no distinguishing qualifier — same-named computed fields, or an unaliased self-join — are rejected when the plan is built. Disambiguate with qualified references or `.alias()` before combining. See [Joins](../Transformations/joins.md) and [Schema Transformation](schema-transformation.md).
-
+DataFusion does not auto-suffix collisions the way some engines do — there is no `id_1`, `id_2`. When `.join()` brings a column named `id` from both inputs, each keeps its table qualifier (`left.id`, `right.id`), and a later bare reference to `id` fails with an ambiguous-reference error. Two colliding columns with no distinguishing qualifier — same-named computed fields, or an unaliased self-join — are rejected when the plan is built. Disambiguate with qualified references or `.alias()` before combining. See [Joins](../Transformations/joins/index.md) and [Schema Transformation][schema-transformation].
 :::
 
 ---
@@ -489,34 +488,49 @@ Most do not — row-shaping and inspection methods pass it straight through. Tho
 :class: seealso
 
 - **Next:** [Transformations](../Transformations/index.md) — filter, join, aggregate, sort, and enrich data in the DataFrame lifecycle's "life" phase.
-- [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, and the name collisions that operation-derived methods can trigger.
-- [Type Coercion](type-coercion.md) — the cast rules behind expression-driven type changes.
+- [Schema Transformation][schema-transformation] — qualifiers, combining schemas, and the name collisions that operation-derived methods can trigger.
+- [Type Coercion][type-coercion] — the cast rules behind expression-driven type changes.
   :::
 
 ---
 
-<!-- Link references -->
+---
 
-[coalesce()]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.coalesce.html
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[schema-transformation]: schema-transformation.md
+[type-coercion]: type-coercion.md
+
+<!-- Core types -->
+
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
 [`unnestoptions`]: https://docs.rs/datafusion/latest/datafusion/common/struct.UnnestOptions.html
+
+<!-- Methods and functions -->
+
+[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
+[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
+[`.fill_null()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.fill_null
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
 [`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
 [`.select_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns
 [`.select_exprs()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_exprs
-[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
-[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
-[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
-[`.fill_null()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.fill_null
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
 [`.unnest_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns
 [`.unnest_columns_with_options()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.unnest_columns_with_options
-[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
 [`.window()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.window
-[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
-[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
-[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
-[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
-[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
+
+<!-- External resources -->
+
+[coalesce()]: https://docs.rs/datafusion/latest/datafusion/functions/core/expr_fn/fn.coalesce.html

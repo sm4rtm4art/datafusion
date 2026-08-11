@@ -32,7 +32,7 @@ The schema attached to every [`DataFrame`] is a rich, queryable object — not j
 | [`.fields()`]                               | Iterate over field definitions                 | [Accessing Fields and Properties](#accessing-fields-and-properties)       |
 | [`.field_with_unqualified_name()`]          | Get field definition by name                   | [Field Lookup by Name](#field-lookup-by-name)                             |
 | [`.has_column_with_unqualified_name()`]     | Check column existence (returns `bool`)        | [Validating Column Existence](#validating-column-existence)               |
-| `.data_type(&col)` ([`ExprSchema`])         | Get a column's Arrow data type                 | [Per-Column Type and Nullability](#per-column-type-and-nullability)       |
+| [`.data_type()`][exprschema-data-type]      | Get a column's Arrow data type (`ExprSchema`)  | [Per-Column Type and Nullability](#per-column-type-and-nullability)       |
 | [`.iter()`]                                 | Field + qualifier pairs                        | [Qualified Field Access](#qualified-field-access)                         |
 | [`.index_of_column()`]                      | Get column's positional index                  | [Index-Based Lookup](#index-based-lookup)                                 |
 | [`.has_equivalent_names_and_types()`]       | Compare schemas with error detail              | [Schema Equivalence](#schema-equivalence)                                 |
@@ -78,18 +78,18 @@ Consider a pipeline that joins customer data from Parquet files with transaction
 
 The schema you inspect originates from the data source. How it arrives depends on how the [`DataFrame`] was created:
 
-| Source                                                  | Returns                           | Example                                            |
-| :------------------------------------------------------ | :-------------------------------- | :------------------------------------------------- |
-| [`TableProvider::schema()`]                             | `SchemaRef` (Arrow)               | Custom data sources, catalog tables                |
-| [`ctx.read_parquet(...)`][`.read_parquet()`]            | Arrow Schema from file metadata   | Self-describing formats (Parquet, Arrow IPC, Avro) |
-| `CsvReadOptions::new().schema(&schema)`                 | Explicit Arrow Schema you provide | Text formats requiring schema                      |
-| [`Schema::new(vec![Field::new(...)])`][`schema::new()`] | Constructed Arrow Schema          | Programmatic schema definition                     |
+| Source                                       | Returns                           | Example                                            |
+| :------------------------------------------- | :-------------------------------- | :------------------------------------------------- |
+| [`TableProvider::schema()`]                  | `SchemaRef` (Arrow)               | Custom data sources, catalog tables                |
+| [`ctx.read_parquet(...)`][`.read_parquet()`] | Arrow Schema from file metadata   | Self-describing formats (Parquet, Arrow IPC, Avro) |
+| `CsvReadOptions::new().schema(&schema)`      | Explicit Arrow Schema you provide | Text formats requiring schema                      |
+| [`Schema::new(...)`][`schema::new()`]        | Constructed Arrow Schema          | Programmatic schema definition                     |
 
-For a deeper treatment of schema origins and ownership, see [Schema Concepts](schema-concepts.md). For the internal structure of [`DFSchema`], see [Anatomy of a Schema](schema-anatomy.md).
+For a deeper treatment of schema origins and ownership, see [Schema Concepts][schema-concepts]. For the internal structure of [`DFSchema`], see [Anatomy of a Schema][schema-anatomy].
 
 :::{admonition} Pre-analysis vs post-analysis schema
 :class: tip
-The schema returned by [`.schema()`] reflects the **pre-analysis** state of the [`LogicalPlan`]. After the [`TypeCoercion`] analyzer runs (triggered by [`.collect()`] or [`.show()`]), types may change due to implicit widening. To see the post-analysis schema with inserted `CAST` nodes, use [`.explain(false, false)`] — see [Type Coercion](type-coercion.md) for details.
+The schema returned by [`.schema()`] reflects the **pre-analysis** state of the [`LogicalPlan`]. After the [`TypeCoercion`] analyzer runs (triggered by [`.collect()`] or [`.show()`]), types may change due to implicit widening. To see the post-analysis schema with inserted `CAST` nodes, use [`.explain(false, false)`] — see [Type Coercion][type-coercion] for details.
 :::
 
 ## Displaying Schemas
@@ -151,7 +151,7 @@ When debugging schema mismatches, use [`df.schema().tree_string()`][`.tree_strin
 
 **Programmatic access to every field property — names, types, nullability, qualifiers — flows through a single `&DFSchema` reference, giving you type-safe API access and `Result`-based error handling over the schema contract.**
 
-All access goes through [`df.schema()`][`.schema()`], which returns a `&DFSchema`. For a detailed breakdown of what each field contains — name, data type, nullability, and metadata — see [Anatomy of a Schema](schema-anatomy.md). The methods below fall into two categories: **collection methods** that return the full set of fields or metadata, and **lookup methods** that target specific columns by name, qualifier, or index. Collection methods are useful for iteration, counting, or bulk validation. Lookup methods are useful for guard clauses, type checks, and error handling. The subsections below cover lookups by name, per-column type inspection via [`ExprSchema`], qualifier-aware access, existence checks, and index-based lookups.
+All access goes through [`df.schema()`][`.schema()`], which returns a `&DFSchema`. For a detailed breakdown of what each field contains — name, data type, nullability, and metadata — see [Anatomy of a Schema][schema-anatomy]. The methods below fall into two categories: **collection methods** that return the full set of fields or metadata, and **lookup methods** that target specific columns by name, qualifier, or index. Collection methods are useful for iteration, counting, or bulk validation. Lookup methods are useful for guard clauses, type checks, and error handling. The subsections below cover lookups by name, per-column type inspection via [`ExprSchema`], qualifier-aware access, existence checks, and index-based lookups.
 
 | Method                                          | Returns                                            | Use Case                        |
 | ----------------------------------------------- | -------------------------------------------------- | ------------------------------- |
@@ -666,7 +666,7 @@ fn main() -> datafusion::error::Result<()> {
 
 :::{admonition} Functional dependencies
 :class: note
-[`DFSchema`] carries [`FunctionalDependencies`] — constraints like primary keys and unique columns that the optimizer uses for plan optimization (e.g., eliminating redundant sorts). Access them via [`df.schema().functional_dependencies()`][`.functional_dependencies()`]. These constraints are lost when converting to Arrow [`Schema`]. For details on how functional dependencies participate in query planning, see [Schema Concepts](schema-concepts.md).
+[`DFSchema`] carries [`FunctionalDependencies`] — constraints like primary keys and unique columns that the optimizer uses for plan optimization (e.g., eliminating redundant sorts). Access them via [`df.schema().functional_dependencies()`][`.functional_dependencies()`]. These constraints are lost when converting to Arrow [`Schema`]. For details on how functional dependencies participate in query planning, see [Schema Concepts][schema-concepts].
 :::
 
 :::{admonition} `dataframe!` macro nullability
@@ -685,61 +685,80 @@ The [`dataframe!`] macro sets all columns to `nullable = true` by default. In pr
 :::{admonition} Related documents
 :class: seealso
 
-- [Schema Concepts](schema-concepts.md) — ownership flow, schema types, `DFSchema` vs Arrow `Schema`
-- [Anatomy of a Schema](schema-anatomy.md) — per-column field properties (name, data type, nullable, metadata)
-- [Schema Inference](schema-inference.md) — why inferred schemas should be checked before production use
-- [Type Coercion](type-coercion.md) — automatic type alignment and explicit casting
-- [Schema Transformation](schema-transformation.md) — qualifiers, combining schemas, nullability handling
-- [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
+- [Schema Concepts][schema-concepts] — ownership flow, schema types, `DFSchema` vs Arrow `Schema`
+- [Anatomy of a Schema][schema-anatomy] — per-column field properties (name, data type, nullable, metadata)
+- [Schema Inference][schema-inference] — why inferred schemas should be checked before production use
+- [Type Coercion][type-coercion] — automatic type alignment and explicit casting
+- [Schema Transformation][schema-transformation] — qualifiers, combining schemas, nullability handling
+- [DataFrame Methods][schema-dataframe-methods] — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
   :::
 
 ---
 
-<!-- Link references -->
+---
 
-[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[`schema::new()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html#method.new
-[`field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[schema-anatomy]: schema-anatomy.md
+[schema-concepts]: schema-concepts.md
+[schema-dataframe-methods]: schema-dataframe-methods.md
+[schema-inference]: schema-inference.md
+[schema-transformation]: schema-transformation.md
+[type-coercion]: type-coercion.md
+
+<!-- Core types -->
+
 [`column`]: https://docs.rs/datafusion/latest/datafusion/common/struct.Column.html
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
 [`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`exprschema`]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html
 [`functionaldependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
-[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
-[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+
+<!-- Methods and functions -->
+
+[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
+[`.check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.columns()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.columns
+[`.explain(false, false)`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.field()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field
+[`.field_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_names
+[`.field_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_qualified_name
+[`.field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
+[`.fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
+[`.fields_with_qualified()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields_with_qualified
+[`.functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.functional_dependencies
+[`.has_column_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_qualified_name
+[`.has_column_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_unqualified_name
+[`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
+[`.index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column
+[`.index_of_column_by_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column_by_name
+[`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
+[`.iter()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.iter
+[`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
+[`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.matches_arrow_schema
+[`.maybe_index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.maybe_index_of_column
+[`.metadata()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
+[`.qualified_field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.qualified_field_with_unqualified_name
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
 [`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
 [`.to_string()`]: https://doc.rust-lang.org/std/string/trait.ToString.html
 [`.tree_string()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.tree_string
-[`.fields()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields
-[`.field()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field
-[`.iter()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.iter
-[`.field_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_names
-[`.columns()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.columns
-[`.metadata()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.metadata
-[`.has_column_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_unqualified_name
-[`.has_column_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_column_with_qualified_name
-[`.field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_unqualified_name
-[`.field_with_qualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.field_with_qualified_name
-[`.fields_with_qualified()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.fields_with_qualified
-[`.qualified_field_with_unqualified_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.qualified_field_with_unqualified_name
-[`.index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column
-[`.maybe_index_of_column()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.maybe_index_of_column
-[`.index_of_column_by_name()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.index_of_column_by_name
-[`.logically_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.logically_equivalent_names_and_types
-[`.has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
 [`dfschema::datatype_is_logically_equal()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.datatype_is_logically_equal
-[`.check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
-[`.matches_arrow_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.matches_arrow_schema
-[`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
-[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
-[`.functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.functional_dependencies
-[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
-[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
-[`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
-[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`.explain(false, false)`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
-[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`schema::new()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html#method.new
+[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
+[exprschema-data-type]: https://docs.rs/datafusion/latest/datafusion/common/trait.ExprSchema.html#method.data_type
+
+<!-- External resources -->
+
 [`printschema()`]: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.printSchema.html

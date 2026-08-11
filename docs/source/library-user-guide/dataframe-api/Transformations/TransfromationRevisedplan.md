@@ -350,13 +350,15 @@ None.
 
 ---
 
-## transformation-concepts.md Verdict: REVISE
+## transformation-concepts.md Verdict: REVISE → RESOLVED (Author 2026-08-07)
 
 **Mode:** final  
 **Structural role:** inferred h2  
 **Stage:** unspecified  
 **Independence:** evidence-only — Independence limitation: no author intent was supplied; this review was evidence-only.  
 **Filepath:** `docs/source/library-user-guide/dataframe-api/Transformations/transformation-concepts.md`
+
+**Disposition:** B1 and N1–N3 addressed on the leaf; sibling `joins.md` reading-path / `.alias()` links also retargeted to `joins/index.md` and `joins/join-workflows.md`. No re-judge required unless Author requests one. Historical finding text kept below for the record.
 
 ## Review boundary
 
@@ -368,7 +370,7 @@ None.
 
 ## Blocking findings
 
-### B1 — MAJOR: The universal lazy-transformation contract omits `.cache()`
+### ~~B1 — MAJOR: The universal lazy-transformation contract omits `.cache()`~~ **RESOLVED**
 
 - **Location:** `docs/source/library-user-guide/dataframe-api/Transformations/transformation-concepts.md` title/abstract and §§“The Transformation Contract” and “Laziness and the Point of Execution” lines 20–107
 - **Rule:** `markdown.mdc` §4 (lazy versus eager); concept pages must own an accurate mental model.
@@ -378,23 +380,27 @@ None.
 - **Impact:** Returning a `DataFrame` is presented as sufficient evidence of laziness, causing readers to misplace execution cost and error handling around `.cache()`.
 - **Direction:** Scope the contract explicitly to ordinary lazy transformations and identify `.cache()` as an eager exception/action-like boundary despite its `DataFrame` return type.
 - **Verification:** Source inspected — PASS; doctest — PASS but does not exercise `.cache()`.
+- **Resolution:** Ordinary lazy contract scoped; `.cache()` named as eager exception in highlight, abstract, contract, laziness section, and conclusion.
 
 ## Non-blocking findings
 
-### N1 — MINOR: Semi/anti join explanation assumes left-sided variants
+### ~~N1 — MINOR: Semi/anti join explanation assumes left-sided variants~~ **RESOLVED**
 
 - **Location:** `docs/source/library-user-guide/dataframe-api/Transformations/transformation-concepts.md` §“Joins in Brief” lines 178–202
 - **Direction:** Describe semi/anti joins as returning only the preserved side. Right-semi and right-anti joins return right-side columns and use the left input for matching.
+- **Resolution:** Preserved-side wording covers left and right semi/anti.
 
-### N2 — MINOR: Join references target a nonexistent page
+### ~~N2 — MINOR: Join references target a nonexistent page~~ **RESOLVED**
 
 - **Location:** `docs/source/library-user-guide/dataframe-api/Transformations/transformation-concepts.md` lines 174, 202, 319 and `[joins]` definition around line 363
 - **Direction:** Change `joins.md` to the existing `joins/index.md`; Sphinx reports three unresolved references.
+- **Resolution:** Leaf footnote → `joins/index.md`; also `Transformations/index.md` reading path and `dataframe-specifics.md` `.alias()` row retargeted. Toctree uses `joins/index` (folder index — there is no shipping `joins.md`).
 
-### N3 — NIT: Page title uses an awkward plural modifier
+### ~~N3 — NIT: Page title uses an awkward plural modifier~~ **RESOLVED**
 
 - **Location:** `docs/source/library-user-guide/dataframe-api/Transformations/transformation-concepts.md` title line 20 and contents title line 51
 - **Direction:** Use “Transformation Concepts” consistently.
+- **Resolution:** Title and contents label use “Transformation Concepts”.
 
 ## Open questions
 
@@ -407,10 +413,10 @@ None.
 - Aggregation versus window grain and joins versus set-operation orientation are otherwise supported by source.
 - The runnable pipeline demonstrates all five dimensions and asserts its output.
 
-## Validation evidence
+## Validation evidence (at original review)
 
-- **FAIL — source/API truth:** `.cache()` and right-sided semi/anti joins contradict B1 and N1.
-- **FAIL — target parse:** Three unresolved `joins.md` references.
+- **FAIL — source/API truth:** `.cache()` and right-sided semi/anti joins contradict B1 and N1. → **superseded by RESOLVED above**
+- **FAIL — target parse:** Three unresolved `joins.md` references. → **superseded by RESOLVED above**
 - **FAIL — corpus format command:** Six out-of-scope files failed; the target was not reported.
 - **PASS — Rust doctest:** 1 passed; 0 failed.
 - **NOT RUN — external links:** required `lychee` tool is unavailable without installation.
@@ -422,4 +428,82 @@ None.
 
 ## Recommended next action
 
-- Resolve B1 and N1–N3, rerun the target gates, and resubmit for final review.
+- ~~Resolve B1 and N1–N3, rerun the target gates, and resubmit for final review.~~ **Done for findings.** Optional: re-judge only if Author wants a fresh ACCEPT; otherwise resume `join-conditions` Draft/Polish.
+
+---
+
+## joins/join-concepts.md Verdict: REVISE
+
+**Mode:** final  
+**Structural role:** inferred — whole-page H1 target; no heading-subtree role applies  
+**Stage:** Polish (post close-out)  
+**Independence:** limited — Independence limitation: author intent was visible during the evidence pass; this review was adversarial but not blind.  
+**Filepath:** docs/source/library-user-guide/dataframe-api/Transformations/joins/join-concepts.md
+
+## Review boundary
+
+- **Judged:** Current whole-page technical accuracy, concept-page structure, reader path, ownership, finish, and final-mode validation.
+- **Not judged:** Named neighbors’ quality beyond ownership; physical-operator details; unnamed documentation.
+- **Named neighbors:** All four exist and were inspected only for their stated ownership boundaries.
+- **Consistency boundary:** Repository truth — whole page, named neighborhood, and targeted source/API/tests.
+- **Final-state requirements not yet applicable:** Formal `page_final` transition and Author approval remain outside this judgment; no bounded quality requirement was deferred.
+
+## Blocking findings
+
+### B1 — MAJOR: A separate core concept is buried under the first H2
+
+- **Location:** `join-concepts.md` §“Fusing DataFrames: What a Join Decides” / §“How Joins Extend the Logical Plan” (lines 65–199)
+- **Rule:** `markdown.mdc` §7.4 limits the first H2 to a short topic on-ramp without deep mechanism; `markdown-landing.mdc` §2.1 gives each concept H2 one concept.
+- **Claim:** The hierarchy presents logical-plan representation as a facet of “what a join decides.”
+- **Counter-evidence:** The orientation table identifies logical-plan representation as a separate concept. Its H3 carries a field table, two API shapes, optimizer behavior, and the logical/physical boundary. The approved storyline likewise treats plan extension as the next step after the four result questions. The acknowledged altitude trade-off supplies no clarity benefit that outweighs these signals.
+- **Sources:** Target lines 34–39 and 65–199; `markdown.mdc` §§7.4–7.5; `markdown-landing.mdc` §2.1; supplied intent.
+- **Impact:** The first-H2 on-ramp becomes a long mechanism section, while local navigation understates one of the page’s core concepts. This breaks the intended conceptual hierarchy for jump-in readers.
+- **Direction:** Promote “How Joins Extend the Logical Plan” to a peer H2 while preserving its bounded content and storyline position.
+- **Verification:** Rule and target inspection — PASS; current Sphinx parse — PASS but does not test conceptual altitude; differential parse — NOT RUN; Rust doctest — NOT APPLICABLE.
+
+## Non-blocking findings
+
+None.
+
+## Open questions
+
+### Q1 — QUESTION: Whole-page structural role lacks a canonical token
+
+- **Location:** `join-concepts.md` §“Join Concepts” (whole page)
+- **Resolves it:** Coordinator clarification whether whole-page final packets should omit `structural_role` or the protocol should support `page`. This does not affect the review scope or verdict.
+
+## Verified strengths
+
+- The text independently reconstructs the approved arc: matching/preservation/cardinality/payload → lazy plan node → schema → rows → binary composition → operation boundaries.
+- Source confirms `.join()` and `.join_on()` create lazy `Join` plans; `.join_on()` AND-combines expressions into `filter`, and equality extraction is optimizer-owned.
+- Source confirms join schema ordering, outer-join nullability, one-sided payloads, non-null mark fields, and conditionless inner joins as Cartesian joins.
+- Condition construction, variant catalogue, workflow recipes, and diagnosis are handed to their named owners without turning this page into a router.
+- No target `TODO:`, `JOIN-TODO`, `citation-needed`, `TBD`, `FIXME`, or `PLACEHOLDER` remains.
+
+## Validation evidence
+
+**PASS — source/API verification:** Inspected DataFrame join methods, logical `Join`, schema construction, optimizer behavior, set-operation APIs, and relevant tests.
+
+**PASS — doctest registration inspection:** `datafusion/core/src/lib.rs` registers `join-concepts.md`.
+
+**FAIL — repository format gate:** `ci/scripts/doc_prettier_check.sh` exited 1 for nine unrelated files; `join-concepts.md` was not reported.
+
+**PASS — current target parse:** Fresh dummy Sphinx build exited 0 with no target warning or error.
+
+**NOT RUN — differential parse comparison:** No pre-edit Polish baseline was supplied.
+
+**NOT APPLICABLE — Rust doctest:** The target contains no reader-visible Rust blocks; its API-shape block is deliberately `text`.
+
+**NOT RUN — external link gate:** Companion classifies it as CI-only; it was not requested.
+
+**PASS — marker gate:** The prescribed target search returned empty output.
+
+## Unverified areas
+
+- External URL availability was not checked.
+- A before/after differential parse could not be reconstructed retrospectively.
+- Repository-wide formatting remains red for unrelated files; no target formatting defect was localized.
+
+## Recommended next action
+
+Resolve B1 by making “How Joins Extend the Logical Plan” a peer H2.

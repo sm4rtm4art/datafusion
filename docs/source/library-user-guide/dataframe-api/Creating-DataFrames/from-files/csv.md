@@ -45,9 +45,9 @@ In this document, code elements follow a consistent pattern:
 
 ## Reading CSV Files
 
-**A single call to `ctx.read_csv()` infers the schema from the first 1,000 rows and returns a lazy DataFrame ready for querying.**
+**A single call to [`.read_csv()`] infers the schema from the first 1,000 rows and returns a lazy DataFrame ready for querying.**
 
-When you call `ctx.read_csv()`, DataFusion immediately reads the beginning of the file to infer column types from the data it samples. The actual data processing—filtering, joining, and full parsing—waits until you trigger an action like `.collect()`.
+When you call `ctx.read_csv()`, DataFusion immediately reads the beginning of the file to infer column types from the data it samples. The actual data processing—filtering, joining, and full parsing—waits until you trigger an action like [`.collect()`].
 
 ```rust
 use datafusion::prelude::*;
@@ -141,8 +141,7 @@ CSV files are uncompressed plain text — they consume significant disk space
 and I/O bandwidth. Compressing them before storage is standard practice.
 
 DataFusion can decompress these files on the fly during the read process. It
-supports `GZIP`, `BZIP2`, `XZ`, and `ZSTD`. To enable this, configure the
-`.file_compression_type()`:
+supports `GZIP`, `BZIP2`, `XZ`, and `ZSTD`. To enable this, configure [`.file_compression_type()`][`csvreadoptions::file_compression_type()`]:
 
 :::{admonition} Compressed CSVs disable parallel reading
 :class: warning
@@ -153,7 +152,7 @@ BZIP2, XZ, ZSTD) are **non-splittable** — the decompression stream has no
 random-access entry points, so the entire file must be read sequentially on
 a single thread. For large files, this creates a significant bottleneck.
 
-The same constraint applies when `.newlines_in_values(true)` is set,
+The same constraint applies when [`.newlines_in_values()`][`csvreadoptions::newlines_in_values()`] is set,
 because row boundaries can no longer be determined by byte offset alone.
 :::
 
@@ -239,10 +238,10 @@ this saves significant RAM even though all bytes are still read from disk.
 :::{admonition} Register for repeated queries and SQL access
 :class: tip
 
-Use `ctx.register_csv("table_name", "path.csv", options)` to register the
-CSV file as a named table in the `SessionContext` catalog. This enables:
+Use [`.register_csv()`] to register the
+CSV file as a named table in the [`SessionContext`] catalog. This enables:
 
-- **SQL access** — query the table via `ctx.sql("SELECT * FROM table_name")`
+- **SQL access** — query the table via [`.sql()`]
 - **Cross-query reuse** — multiple DataFrame operations and SQL queries
   can reference the same table name without re-reading options or paths
 - **Schema caching** — the inferred (or explicit) schema is resolved once
@@ -259,7 +258,7 @@ significantly better query performance.
 
 CSV files carry no embedded schema. DataFusion infers types by sampling a
 limited number of rows at the beginning of the file (configurable via
-`.schema_infer_max_records()`, default 1,000) and locks the column types
+[`.schema_infer_max_records()`][`csvreadoptions::schema_infer_max_records()`], default 1,000) and locks the column types
 based solely on what it observes in that window.
 
 :::{admonition} Schema Inference Problem
@@ -268,7 +267,7 @@ based solely on what it observes in that window.
 Schema inference from a finite sample is inherently
 unreliable for heterogeneous data. Any type variation that first appears
 _beyond_ the sample boundary (default: first 1,000 rows) produces a
-`DataFusionError` at execution time (when you call `.collect()`).
+[`DataFusionError`] at execution time (when you call [`.collect()`]).
 Increasing the sample size only shifts the boundary — it never eliminates
 the risk. The parser cannot coerce values that contradict the inferred
 types.
@@ -298,12 +297,12 @@ lowercase `amount` — which won't match the header `Amount`.
 - **Provide an explicit schema** with lowercase field names — this
   normalizes casing at read time and eliminates the mismatch entirely
 
-For more details, see [Schema Management](../Schema-Management/index.md).
+For more details, see [Schema Management][schema-management].
 ::::
 
 To guarantee safety, use [`CsvReadOptions::schema()`] to explicitly define the schema. This skips the inference scan (improving startup time) and enforces strict types. You can also use `.null_regex()` to define how missing values are represented in your specific dataset.
 
-For more details on managing schemas across different sources, see [Schema Management](../Schema-Management/index.md).
+For more details on managing schemas across different sources, see [Schema Management][schema-management].
 
 ```rust
 use datafusion::prelude::*;
@@ -364,11 +363,51 @@ async fn main() -> datafusion::error::Result<()> {
 
 [`CsvReadOptions::schema()`] _sets_ the expected schema for the data reader before the file is processed. This defines the contract for how DataFusion should parse the incoming bytes.
 
-This differs from [`DataFrame::schema()`], which _returns_ the resolved `DFSchema` of an already-created DataFrame. The `DFSchema` contains the final types and column names after all inference, explicit definitions, and DataFrame transformations have been applied.
+This differs from [`DataFrame::schema()`], which _returns_ the resolved [`DFSchema`] of an already-created DataFrame. The [`DFSchema`] contains the final types and column names after all inference, explicit definitions, and DataFrame transformations have been applied.
 :::
 
 ## CSV References
 
-- [`CsvReadOptions` API](https://docs.rs/datafusion/latest/datafusion/prelude/struct.CsvReadOptions.html) — All configuration options
-- [CSV Format Options (SQL)](../../../../../user-guide/sql/format_options.md#csv-format-options) — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
-- [Example Usage (CSV with SQL and DataFrame)](../../user-guide/example-usage.md)
+- [`CsvReadOptions` API][`csvreadoptions`] — All configuration options
+- [CSV Format Options (SQL)][format-options] — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
+- [Example Usage (CSV with SQL and DataFrame)][example-usage]
+
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[example-usage]: ../../../../user-guide/example-usage.md
+[format-options]: ../../../../user-guide/sql/format_options.md
+[schema-management]: ../../Schema-Management/index.md
+
+<!-- Core types -->
+
+[`csvreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
+[`datafusionerror`]: https://docs.rs/datafusion/latest/datafusion/error/enum.DataFusionError.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+
+<!-- Methods and functions -->
+
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.register_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_csv
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`csvreadoptions::comment()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.comment
+[`csvreadoptions::delimiter()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.delimiter
+[`csvreadoptions::escape()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.escape
+[`csvreadoptions::file_compression_type()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.file_compression_type
+[`csvreadoptions::file_extension()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.file_extension
+[`csvreadoptions::file_sort_order()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.file_sort_order
+[`csvreadoptions::has_header()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.has_header
+[`csvreadoptions::newlines_in_values()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.newlines_in_values
+[`csvreadoptions::null_regex()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.null_regex
+[`csvreadoptions::quote()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.quote
+[`csvreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema
+[`csvreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[`csvreadoptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.table_partition_cols
+[`csvreadoptions::terminator()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.terminator
+[`csvreadoptions::truncated_rows()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
+[`dataframe::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema

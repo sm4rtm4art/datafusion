@@ -70,17 +70,14 @@ Structure and section ownership
   prescribed "Choose the API That Makes the Join Logic Clear" admonition. It
   compares clarity, maintainability, and composition without making execution-
   speed or compile-time column-checking claims.
-- JOIN-TODO-004 [construction pass] Separate `.join()` named equality keys from
-  `.join_on()` expression conditions. Cover single/composite keys, equal-length
-  key arrays, qualified expressions, multiple expressions combined with AND,
-  and an explicit OR expression. Do not promise a physical algorithm based on
-  method choice.
-- JOIN-TODO-005 [construction pass; resolve in subtree] Decide whether NATURAL,
-  intentional CROSS, and LATERAL forms receive a bounded H3 or one callout.
-  Record honest API gaps and SQL/hybrid routes without becoming an SQL tutorial.
-  LATERAL is conceptually a correlated FROM item and should cross-link to the
-  subquery documentation. General SQL-dialect guidance belongs to the SQL
-  documentation rather than this page.
+- JOIN-TODO-004 [resolved 2026-08-05 in join-conditions Draft] `.join()` now
+  owns named single/composite equality keys and equal-length key arrays;
+  `.join_on()` owns qualified boolean expressions, AND reduction, and explicit
+  OR. The comparison makes no physical-algorithm or runtime guarantee.
+- JOIN-TODO-005 [resolved 2026-08-05 in join-conditions Draft] NATURAL,
+  intentional CROSS, and LATERAL share one bounded SQL-route H3. It records the
+  DataFrame API gap and links to the SQL JOIN and subquery references without
+  becoming an SQL tutorial.
 - JOIN-TODO-006 [preservation pass] Reorganize the JoinType taxonomy around row
   and column preservation: inner; left/right/full outer; left/right semi and
   anti. Explain null extension and row multiplication where first relevant.
@@ -123,11 +120,12 @@ Structure and section ownership
 
 Claims that must be deleted or authoritatively re-verified
 
-- JOIN-TODO-016 [accuracy pass] Remove or verify the temporal "0.004% at
-  midnight" claim, "Left Join handles ~90%" claim, "16x faster" benchmark,
-  unconditional right-side/build-side prescriptions, "good order reduces
-  planning overhead," universal SIMD statement, and broad late-materialization
-  claim. Preserve supported workflow advice without unsupported numbers.
+- JOIN-TODO-016 [accuracy pass; join-conditions temporal claim removed
+  2026-08-05] Remove or verify the remaining "Left Join handles ~90%" claim,
+  "16x faster" benchmark, unconditional right-side/build-side prescriptions,
+  "good order reduces planning overhead," universal SIMD statement, and broad
+  late-materialization claim. Preserve supported workflow advice without
+  unsupported numbers.
 - JOIN-TODO-017 [accuracy pass] Replace blanket claims that semi/anti joins or
   DataFusion execution are necessarily faster than alternatives. Explain the
   semantic and schema differences first; make performance conditional and

@@ -399,7 +399,7 @@ For deeper exploration of the topics covered in this section:
 
 - [Designing Data-Intensive Applications](https://dataintensive.net/) — Martin Kleppmann's comprehensive guide to database internals and distributed systems trade-offs (covers SQL vs NoSQL, OLTP vs OLAP, consistency models)
 - [MongoDB vs PostgreSQL](https://www.mongodb.com/resources/compare/mongodb-postgresql) — When document stores make sense
-- [The Log: What every software engineer should know](https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying) — Jay Kreps on data architecture patterns
+- The Log: What every software engineer should know — Jay Kreps on data architecture patterns
 
 [`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
 [`.into_view()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view

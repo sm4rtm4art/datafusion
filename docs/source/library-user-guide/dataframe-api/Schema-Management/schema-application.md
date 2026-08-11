@@ -21,7 +21,7 @@
 
 **Applying schemas at read time turns raw input into `DataFrame`s with declared contracts instead of inferred guesses.**
 
-Schemas give data its structure, turning raw values into typed, queryable columns. Explicit schemas make data flows reliable, inspectable, and auditable by declaring column names, Arrow types, nullability, and metadata before execution begins. [Creating Schemas](schema-creation.md) shows how to declare those contracts; this page shows how to apply them when a reader or table provider creates a lazy `DataFrame`.
+Schemas give data its structure, turning raw values into typed, queryable columns. Explicit schemas make data flows reliable, inspectable, and auditable by declaring column names, Arrow types, nullability, and metadata before execution begins. [Creating Schemas][schema-creation] shows how to declare those contracts; this page shows how to apply them when a reader or table provider creates a lazy `DataFrame`.
 
 The following sections cover formats without embedded schemas (CSV and JSON), self-describing formats with canonical schemas (Parquet, Avro, and Arrow IPC), schema metadata, and partitioned reads. The examples show how DataFusion attaches declared schemas at the read boundary, how the resulting `DFSchema` behaves, and where mismatches fail before downstream transformations rely on the wrong contract.
 
@@ -63,9 +63,9 @@ In this document, code elements follow a consistent pattern:
 
 **Readers create `DataFrame`s with resolved schemas; transformations create new `DataFrame`s with new `LogicalPlan`s.**
 
-The schemas built in [Creating Schemas](schema-creation.md) become useful when a reader or table provider uses them to create a `DataFrame`. DataFusion accepts an Arrow [`Schema`] through format-specific read options, resolves that source schema, builds a [`LogicalPlan`], and exposes the resulting [`DFSchema`] through `df.schema()`.
+The schemas built in [Creating Schemas][schema-creation] become useful when a reader or table provider uses them to create a `DataFrame`. DataFusion accepts an Arrow [`Schema`] through format-specific read options, resolves that source schema, builds a [`LogicalPlan`], and exposes the resulting [`DFSchema`] through `df.schema()`.
 
-If a source value cannot be parsed into the declared type, DataFusion fails instead of silently changing the contract. Once a `DataFrame` exists, later schema changes come from new lazy plans: `.select()` builds a plan with a different column order or aliases, `.cast_to()` adds type conversions, and methods such as `.with_column()` add projected fields. Those transformation patterns belong in [Transforming Schemas](schema-transformation.md) and [Schema Management with DataFrame methods](schema-dataframe-methods.md). This document stays at the boundary where a schema is attached to input data and then normalized for downstream work.
+If a source value cannot be parsed into the declared type, DataFusion fails instead of silently changing the contract. Once a `DataFrame` exists, later schema changes come from new lazy plans: `.select()` builds a plan with a different column order or aliases, `.cast_to()` adds type conversions, and methods such as `.with_column()` add projected fields. Those transformation patterns belong in [Transforming Schemas][schema-transformation] and [Schema Management with DataFrame methods][schema-dataframe-methods]. This document stays at the boundary where a schema is attached to input data and then normalized for downstream work.
 
 :::{admonition} Normalization after read is lazy
 :class: note
@@ -124,7 +124,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **Explicit schemas matter most when the file format provides no schema of its own; for CSV and JSON, inference is useful for exploration but fragile for production contracts.**
 
-DataFusion creates source schemas in two broad ways. Self-describing formats such as Parquet, Avro, and Arrow IPC provide embedded metadata that DataFusion reads directly. CSV and JSON provide rows of values without a reliable column contract, so DataFusion samples rows to infer names and types unless you provide a schema. CSV and JSON both use a default sample size of 1,000 records, configurable through [`CsvReadOptions::schema_infer_max_records()`] and [`NdJsonReadOptions::schema_infer_max_records()`]. For the failure modes behind inference, see [Schema Inference](schema-inference.md).
+DataFusion creates source schemas in two broad ways. Self-describing formats such as Parquet, Avro, and Arrow IPC provide embedded metadata that DataFusion reads directly. CSV and JSON provide rows of values without a reliable column contract, so DataFusion samples rows to infer names and types unless you provide a schema. CSV and JSON both use a default sample size of 1,000 records, configurable through [`CsvReadOptions::schema_infer_max_records()`] and [`NdJsonReadOptions::schema_infer_max_records()`]. For the failure modes behind inference, see [Schema Inference][schema-inference].
 
 Attaching a schema to CSV or JSON defines the `DataFrame` schema for that read; it does not modify the source file or persist field names, data types, nullability, or metadata back into the data. Reattach the schema on each read, keep the contract in code or a schema registry, or store the data in a self-describing format when the schema must travel with the file.
 
@@ -146,7 +146,7 @@ CSV is a plain-text row format, often with the first row used as a header. When 
 | **Short rows**    | Missing trailing fields fail by default; [`CsvReadOptions::truncated_rows(true)`] fills nullable fields with NULL values.                                                                |
 | **Extra columns** | Extra fields remain a row-length mismatch; fix the input, adjust the schema, or read with the correct delimiter and quoting options.                                                     |
 
-For delimiter, quoting, null-marker, and row-shape options, see [Reading CSV Files](../Creating-DataFrames/from-files/csv.md#formatting-and-structure).
+For delimiter, quoting, null-marker, and row-shape options, see [Reading CSV Files][csv].
 
 The schema attached to the CSV reader defines how raw text becomes typed columns. If the source stores Unix timestamps as integers, read them as integers first, then build a new `DataFrame` plan that casts the column to a timestamp.
 
@@ -393,7 +393,7 @@ Self-describing formats store schema metadata in the file, so DataFusion does no
 
 :::{admonition} Schema merging is not type coercion
 :class: caution
-When DataFusion reads multiple self-describing files, the file format merges compatible schemas with Arrow [`Schema::try_merge()`]. The merge can add fields and relax nullability, but it does **not** widen primitive type conflicts such as `Int32` and `Int64` for the same field. DataFusion's type coercion rules apply later inside the [`LogicalPlan`]; see [Type Coercion](type-coercion.md).
+When DataFusion reads multiple self-describing files, the file format merges compatible schemas with Arrow [`Schema::try_merge()`]. The merge can add fields and relax nullability, but it does **not** widen primitive type conflicts such as `Int32` and `Int64` for the same field. DataFusion's type coercion rules apply later inside the [`LogicalPlan`]; see [Type Coercion][type-coercion].
 :::
 
 ### Applying a Canonical Schema to Parquet
@@ -467,7 +467,7 @@ Canonical schemas pin the field contract used for the read. The next section sho
 
 Metadata is semantic context attached to a field or schema: units, source systems, schema versions, PII labels, or business definitions. Arrow stores metadata as free-form `HashMap<String, String>` values on individual fields and on the schema as a whole. DataFusion preserves those keys on the resulting `DataFrame` schema, but it does not interpret or validate them, so misspelled keys and inconsistent vocabularies remain application-level risks.
 
-Metadata is created in the schema itself, not in the read options. When you attach a [`Schema`] with field-level or schema-level metadata to a reader, the resulting `DataFrame` carries that metadata just like it carries field names, data types, and nullability. For constructing schemas with metadata, see [Attaching Metadata](schema-creation.md#attaching-metadata).
+Metadata is created in the schema itself, not in the read options. When you attach a [`Schema`] with field-level or schema-level metadata to a reader, the resulting `DataFrame` carries that metadata just like it carries field names, data types, and nullability. For constructing schemas with metadata, see [Attaching Metadata][schema-creation].
 
 ```rust
 use std::collections::HashMap;
@@ -535,7 +535,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 When Parquet schema metadata must survive a file round trip, call [`ParquetReadOptions::skip_metadata()`] with `false` so the reader preserves metadata stored in the Parquet footer.
 
-Metadata controls meaning, not execution constraints. For optimizer-visible constraints, use DataFusion's constraint APIs rather than field metadata; see [Defining a `DFSchema` Directly](schema-creation.md#defining-a-dfschema-directly).
+Metadata controls meaning, not execution constraints. For optimizer-visible constraints, use DataFusion's constraint APIs rather than field metadata; see [Defining a `DFSchema` Directly][schema-creation].
 
 Metadata is one kind of schema context attached at read time. Partitioned datasets add another: columns derived from directory paths rather than from file contents.
 
@@ -618,15 +618,38 @@ Use explicit schemas for text formats, canonical schemas for self-describing dat
 
 Continue with these pages when you need to define, infer, inspect, or transform schemas after the read boundary.
 
-- [Creating Schemas](schema-creation.md) — defining Arrow `Schema` and `DFSchema` contracts before reading
-- [Schema Inference](schema-inference.md) — how CSV and JSON sampling derives schemas and where inference is risky
-- [Inspecting and Validating Schemas](schema-inspection.md) — checking the applied `DFSchema` before execution
-- [Type Coercion](type-coercion.md) — how the analyzer widens expression types and when explicit casts are needed
-- [Transforming Schemas](schema-transformation.md) — changing qualifiers, combining schemas, and adapting existing `DFSchema` values
+- [Creating Schemas][schema-creation] — defining Arrow `Schema` and `DFSchema` contracts before reading
+- [Schema Inference][schema-inference] — how CSV and JSON sampling derives schemas and where inference is risky
+- [Inspecting and Validating Schemas][schema-inspection] — checking the applied `DFSchema` before execution
+- [Type Coercion][type-coercion] — how the analyzer widens expression types and when explicit casts are needed
+- [Transforming Schemas][schema-transformation] — changing qualifiers, combining schemas, and adapting existing `DFSchema` values
   :::
 
-<!-- Link references -->
+---
 
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[csv]: ../Creating-DataFrames/from-files/csv.md
+[schema-creation]: schema-creation.md
+[schema-dataframe-methods]: schema-dataframe-methods.md
+[schema-inference]: schema-inference.md
+[schema-inspection]: schema-inspection.md
+[schema-transformation]: schema-transformation.md
+[type-coercion]: type-coercion.md
+
+<!-- Core types -->
+
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`ndjsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html
+[`schema`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
+
+<!-- Methods and functions -->
+
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
 [`arrowreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html#method.schema
 [`avroreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html#method.schema
 [`csvreadoptions::has_header()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.has_header
@@ -634,17 +657,11 @@ Continue with these pages when you need to define, infer, inspect, or transform 
 [`csvreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema
 [`csvreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
 [`csvreadoptions::truncated_rows(true)`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`ctx.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
 [`listingoptions::with_table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingOptions.html#method.with_table_partition_cols
-[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
 [`listingtableconfig::with_schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTableConfig.html#method.with_schema
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`ndjsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
-[`ndjsonreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema
-[`ndjsonreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema_infer_max_records
+[`ndjsonreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.schema
+[`ndjsonreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.schema_infer_max_records
 [`parquetreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.schema
 [`parquetreadoptions::skip_metadata()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.skip_metadata
-[`schema`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
 [`schema::try_merge()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.try_merge
-[`ctx.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
-[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain

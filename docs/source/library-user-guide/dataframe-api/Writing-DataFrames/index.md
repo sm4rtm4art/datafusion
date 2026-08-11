@@ -104,7 +104,7 @@ The following diagram illustrates where execution fits in the DataFrame architec
 
 DataFusion uses **vectorized execution**: operators process data in columnar batches (`RecordBatch`), not tuple-at-a-time like the classic Volcano model. This design enables SIMD optimizations and cache-friendly memory access.
 
-> **Note:** SIMD requires compiling with CPU-specific flags (`RUSTFLAGS='-C target-cpu=native'`). See [Crate Configuration](../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for details.
+> **Note:** SIMD requires compiling with CPU-specific flags (`RUSTFLAGS='-C target-cpu=native'`). See [Crate Configuration](../../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for details.
 
 In this guide, you will learn how to:
 
@@ -118,7 +118,7 @@ In this guide, you will learn how to:
 
 ### For deeper coverage, see:
 
-- [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations) — DataFrame lifecycle and async runtime
+- [Concepts § Execution Lifecycle](../Concepts/execution-lifecycle.md) — DataFrame lifecycle and async runtime
 - [Architecture Guide] — Official documentation on planner → logical → physical flow
 - [SIGMOD 2024 Paper]— Academic paper on DataFusion's design
 - [How Query Engines Work] — Beginner-friendly book by DataFusion's creator
@@ -161,7 +161,7 @@ df.collect().await?;          // Collect for processing
 > **SQL contrast**: <br>
 > In SQL clients, every query implicitly executes—there's no distinction between building a query and running it. The DataFrame API's explicit action methods give you control over _when_ and _how_ execution happens.
 
-For deeper conceptual coverage, see [Concepts § Execution Model](concepts.md#execution-model-actions-vs-transformations).
+For deeper conceptual coverage, see [Concepts § Execution Lifecycle](../Concepts/execution-lifecycle.md).
 
 ---
 

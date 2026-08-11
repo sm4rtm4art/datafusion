@@ -85,7 +85,7 @@ In this document, code elements follow a consistent pattern:
 
 ## Introduction (placeholder)
 
-**This is where DataFusion's [Arrow columnar design](../../user-guide/arrow-introduction.md) shines.**
+**This is where DataFusion's [Arrow columnar design](../../../user-guide/arrow-introduction.md) shines.**
 
 SQL's `UNION` matches columns by _position_, not name. If two tables have the same columns in different orders, SQL silently produces incorrect results—a common source of bugs when combining data from different sources.
 

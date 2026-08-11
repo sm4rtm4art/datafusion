@@ -22,7 +22,7 @@
 **Parquet — the default choice for analytical workloads: columnar, compressed,
 self-describing, and optimized for selective reads.**
 
-[Apache Parquet](https://parquet.apache.org/) stores data
+[Apache Parquet][apache-parquet] stores data
 **column-by-column** instead of row-by-row. This layout lets DataFusion
 read only the columns your query needs, skip irrelevant row groups using
 embedded statistics, and benefit from excellent compression ratios. If you
@@ -51,7 +51,7 @@ In this document, code elements follow a consistent pattern:
 
 ## Reading Parquet Files
 
-**A single call to `.read_parquet()` creates a lazy DataFrame backed by
+**A single call to [`.read_parquet()`] creates a lazy [`DataFrame`] backed by
 Parquet's embedded metadata — no data is loaded until you execute an
 action.**
 
@@ -59,7 +59,7 @@ Reading a Parquet file is the simplest file-based entry point in DataFusion.
 Because Parquet embeds its schema in the file footer, DataFusion needs no
 inference step — it reads a few kilobytes of metadata and immediately returns
 a lazy [`DataFrame`] ready for transformations. Pass a local path, a glob
-pattern, or a cloud URL (after [object store registration](index.md#cloud-storage))
+pattern, or a cloud URL (after [object store registration][from-files-index])
 along with [`ParquetReadOptions`] to configure the read.
 
 ```rust
@@ -116,25 +116,25 @@ As a self-describing format with schema and statistics embedded in the
 footer, most Parquet defaults work out of the box. The builder methods
 below let you tune file discovery, enforce schemas across multi-file
 datasets, and control pruning behavior. For basic reads,
-`ParquetReadOptions::default()` is sufficient.
+[`ParquetReadOptions::default()`][`parquetreadoptions`] is sufficient.
 
-| Builder Method                                                                   | Default                        | Usage                                                                                                                           |
-| :------------------------------------------------------------------------------- | :----------------------------- | :------------------------------------------------------------------------------------------------------------------------------ |
-| **[`.file_extension(&str)`][`parquetreadoptions::file_extension()`]**            | `".parquet"`                   | Filters input files by suffix. Use when folders contain mixed files (`.crc`, `.json`, temp files).                              |
-| **[`.table_partition_cols(Vec)`][`parquetreadoptions::table_partition_cols()`]** | `[]`                           | Maps Hive-style directory paths to columns (e.g., `year=2025/`). Use when data is organized in folders by date/category.        |
-| **[`.parquet_pruning(bool)`][`parquetreadoptions::parquet_pruning()`]**          | `true`                         | Skips row groups using min/max statistics. Keep enabled for filtered queries (`WHERE id > 100`).                                |
-| **[`.skip_metadata(bool)`][`parquetreadoptions::skip_metadata()`]**              | `true`                         | Ignores embedded schema metadata to avoid conflicts. Keep `true` for mixed producers; set `false` only if you rely on metadata. |
-| **[`.schema(&Schema)`][`parquetreadoptions::schema()`]**                         | `None`                         | Supplies the Parquet _file_ schema. Use for production to enforce types and avoid schema-merging surprises across many files.   |
-| **[`.file_sort_order(Vec)`][`parquetreadoptions::file_sort_order()`]**           | `[]`                           | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries without re-sorting.               |
-| **`.file_decryption_properties(Option)`**                                        | `None`                         | Decryption configuration for Parquet [modular encryption](https://parquet.apache.org/docs/file-format/encryption/). Advanced.   |
-| **`.metadata_size_hint(Option<usize>)`**                                         | `None` (session: 512&nbsp;KiB) | Size hint for the initial footer I/O. See note below.                                                                           |
+| Builder Method                                                                         | Default                        | Usage                                                                                                                           |
+| :------------------------------------------------------------------------------------- | :----------------------------- | :------------------------------------------------------------------------------------------------------------------------------ |
+| **[`.file_extension(&str)`][`parquetreadoptions::file_extension()`]**                  | `".parquet"`                   | Filters input files by suffix. Use when folders contain mixed files (`.crc`, `.json`, temp files).                              |
+| **[`.table_partition_cols(Vec)`][`parquetreadoptions::table_partition_cols()`]**       | `[]`                           | Maps Hive-style directory paths to columns (e.g., `year=2025/`). Use when data is organized in folders by date/category.        |
+| **[`.parquet_pruning(bool)`][`parquetreadoptions::parquet_pruning()`]**                | `true`                         | Skips row groups using min/max statistics. Keep enabled for filtered queries (`WHERE id > 100`).                                |
+| **[`.skip_metadata(bool)`][`parquetreadoptions::skip_metadata()`]**                    | `true`                         | Ignores embedded schema metadata to avoid conflicts. Keep `true` for mixed producers; set `false` only if you rely on metadata. |
+| **[`.schema(&Schema)`][`parquetreadoptions::schema()`]**                               | `None`                         | Supplies the Parquet _file_ schema. Use for production to enforce types and avoid schema-merging surprises across many files.   |
+| **[`.file_sort_order(Vec)`][`parquetreadoptions::file_sort_order()`]**                 | `[]`                           | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries without re-sorting.               |
+| **`.file_decryption_properties(Option)`**                                              | `None`                         | Decryption configuration for Parquet [modular encryption][parquet-encryption]. Advanced.                                        |
+| **[`.metadata_size_hint(Option<usize>)`][`parquetreadoptions::metadata_size_hint()`]** | `None` (session: 512&nbsp;KiB) | Size hint for the initial footer I/O. See note below.                                                                           |
 
 :::{admonition} metadata_size_hint and footer fetching
 :class: note
 :collapsible: closed
 
-The per-read default for `metadata_size_hint` is `None`, which defers to
-the session setting `datafusion.execution.parquet.metadata_size_hint`
+The per-read default for [`.metadata_size_hint()`][`parquetreadoptions::metadata_size_hint()`] is `None`, which defers to
+the session setting [`datafusion.execution.parquet.metadata_size_hint`][parquet-metadata-size-hint]
 (default: 512 KiB). This tail read is large enough to capture the complete
 footer of most Parquet files in a single I/O request — eliminating one
 network round trip on cloud object stores. Override only if your files have
@@ -153,9 +153,9 @@ DataFrame.
 :class: seealso
 :collapsible: open
 
-The following example demonstrates how to configure `ParquetReadOptions`
+The following example demonstrates how to configure [`ParquetReadOptions`]
 with various builder methods. For Hive-partitioned data
-(e.g., `year=2024/month=01/`), use `.table_partition_cols()` to map
+(e.g., `year=2024/month=01/`), use [`.table_partition_cols()`][`parquetreadoptions::table_partition_cols()`] to map
 directory structure to columns.
 
 ```rust
@@ -215,11 +215,11 @@ not ideal for every use case.
 :::{admonition} Register for repeated queries and SQL access
 :class: tip
 
-Use `ctx.register_parquet("table_name", "path.parquet", options)` to
-register the Parquet file as a named table in the `SessionContext` catalog.
+Use [`.register_parquet()`] to
+register the Parquet file as a named table in the [`SessionContext`] catalog.
 This enables:
 
-- **SQL access** — query the table via `ctx.sql("SELECT * FROM table_name")`
+- **SQL access** — query the table via [`.sql()`]
 - **Cross-query reuse** — multiple DataFrame operations and SQL queries
   can reference the same table name without re-reading options or paths
   :::
@@ -232,19 +232,19 @@ multi-file consistency, not type guessing.**
 
 Parquet files are self-describing: they embed an Arrow-compatible schema
 and statistical metadata (min/max values, null counts) in the file footer.
-DataFusion reads both during `.read_parquet()`, making query planning
+DataFusion reads both during [`.read_parquet()`], making query planning
 predictable and performant — no inference scan, no type guessing,
 and immediate access to row group statistics for pruning.
 
 For background on the Parquet file structure (footer, row groups, column
 chunks, page layout), see the
-[Apache Parquet File Format](https://parquet.apache.org/docs/file-format/)
+[Apache Parquet File Format][parquet-file-format]
 documentation.
 
 ### DataFrame creation with `.read_parquet()`
 
 The structure of Parquet files enables efficient processing through
-embedded schema and metadata; the following happens when `.read_parquet()`
+embedded schema and metadata; the following happens when [`.read_parquet()`]
 is called:
 
 1. **Footer read** — DataFusion reads the Parquet footer (~few KB) to
@@ -252,24 +252,24 @@ is called:
    the last 512 KiB of the file in a single I/O request, which is enough
    to capture the complete footer for most files.
 2. **Plan creation** — Creates a [`ListingTable`] and returns a lazy
-   `DataFrame`. No column data is loaded yet.
+   [`DataFrame`]. No column data is loaded yet.
 
 :::{admonition} Startup cost for many files on cloud object stores
 :class: note
 
 For directories with many files on cloud object stores, DataFusion
 collects per-file statistics at planning time
-(`datafusion.execution.collect_statistics = true`). For local files or
+([`datafusion.execution.collect_statistics`][collect-statistics] = true). For local files or
 small datasets this is negligible. For hundreds+ of remote files, disable
 it to reduce startup latency:
-`SessionConfig::new().with_collect_statistics(false)`.
+[`SessionConfig::with_collect_statistics()`] (`SessionConfig::new().with_collect_statistics(false)`).
 :::
 
 ### Explicit schemas for multi-file datasets
 
 When reading directories of Parquet files from different producers or
 evolving pipelines, schema mismatches across files can cause failures.
-Provide an explicit schema via `.schema()` to enforce consistent types and
+Provide an explicit schema via [`.schema()`][`parquetreadoptions::schema()`] to enforce consistent types and
 avoid schema-merging surprises:
 
 ```rust
@@ -337,8 +337,8 @@ large sections of the file that cannot match your query predicates:
 | 4. **Bloom filter** | Row groups by value        | Probabilistic check for value existence — effective for equality predicates (`id = 'abc'`). |
 
 Row group pruning is **ON by default**. It can be overridden per read via
-`ParquetReadOptions::parquet_pruning(false)` or globally via the session
-setting `datafusion.execution.parquet.pruning`.
+[`ParquetReadOptions::parquet_pruning()`][`parquetreadoptions::parquet_pruning()`] or globally via the session
+setting [`datafusion.execution.parquet.pruning`][parquet-pruning-config].
 
 For a detailed walkthrough of the full pruning pipeline, see
 [Parquet Pruning in DataFusion: Read Only What Matters][parquet-pruning].
@@ -360,12 +360,12 @@ pipeline that caches recently decompressed pages, yielding up to 2.2x
 speedup on selective queries.
 :::
 
-Enable filter pushdown via session-level settings (not `ParquetReadOptions`):
+Enable filter pushdown via session-level settings (not [`ParquetReadOptions`]):
 
-| Setting                                         | Default | Effect                                                                    |
-| :---------------------------------------------- | :------ | :------------------------------------------------------------------------ |
-| `datafusion.execution.parquet.pushdown_filters` | `false` | Enables filter evaluation during Parquet decoding (late materialization). |
-| `datafusion.execution.parquet.reorder_filters`  | `false` | Heuristically reorders filter expressions to minimize evaluation cost.    |
+| Setting                                                                     | Default | Effect                                                                    |
+| :-------------------------------------------------------------------------- | :------ | :------------------------------------------------------------------------ |
+| [`datafusion.execution.parquet.pushdown_filters`][parquet-pushdown-filters] | `false` | Enables filter evaluation during Parquet decoding (late materialization). |
+| [`datafusion.execution.parquet.reorder_filters`][parquet-reorder-filters]   | `false` | Heuristically reorders filter expressions to minimize evaluation cost.    |
 
 ```rust
 use datafusion::prelude::*;
@@ -400,7 +400,7 @@ For implementation details and benchmarks, see
 ### Advanced indexing
 
 For highly selective queries where built-in statistics are not enough,
-DataFusion supports custom indexing via `ParquetAccessPlan`. This is a
+DataFusion supports custom indexing via [`ParquetAccessPlan`]. This is a
 programmatic API — you implement a custom [`ParquetFileReaderFactory`] that
 provides DataFusion with a pre-built access plan to skip specific row
 groups or pages based on external logic:
@@ -420,17 +420,61 @@ implementation guides on both approaches.
 - [Parquet Pruning in DataFusion: Read Only What Matters][parquet-pruning] — The multi-layer pruning pipeline
 - [Efficient Filter Pushdown in Parquet][parquet-pushdown] — Late materialization and interleaved decoding
 - [Using StringView to Make Queries Faster][stringview-blog] — Zero-copy string loading from Parquet
-- [User-Defined Parquet Indexes](https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/) — Embedding custom indexes
-- [External Parquet Indexes](https://datafusion.apache.org/blog/2025/08/15/external-parquet-indexes/) — Sidecar index files
+- [User-Defined Parquet Indexes][parquet-user-indexes] — Embedding custom indexes
+- [External Parquet Indexes][parquet-external-indexes] — Sidecar index files
 
 **Format & API:**
 
-- [Apache Parquet File Format](https://parquet.apache.org/docs/file-format/) — Official specification
-- [`ParquetReadOptions` API](https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html) — All configuration options
-- [Parquet Format Options (SQL)](../../../../../user-guide/sql/format_options.md#parquet-format-options) — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
+- [Apache Parquet File Format][parquet-file-format] — Official specification
+- [`ParquetReadOptions` API][`parquetreadoptions`] — All configuration options
+- [Parquet Format Options (SQL)][format-options] — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
 
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[collect-statistics]: ../../../../user-guide/configs.md
+[format-options]: ../../../../user-guide/sql/format_options.md
+[from-files-index]: index.md
+[parquet-metadata-size-hint]: ../../../../user-guide/configs.md
+[parquet-pruning-config]: ../../../../user-guide/configs.md
+[parquet-pushdown-filters]: ../../../../user-guide/configs.md
+[parquet-reorder-filters]: ../../../../user-guide/configs.md
+
+<!-- Core types -->
+
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`parquetaccessplan`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/struct.ParquetAccessPlan.html
+[`parquetfilereaderfactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/trait.ParquetFileReaderFactory.html
+[`parquetreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+
+<!-- Methods and functions -->
+
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`dataframe::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`parquetreadoptions::file_extension()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.file_extension
+[`parquetreadoptions::file_sort_order()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.file_sort_order
+[`parquetreadoptions::metadata_size_hint()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.metadata_size_hint
+[`parquetreadoptions::parquet_pruning()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.parquet_pruning
+[`parquetreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.schema
+[`parquetreadoptions::skip_metadata()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.skip_metadata
+[`parquetreadoptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ParquetReadOptions.html#method.table_partition_cols
+[`sessionconfig::with_collect_statistics()`]: https://docs.rs/datafusion/latest/datafusion/execution/config/struct.SessionConfig.html#method.with_collect_statistics
+
+<!-- External resources -->
+
+[apache-parquet]: https://parquet.apache.org/
+[parquet-encryption]: https://parquet.apache.org/docs/file-format/data-pages/encryption/
+[parquet-external-indexes]: https://datafusion.apache.org/blog/2025/08/15/external-parquet-indexes/
+[parquet-file-format]: https://parquet.apache.org/docs/file-format/
 [parquet-pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
 [parquet-pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
-[stringview-blog]: https://datafusion.apache.org/blog/2024/09/13/string-view-german-style-strings-part-1/
+[parquet-user-indexes]: https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/
 [parquet-viewer]: https://parquet-viewer.xiangpeng.systems/
-[`parquetfilereaderfactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/physical_plan/parquet/trait.ParquetFileReaderFactory.html
+[stringview-blog]: https://datafusion.apache.org/blog/2024/09/13/string-view-german-style-strings-part-1/

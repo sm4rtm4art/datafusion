@@ -17,68 +17,43 @@
   under the License.
 -->
 
-<!--
-DRAFT TRANSFER (Author-approved 2026-08-04): Body promoted from
-WIP-join-concepts.md. Physical operator catalog removed with that source.
-
-PLAN REWORK (Author-approved 2026-08-05): first H2 renamed and tightened to an
-on-ramp that keeps the logical-plan H3; Result Schema Shape merged into its H2;
-self-join trimmed to the role claim; closing checklist replaced by a Conclusion.
-Deviation on record: the first H2 deliberately exceeds the markdown.mdc 7.4
-budget because it owns the on-ramp and the plan-time mechanism together.
-JOIN-TODO-025 closed — all five leaves are registered in datafusion/core/src/lib.rs.
-See joins/index.md Plan freeze and WIP record.
-
-FIRST-H2 DRAFT (Author-approved 2026-08-05): three duplications cut (SQL lead
-vs admonition, transition vs H3 highlight, H3 closing vs H3 highlight); diagram
-moved above the method material with a bulleted reading; on/filter corrected to
-include .join()'s filter argument; caution extended with the planner's on-slot
-branch, without operator names or speed claims. JOIN-TODO-023 resolved here.
-
-LOCAL TODO OWNERS: JOIN-TODO-001, JOIN-TODO-013, JOIN-TODO-015,
-JOIN-TODO-016, JOIN-TODO-022, JOIN-TODO-026.
--->
-<!-- JOIN-TODO-001: Title-line highlight, abstract, Concepts Covered table, and conclusion are provisional until Polish. -->
-<!-- JOIN-TODO-013 JOIN-TODO-022 JOIN-TODO-026: Deep execution material remains excluded; preserve these identifiers without inferring resolution. -->
-
 # Join Concepts
 
-<!-- TODO: Abstract is written last !
-**A DataFusion join relates two logical inputs, and its matching, preservation, cardinality, and payload rules together determine the result.**
+**Reason about a DataFusion join as a binary logical relationship whose planned schema and row semantics govern its result.**
 
-DataFrame transformations build a lazy logical plan, so a join first exists as a
-binary relationship between two logical inputs. Reasoning about that relationship
-requires more than naming a join type: readers must account for which row pairs
-match, which unmatched rows remain, how matches affect the row count, and which
-columns each output row carries. This page develops that result-oriented model and
-then applies it to semi and anti joins, self-joins, multi-way join trees, filters,
-and set operations.
+DataFusion join results become predictable when you separate the schema fixed during planning from the rows determined by the condition, join type, and input data. This result-oriented model explains unmatched-row preservation, duplicate-driven multiplication, one-sided outputs, and naming conflicts without descending into physical execution. The same reasoning extends to self-joins and multi-way trees and distinguishes joins from filters and set operations.
 
--->
+:::{admonition} New to Joins?
+:class: seealso
+
+This page assumes basic join familiarity and focuses on DataFusion's result model. For a general SQL walkthrough, start with the [PostgreSQL joins tutorial][postgresql-join-tutorial]; see [Further Reading](#further-reading) for DataFusion-specific next steps.
+:::
 
 **Concepts covered on this page**
 
-| Concept                                                                                                    | Reader question                                                      |
-| :--------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------- |
-| [Fusing DataFrames: what a join decides](#fusing-dataframes-what-a-join-decides)                           | Which dimensions of the result does a join decide?                   |
-| [Joins and the logical plan](#joins-and-the-logical-plan)                                                  | How does DataFusion represent a join before execution?               |
-| [How joins shape result columns](#how-joins-shape-result-columns)                                          | Which fields can each result row carry, and how are they referenced? |
-| [Result rows: matching, preservation, and cardinality](#result-rows-matching-preservation-and-cardinality) | Which matched and unmatched rows appear, and how many?               |
-| [Binary join composition](#binary-join-composition)                                                        | How do self-joins and multi-way joins reuse the same model?          |
-| [Joins and related operations](#joins-and-related-operations)                                              | How do joins differ from filters and set operations?                 |
+| Concept                                                           | Reader question                                                |
+| :---------------------------------------------------------------- | :------------------------------------------------------------- |
+| [Result dimensions](#fusing-dataframes-what-a-join-decides)       | What must you account for to predict a join result?            |
+| [Logical-plan representation](#how-joins-extend-the-logical-plan) | What does a DataFrame join call add to the lazy `LogicalPlan`? |
+| [Result schema](#how-joins-shape-result-columns)                  | Which fields appear, in what order, and with what nullability? |
+| [Result rows](#how-joins-shape-result-rows)                       | Which rows appear, and when can matches multiply them?         |
+| [Binary composition](#binary-join-composition)                    | How do self-joins and multi-way joins reuse the same model?    |
+| [Operation boundaries](#joins-and-related-operations)             | How do joins differ from filters and set operations?           |
 
 :::{admonition} Style Note
 :class: note
-:collapsible: closed
+:collapsible: open
 
 In this document, code elements follow a consistent pattern:
 
-- **DataFrame methods:** `.method()` (for example, `.join()` and `.filter()`)
-- **Types and variants:** `TypeName` and `TypeName::Variant` (for example,
-  `JoinType::Left`)
-- **Logical-plan types:** `LogicalPlan`
-- **Logical roles:** left input and right input
-- **Result dimensions:** matching, preservation, cardinality, and payload
+- **DataFrame methods:** `.method()` (e.g., `.select()`, `.filter()`)
+- **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
+- **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
+- **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
+- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Actions:** (`.collect()`, `.show()`) trigger execution
+- **Input roles:** Base DataFrame = method receiver/left input; Extension DataFrame = right argument/right input; `JoinType` controls preservation.
+- **Filter terms:** `filter` = [`.join()`] argument participating in matching; [`.filter()`] = `DataFrame` method filtering rows at its pipeline position.
 
 :::
 
@@ -91,31 +66,29 @@ In this document, code elements follow a consistent pattern:
 
 **A join combines two logical inputs into one result: the input schemas and join type fix which columns that result can carry, while matching and preservation decide which of its rows survive, vanish, or multiply.**
 
-A join fuses two [`DataFrame`][dataframe]s horizontally: it relates their rows
-through a condition and, for most join types, carries columns from both sides
-into one result — semi and anti joins are the exception, matching against the
-other input without returning any of its fields. Set operations fuse in the other
-direction, stacking or comparing whole rows. Both cross the [frame
-boundary][transformation concepts], but a join's two sides are _logical_ inputs:
-they may be two views of the same `DataFrame` as readily as two separate sources.
-The DataFrame API expresses the horizontal direction through [`.join()`] and
-[`.join_on()`], which extend a lazy logical plan rather than touching rows.
+A join relates rows from two [`DataFrame`][dataframe] inputs through a condition.
+Inner and outer joins carry fields from both inputs; semi and anti joins return
+one side after testing for matches, while mark joins return one side plus a
+boolean `mark` field. Its two sides are _logical_ inputs: they may be two views
+of the same `DataFrame` as readily as two separate sources. The DataFrame API
+expresses the horizontal direction through [`.join()`] and [`.join_on()`], which
+extend a lazy logical plan rather than touching rows.
 
 An inner join on `customer_id`, shown with one copy of the key and in
 illustrative row order:
 
 ```text
-customers                           orders
-┌─────────────┬───────┐             ┌──────────┬─────────────┐
-│ customer_id │ name  │             │ order_id │ customer_id │
-├─────────────┼───────┤             ├──────────┼─────────────┤
-│      1      │ Alice │             │   101    │      1      │
-│      2      │ Bob   │             │   103    │      3      │
-└─────────────┴───────┘             └──────────┴─────────────┘
-               │                                  │
-               └──────────────────┬───────────────┘
-                                  │ INNER JOIN ON customer_id
-                                  ▼
+customers                  orders
+┌─────────────┬───────┐    ┌──────────┬─────────────┐
+│ customer_id │ name  │    │ order_id │ customer_id │
+├─────────────┼───────┤    ├──────────┼─────────────┤
+│      1      │ Alice │    │   101    │      1      │
+│      2      │ Bob   │    │   103    │      3      │
+└─────────────┴───────┘    └──────────┴─────────────┘
+               │                         │
+               └─────────┬───────────────┘
+                         │ INNER JOIN ON customer_id
+                         ▼
 simplified, projected result
 ┌─────────────┬───────┬──────────┐
 │ customer_id │ name  │ order_id │
@@ -129,15 +102,13 @@ simplified, projected result
 - **Unmatched:** Bob has no order and order `103` has no customer, so an inner
   join drops both.
 - **Not a set overlap:** the result is built from row _combinations_, which is
-  why a Venn diagram models joins poorly.
+  why [a Venn diagram models joins poorly][joins-not-venn-diagrams].
 
 The two methods differ in how that condition is written, not in what the join
 means: [`.join()`] takes named key columns from each side plus an optional
 [`Expr`][expr] filter, while [`.join_on()`] takes [`Expr`][expr] conditions
-alone. The condition decides which row combinations match, and the [`JoinType`]
-decides which matched and unmatched rows reach the result. [Join
-Conditions](join-conditions.md) covers writing the condition, and [Join
-Types](join-types.md) covers choosing the variant.
+alone. [Join Conditions](join-conditions.md) covers writing the condition, and
+[Join Types](join-types.md) covers choosing the variant.
 
 :::{admonition} SQL and the DataFrame API
 :class: note
@@ -162,110 +133,149 @@ Use four questions to predict the result:
 
 :::
 
-Because both routes converge on the same plan node, that node is where the four
-answers are actually settled.
+### How Joins Extend the Logical Plan
 
-### Joins and the Logical Plan
+**Calling [`.join()`] or [`.join_on()`] appends one binary [`Join`][join-struct] node to the lazy [`LogicalPlan`], recording its inputs, matching condition, preservation rule, and derived payload before data is read.**
 
-**The join node settles the result's schema before any row is read, and records its condition in two separate slots that later decide how the join can be executed.**
+Joins are lazy: either call adds a binary [`Join`][join-struct] node to the
+[`LogicalPlan`] rather than reading rows. Both methods produce that same node
+type; their inputs populate its fields.
 
-A `DataFrame` carries a lazy, unoptimized [`LogicalPlan`] that each
-transformation extends until an action runs it (see [Execution
-Lifecycle][execution-lifecycle]). A join extends that plan with a binary node
-holding a left input, a right input, and the rule relating them — so what the
-engine can do with the join is already determined by what that node records,
-before a single row is read.
+| Method input                                             | `Join` field                               | Meaning                                                                     |
+| -------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
+| method receiver → `left`; right-hand DataFrame → `right` | [`left`][join-left], [`right`][join-right] | local side roles that the join type interprets                              |
+| join type                                                | [`join_type`][join-type-field]             | result behavior, including returned-side payload and unmatched-row handling |
+| [`.join()`] named key pairs                              | [`on: Vec<(Expr, Expr)>`][join-on]         | equality key pairs                                                          |
+| [`.join()`] `filter: Option<Expr>`; [`.join_on()`] exprs | [`filter`][join-filter]                    | residual or complete matching predicate                                     |
+| _(derived — no method input)_                            | [`schema`][join-schema]                    | output [`DFSchema`][dfschema] from inputs + join type                       |
 
-The node keeps that rule in two slots: `on: Vec<(Expr, Expr)>` for paired
-equality expressions, and `filter: Option<Expr>` for everything else. Which slot
-a method fills is not fixed at construction. [`.join()`] puts its named key pairs
-in `on` and its optional filter argument in `filter`; [`.join_on()`] combines
-every expression it receives with `AND` into `filter` and leaves `on` empty. A
-later optimizer pass extracts equality predicates back out of `filter` and into
-`on`. The node also records the [`JoinType`] and an output schema that
-[`Join::try_new()`][join-node] derives from both input schemas and that type. How
-such a schema is assembled belongs to [Anatomy of a Schema][schema-anatomy]; what
-this one contains is the subject of [How Joins Shape Result
-Columns](#how-joins-shape-result-columns).
+The method receiver — the DataFrame you call [`.join()`] or [`.join_on()`] on —
+becomes [`left`][join-left]; the right-hand DataFrame passed into the method
+becomes [`right`][join-right]. These local side roles are interpreted by the
+join type. [`.join()`] records named key pairs in `on` and an optional
+[`Expr`][expr] in `filter`; [`.join_on()`] AND-combines its expressions into
+`filter` and leaves `on` empty, though a later optimizer pass may extract
+equalities into `on`. [Join Conditions](join-conditions.md) covers construction
+details. The [`schema`][join-schema] is derived from the inputs and join type,
+while cardinality depends on the input data.
 
-:::{admonition} Logical Sides Are Not Physical Roles
+The shapes below locate those method inputs on each call:
+
+```text
+// .join() — named keys → `on`; optional Expr → `filter`
+// Method receiver is left; the right-hand DataFrame is the API parameter `right`.
+
+left.join(
+    right,                 // right-hand DataFrame → right
+    JoinType::Left,        // join type (Inner|Left|Right|Full ...)
+    &["key_l", …],         // left_cols → on (left keys)
+    &["key_r", …],         // right_cols → on (right keys)
+    Some(extra_pred),      // filter: Option<Expr>; or None
+)?;
+
+// .join_on() — every Expr AND-combined → `filter`; `on` starts empty
+
+left.join_on(
+    right,                 // right-hand DataFrame → right
+    JoinType::Right,       // join type — same slot; variant picks preservation
+    [eq_pred, extra_pred], // on_exprs → filter (AND); optimizer may later lift equalities into `on`
+)?;
+```
+
+:::{admonition} From Logical Plan to Execution
 :class: caution
 
-Left and right are structural labels local to one binary logical join. They
-govern side-sensitive semantics, such as unmatched-row preservation and which
-input supplies a one-sided result. They do not prescribe physical build or probe
-roles, buffering, processing order, or execution order.
-
-Those roles are chosen when the planner lowers the logical node into a physical
-operator, and it reads the `on` slot first. Equality pairs in `on` let the join
-be executed by matching keys; without them the planner falls back on strategies
-that evaluate the condition across candidate pairs, or on a plain cross product
-when there is no condition at all. That is what the equality-extraction pass is
-for — it keeps a [`.join_on()`] equality from being stranded in `filter`. See
-[Why the Physical Plan Matters][physical-plan] for the lowering stage itself.
+A `Join` node defines the logical relationship; an action later lowers the
+optimized logical plan into an `ExecutionPlan`. The physical plan selects a
+physical operator and execution arrangement without changing the logical
+semantics. [Why the Physical Plan Matters][physical-plan] explains that lowering.
 
 :::
 
-<!-- JOIN-TODO-013 JOIN-TODO-016: Physical operator names, partition modes, build/probe detail, and performance claims stay off this page; these TODOs remain open pending an approved ownership decision. -->
+[Join Conditions](join-conditions.md) covers construction, [How Joins Shape
+Result Columns](#how-joins-shape-result-columns) covers payload-schema detail,
+[Join Validation](join-validation.md) shows how to inspect the selected operator
+with `.explain()`.
 
 ---
 
 ## How Joins Shape Result Columns
 
-**The immediate schema of a logical join describes what its result rows can contain before execution determines which rows exist.**
+**A join's output columns are settled at plan time: the two input schemas and the join type fix which fields appear, in which order, and which of them can be null.**
 
-As described in the preceding logical-plan discussion, that schema already
-belongs to the join node during planning. Here, result schema means this immediate
-join-node output, not the final query schema or the schema of a final
-[`RecordBatch`][recordbatch] after later projections or operations that alias,
-rename, drop, reorder, or coalesce fields.
+For joins that return fields from both inputs, fields arrive left input first,
+then right input, and each side keeps its own field order.
 
-In the four-question model, payload means the fields an immediate result row can
-carry. Many joins make fields from both inputs available, while semi and anti
-joins are common examples that return fields from only one side. These are
-examples rather than an exhaustive classification: a particular join variant may
-also introduce a result field.
+**A two-sided equality join** keeps both key columns. The opening diagram
+projects one copy of `customer_id`, but an actual two-key join carries it twice,
+once from each input. Result schema here means this immediate join-node output,
+not the final query schema after later projections.
 
-When a join preserves a row with no match from the other input, fields from that
-absent side have no source values in the result row. DataFusion represents those
-missing values as [`NULL`][null-handling], so fields representing the absent side
-may become nullable in the immediate result schema. For the complete payload and
-preservation behavior of each join variant, see [Join Types](join-types.md).
+**Inner and outer joins** return fields from both inputs. Semi and anti joins return
+only the fields of the side they test, matching against the other input without
+carrying its columns. Mark joins add a single boolean `mark` field to that side.
+[Join Types](join-types.md) covers the payload and preservation behavior of
+each variant.
 
-### Column Names and Qualification
+**Nullability is determined at plan time.** A preserved row can have no source
+values for the absent side, and DataFusion fills those fields with
+[`NULL`][null-handling]. A left join marks every right-side field nullable, a
+right join every left-side field, and a full join both, whether or not the data
+turns out to hold an unmatched row. Inner, semi, and anti joins leave input
+nullability unchanged.
 
-Result shape and missing values are separate from name resolution. If multiple
-fields have the same unqualified name, a reference to that name can be ambiguous,
-and [relation qualifiers][table-qualifiers] participate in resolving which field
-the reference denotes. Relation qualifiers support logical name resolution; they
-should not be treated as durable lineage. For constructing equality-key and
-expression-based join conditions, see [Join Conditions](join-conditions.md).
+### When Column Names Collide
 
-The immediate schema therefore describes what result rows can contain; it does
-not determine which candidate pairs match, which unmatched rows remain, or how
-duplicate matches multiply rows. Those data-dependent questions determine the
-concrete row population discussed next.
+**For joins that return both inputs, duplicate names can block schema construction; distinct qualifiers allow construction, but later unqualified references can remain ambiguous.**
+
+The join node concatenates both schemas and then checks the combined names. Two
+fields sharing a [relation qualifier][table-qualifiers] and a name fail that
+check, as do two unqualified fields with the same name. A qualified field and an
+unqualified field that share a name also fail because the mixed schema makes
+unqualified lookup ambiguous. A self-join that returns both sides needs distinct
+qualifiers for its two roles, typically with [`.alias()`]. Semi and anti joins
+return only one side and do not create this collision.
+
+Distinct qualifiers let the join schema be constructed. A later unqualified
+reference remains ambiguous. Qualify the reference or rename the field before
+joining — [Join Workflows](join-workflows.md) owns that schema shaping.
+
+:::{admonition} Name Conflicts Fail the Plan, Not the Result
+:class: warning
+
+Construction-time failures include duplicate qualified names, duplicate
+unqualified names, and mixed qualified/unqualified names that make unqualified
+lookup ambiguous. With distinct qualifiers, a later unqualified lookup can still
+raise `Ambiguous reference to unqualified field`. All occur while the plan is
+built, before any data is read.
+
+:::
 
 ---
 
-## Result Rows: Matching, Preservation, and Cardinality
+## How Joins Shape Result Rows
 
-**The output schema describes what each result row can carry, but it does not determine which rows exist.**
+**Input row counts do not predict a join's row count: matching, preservation, and multiplicity together decide whether an input row yields no row, one row, or many.**
 
-Concrete result rows depend on matching candidate pairs, preserving selected
-unmatched rows, and accounting for match multiplicity.
+Unlike the immediate schema, rows depend on input values the plan has not seen:
+the condition fixes matching, the join type fixes preservation, and the data
+drives cardinality.
 
 ### Candidate Row Pairs and Matching
 
-A **candidate row pair** consists of one row from the left input and one row from
-the right input. The join condition determines whether that pair matches. This is
-a semantic model for reasoning about a join, not a claim that DataFusion
-physically enumerates every possible pair.
+**A pair matches only when the condition evaluates to `TRUE`: ordinary equality does not match `NULL`, though null-safe `.join_on()` conditions can.**
 
-Pair-emitting joins produce one result row for each satisfying pair. Detailed
-condition construction belongs in [Join Conditions](join-conditions.md).
+A **candidate row pair** consists of one row from each input. Pair-emitting joins
+produce a result row only when the condition is `TRUE`. Under ordinary equality,
+three-valued logic makes `NULL = NULL` yield `NULL`, so two rows whose keys are
+both missing do not pair up. A null-safe
+`.join_on()` condition can instead match them. [Null Handling in
+`.join()`][null-join] covers that behavior and the null-safe alternative;
+detailed condition construction belongs in [Join Conditions](join-conditions.md).
 
 ### Unmatched-Row Preservation
+
+**Preservation decides whose unmatched rows still appear; it never creates a match, so a preserved row arrives with `NULL`s where the other input would have been.**
 
 An **unmatched row** is an input row with zero matches. The join type determines
 whether that row contributes once or is omitted:
@@ -278,11 +288,18 @@ whether that row contributes once or is omitted:
 | Full           |     Preserved      |      Preserved      |
 
 A preserved unmatched row contributes one result row; an omitted row contributes
-none. Preservation does not create a match. [How Joins Shape Result
-Columns](#how-joins-shape-result-columns) explains how the result represents
-fields from the absent input.
+none. [How Joins Shape Result Columns](#how-joins-shape-result-columns) explains
+how the result represents fields from the absent input. [Join
+Types](join-types.md) covers each variant's full preservation behavior.
+An outer join can preserve an unmatched row whose join key is `NULL`.
+
+Preservation sets a floor, not a target. A left join returns at least as many
+rows as its left input, because every left row appears at least once — but it can
+return more, which is what the next section explains.
 
 ### Match Cardinality
+
+**Each matching row repeats once per match, so duplicate keys multiply rows and a left join can return more rows than its left input.**
 
 For a pair-emitting join, the number of matches controls an input row's
 contribution:
@@ -293,46 +310,68 @@ contribution:
 - **Multiple matches:** the row participates in one result row per satisfying
   pair.
 
-Duplicate keys can therefore multiply rows. If two left rows and three right rows
-share the same equality key, they produce \(2 \times 3 = 6\) matched pairs when
-no additional condition excludes any pair. Input row counts alone cannot predict
-the result size; key uniqueness, duplicate values, the complete condition, and
-preservation all matter.
+Duplicate keys therefore multiply rows. Two left rows and three right rows
+sharing the same equality key produce 2 × 3 = 6 matched pairs when no additional
+condition excludes any of them. Checking a result against that expectation
+belongs to [Join Validation](join-validation.md).
 
-Semi and anti joins do not emit one row per matched pair. Each row from the
-returned side contributes at most once: a semi join tests whether at least one
-match exists, while an anti join tests whether none exists. [Join
-Types](join-types.md) describes their returned fields and full behavior.
+### Exceptions to the Pair Rule
 
-### Cross Joins
+**Semi and anti joins and cross joins are opposite exceptions to pair-emitting joins: the former reduce matching to an existence test, while the latter remove the matching restriction.**
 
-A cross join has no matching restriction, so every possible left-right candidate
-pair contributes one result row. Inputs with \(L\) and \(R\) rows therefore
-produce \(L \times R\) result rows.
+Pair-emitting joins produce one result row for each matching pair. This section
+contrasts the two exceptions: semi and anti joins use matching only to decide
+whether a row is returned, whereas a cross join returns every candidate pair.
+
+**Semi and anti joins use matching as an existence test and emit at most one row
+from the returned side:**
+
+- a semi join tests whether at least one match exists
+- an anti join tests whether none exists.
+
+Duplicate keys on the other side therefore cannot multiply the result.
+[Join Types](join-types.md) describes their returned fields and full behavior.
+
+**A cross join removes the matching restriction:** every left-right candidate
+pair contributes one result row, so inputs of 1,000 and 5,000 rows produce five
+million.
+The DataFrame API has no cross-join [`JoinType`][jointype] variant; an `Inner`
+join with empty key lists and no filter produces the same result, as does SQL
+[`CROSS JOIN`][sql-cross-join]. An accidentally condition-less join is still a
+legitimate plan, so DataFusion does not warn about it — [Join
+Validation](join-validation.md) covers recognizing one before running it.
 
 ---
 
 ## Binary Join Composition
 
-**Self-joins and multi-way joins do not require new join semantics: they reuse binary join nodes with locally defined left and right roles.**
+**Every join stays binary: a self-join and a three-way tree are compositions of two-input nodes, so the four result questions are answered once per node, not once per query.**
+
+Each `Join` node takes two inputs (see [How Joins Extend the Logical
+Plan](#how-joins-extend-the-logical-plan)), and its output becomes the next node's
+input. Row multiplication carries forward — a leg that turns one row into three
+hands three rows to the next leg, which can multiply them again — and so does
+width, because each node carries the payload selected by its join type. Building
+and shaping such chains is owned by [Join Workflows](join-workflows.md).
 
 ### Self-Joins
 
-A self-join uses one underlying relation in two logical roles — an employee role
-matched to a manager role, for example. Nothing about the join node changes: the
-two roles are still a left input and a right input, even though their data
-originates from the same `DataFrame`. Keeping those roles and their column
-references distinguishable — with [`.alias()`], for example — is a schema-shaping
-task owned by [Join Workflows](join-workflows.md).
+**Nothing about a self-join is special except naming: one source fills both roles, and the result follows the same rules once each role can be referenced unambiguously.**
 
-The ordinary result questions still apply independently: which role pairs match,
-which role's unmatched rows survive, how many matches each row has, and which
-role's columns the result carries.
+Hierarchies and comparisons against the same relation — an employee matched to a
+manager, a customer matched to the customer who referred them — use one input in
+two roles: the same source fills the left and right positions. Identical field
+names create the [name collision](#when-column-names-collide) described above;
+giving one role its own qualifier with [`.alias()`] is a schema-shaping task
+owned by [Join Workflows](join-workflows.md).
 
 ### Multi-Way Join Trees
 
-A join node has exactly two logical inputs, but either input may be the logical
-result of an earlier join. Three inputs therefore form a tree of two binary joins:
+**A three-way join is two binary joins, and the grouping is not cosmetic: re-associating outer joins can change which rows survive.**
+
+Customers, their orders, and the payments against those orders form a
+three-frame question. Either input may be the result of an earlier join, so the
+three inputs form a tree of two binary joins:
 
 ```text
                     ┌─────────────┐
@@ -350,113 +389,132 @@ result of an earlier join. Three inputs therefore form a tree of two binary join
                 └───┘   └───┘
 ```
 
-Left and right are local to each node: `A` and `B` fill those roles for
-`Join 1`, while the output of `Join 1` and `C` fill them for `Join 2`. The
-intermediate output is a logical plan subtree, not a promise that DataFusion
-materializes it before evaluating the surrounding plan.
-
-The grouping is part of the query's meaning. In particular, changing the grouping
-of outer joins can change which unmatched rows and `NULL`-extended payloads reach
-the next join.
+- **Left and right stay local:** `A` and `B` fill those roles for `Join 1`,
+  while the output of `Join 1` and `C` fill them for `Join 2`.
+- **Tree shape follows where the subtree sits:** chaining `.join()` on an
+  already-joined `DataFrame` builds a left-deep tree. A right-deep tree passes a
+  prejoined subtree as the right input; a bushy tree uses prejoined subtrees on
+  both sides.
+- **The intermediate result is a plan subtree:** not a promise that DataFusion
+  materializes it before evaluating the surrounding plan.
+- **Grouping carries meaning:** a row preserved by `Join 1` enters `Join 2`
+  `NULL`-filled on the absent side. Ordinary equality does not match `NULL`,
+  though a null-safe condition can, so whether it survives depends on `Join 2`'s
+  matching and preservation rules.
 
 ---
 
 ## Joins and Related Operations
 
-**Joins, filters, and set operations may all change result rows, but they answer different relational questions.**
+**A join answers a relationship question between inputs; filters decide which existing rows remain, while set operations combine or compare whole rows.**
+
+These operations can all change which rows appear, but their relational questions
+distinguish them: matching and preservation, post-join retention, unary retention,
+match existence or non-existence, and whole-row combination or comparison.
+
+Unary filters use one input, while joins and set operations cross the frame
+boundary by consuming another logical input. [Transformation Concepts] places
+that difference in the broader transformation map.
 
 ### Join Conditions and Post-Join Filters
 
-A join condition decides whether a left-right candidate pair matches before the
-join applies its preservation rule. A later [`.filter()`] evaluates the rows
-already produced by the join and keeps only rows for which its predicate is true.
+**A join condition decides which candidate pairs match; a post-join filter decides which join-result rows remain, so outer-join preservation can differ.**
+
+In a left join of customers to orders, putting `orders.amount > 100` in the join
+condition leaves customers without a qualifying order as preserved, `NULL`-extended
+rows. Applying the predicate after the join instead evaluates the join-result rows,
+so a `NULL` order-side amount does not pass the post-join predicate.
 
 :::{admonition} Preserved Rows Can Still Be Filtered Out
 :class: caution
 
-A post-join filter can remove rows that an outer join preserved. In particular, a
-predicate on columns from an unmatched side encounters the `NULL` values introduced
-by preservation and may reject those result rows.
+On an unmatched side, preservation produces `NULL` values. A predicate on those
+values after the join may reject the result rows.
 
 :::
 
-This distinction concerns logical semantics, not whether an optimizer can move a
+[Join Conditions](join-conditions.md) owns constructing join conditions, and
+[Filtering Rows](../filtering.md) owns filter predicates and recipes. This
+distinction concerns logical semantics, not whether an optimizer can move a
 particular predicate.
 
 ### Existence Joins and Unary Filters
 
-A unary filter tests each row of one logical input using expressions available in
-that input. A semi or anti join instead tests whether a relationship with a second
-logical input exists. The resulting payload may look like a filtered version of
-one side, but the decision depends on matching against the other side. In SQL,
-[`EXISTS` / `IN` subqueries][sql-exists] are a common alternative spelling of the
-same existence question; DataFusion may rewrite correlated forms toward joins.
+**A unary filter decides whether one row qualifies; a semi or anti join decides whether that row has—or lacks—a match in another input.**
+
+A unary customer predicate depends only on the customer row; a semi join asks
+which customers have matching orders, while an anti join asks which do not. In
+SQL, [`EXISTS` / `IN` subqueries][sql-exists] are a common spelling of the same
+existence question.
 
 Replacing a semi or anti join with an inner join followed by a projection is not
 generally equivalent. An inner join can multiply a row when several matches exist,
-whereas a semi join asks only whether at least one match exists.
+whereas a semi join asks only whether at least one match exists. [Join
+Types](join-types.md) owns full semi and anti join behavior.
 
 ### Joins and Set Operations
 
-A join relates rows from two inputs through a matching relationship, and the inputs
-do not need the same schema. A set operation combines or compares complete rows
-under compatible-schema rules. The common intuition that joins combine data
-"horizontally" while set operations combine it "vertically" can be useful, but it
-is not a definition: semi and anti joins, for example, return columns from only one
-side.
+**A join uses matching and preservation to relate input rows; a set operation stacks or compares whole rows under a shared layout.**
 
-See [Transformation Concepts] for the broader transformation model and
-[Set Operations] when the task concerns whole-row combination rather than
-relationships between rows.
+Joining customers to orders relates them through `customer_id`; unioning monthly
+order frames instead appends complete order rows under a shared layout. The
+methods make that difference concrete: [`.union()`] and [`.union_by_name()`]
+stack complete rows; [`.intersect()`] keeps whole rows present in both inputs,
+and [`.except()`] keeps whole rows from the left that are absent from the right.
+The corresponding distinct variants remove duplicate result rows. [Set
+Operations] owns alignment, duplicate-policy detail, and variant selection.
 
 ---
 
-<!-- JOIN-TODO-015 JOIN-TODO-016: This conclusion and pruned Further Reading list are provisional until section-wise and final review. -->
-<!-- JOIN-TODO-001: The four-dimension model is also stated in the abstract, the first-H2 highlighting sentence, and the Four Questions admonition. When Polish writes the abstract and this conclusion, differentiate the four statements instead of adding a fifth; the admonition wording is the approved anchor. -->
-
 ## Conclusion
 
-A join is predictable once its four dimensions are answered explicitly: which row
-combinations match, whose unmatched rows are preserved, how many result rows each
-input row can produce, and which fields the result carries. Those answers are
-independent of the join's eventual physical execution, and they scale unchanged
-from a single binary node to an entire join tree — which is why the same model
-carries into expressing a condition in [Join Conditions](join-conditions.md),
-choosing a variant in [Join Types](join-types.md), composing larger relationships
-in [Join Workflows](join-workflows.md), and checking an outcome in [Join
-Validation](join-validation.md).
+At each binary `Join` node, derive the output fields from the input schemas and join type, then account for result rows from the condition, preservation rule, and match multiplicities. Carry that node-level reasoning through larger trees, then use [Join Conditions](join-conditions.md), [Join Types](join-types.md), [Join Workflows](join-workflows.md), and [Join Validation](join-validation.md) to construct and check each relationship.
 
 ### Further Reading
 
-- [DataFusion `DataFrame` join methods][`.join()`]
-- [DataFusion join types][`jointype`]
-- [SQL `JOIN` clause][sql-join-clause]
-- [SQL subqueries (`EXISTS` / `IN`)][sql-exists]
-- [Building Logical Plans]
-- [Set Operations]
+- [PostgreSQL joins tutorial][postgresql-join-tutorial] — a general beginner
+  walkthrough of matching, outer preservation, aliases, and self-joins; its
+  examples use PostgreSQL SQL, but the relational model transfers.
+- [Join Conditions](join-conditions.md) and [Join Types](join-types.md#jointype-catalogue) —
+  express relationships and choose preservation and payload behavior.
+- [Join Workflows](join-workflows.md) and [Join Validation](join-validation.md)
+  — compose joins and check plans and results.
+- DataFusion [`.join()`] and [`.join_on()`] API docs — exact signatures and
+  parameters.
+- [SQL `JOIN` clause][sql-join-clause] — the SQL counterpart.
 - [Joins as row combinations rather than Venn diagrams][joins-not-venn-diagrams]
-
-<!-- JOIN-TODO-028: Deeper SQL type/LATERAL/config links belong on sibling leaves; keep concepts to join-clause + existence only unless Plan expands. -->
+  — explains row combinations and why Venn diagrams fit set operations better.
+- [Set Operations] — the whole-row counterpart, including alignment and
+  duplicate semantics.
 
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
 [`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
 [`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
-[`jointype`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.union_by_name()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union_by_name
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
+[`jointype`]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html
 [`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[building logical plans]: https://datafusion.apache.org/library-user-guide/building-logical-plans.html
 [builder-parser]: ../../Concepts/builder-parser.md#choosing-the-right-api-for-the-task
 [dataframe]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[execution-lifecycle]: ../../Concepts/execution-lifecycle.md
+[dfschema]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [expr]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
-[join-node]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html#method.try_new
+[join-filter]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html#structfield.filter
+[join-left]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html#structfield.left
+[join-on]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html#structfield.on
+[join-right]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html#structfield.right
+[join-schema]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html#structfield.schema
+[join-struct]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html
+[join-type-field]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.Join.html#structfield.join_type
 [joins-not-venn-diagrams]: https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/
 [null-handling]: ../../Concepts/null-handling.md
+[null-join]: ../../Concepts/null-handling.md#null-handling-in-join
 [physical-plan]: ../../Concepts/execution-lifecycle.md#why-the-physical-plan-matters
-[recordbatch]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
-[schema-anatomy]: ../../Schema-Management/schema-anatomy.md
+[postgresql-join-tutorial]: https://www.postgresql.org/docs/current/tutorial-join.html
 [set operations]: ../set-operations.md
 [sql-exists]: ../../../../user-guide/sql/subqueries.md#-not--exists
+[sql-cross-join]: ../../../../user-guide/sql/select.md#cross-join
 [sql-join-clause]: ../../../../user-guide/sql/select.md#join-clause
 [table-qualifiers]: ../../Schema-Management/schema-anatomy.md#table-qualifiers
 [transformation concepts]: ../transformation-concepts.md#combining-multiple-dataframes

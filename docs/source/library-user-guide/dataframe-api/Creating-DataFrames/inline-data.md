@@ -135,8 +135,8 @@ The macro infers Arrow types from Rust literals via the
 Wrap any of these in `Option<T>` to express nulls. For the full
 DataFusion type system, see:
 
-- [Data Types](../../user-guide/sql/data_types.md)
-- [Type Coercion](../Schema-Management/type-coercion.md)
+- [Data Types][data-types]
+- [Type Coercion][type-coercion]
 
 :::{admonition} Own SessionContext
 :class: note
@@ -147,7 +147,7 @@ it does not inherit custom configuration (batch size, parallelism,
 optimizer rules). To use inline data alongside existing tables,
 `.collect()` the [`DataFrame`] into [`RecordBatch`]es and re-import
 them via [`.read_batch()`] on your target context (see
-[Creating DataFrames from RecordBatches](from-memory.md)).
+[Creating DataFrames from RecordBatches][from-memory]).
 :::
 
 Calling [`dataframe!`] with no arguments — `dataframe!()` — produces
@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
 ```
 
 For the distinction between `None`, SQL `NULL`, and `NaN`, see
-[Understanding Null Values](../../user-guide/dataframe.md#understanding-null-values-none-null-and-nan).
+[Understanding Null Values][user-guide-dataframe].
 
 ### Programmatic Data Generation
 
@@ -494,23 +494,54 @@ verify, all within a single Rust source file.
 
 ---
 
-## References
+## Further Reading
 
 **Concepts & Guides:**
 
-- [Data Types](../../user-guide/sql/data_types.md) — SQL-to-Arrow type mappings
-- [Type Coercion](../Schema-Management/type-coercion.md) — Automatic type promotion and explicit casting
-- [Understanding Null Values](../../user-guide/dataframe.md#understanding-null-values-none-null-and-nan) — `None`, SQL `NULL`, and `NaN`
-- [Creating DataFrames from RecordBatches](from-memory.md) — `.read_batch()`, `.read_batches()`, and `MemTable`
+- [Data Types][data-types] — SQL-to-Arrow type mappings
+- [Type Coercion][type-coercion] — Automatic type promotion and explicit casting
+- [Understanding Null Values][user-guide-dataframe] — `None`, SQL `NULL`, and `NaN`
+- [Creating DataFrames from RecordBatches][from-memory] — `.read_batch()`, `.read_batches()`, and `MemTable`
 
 **API Documentation:**
 
-- [`dataframe!`](https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html) — Create DataFrames from Rust literals
-- [`DataFrame::from_columns()`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.from_columns) — Create from pre-built Arrow arrays
-- [`SessionContext::read_empty()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_empty) — One-row, zero-column DataFrame
-- [`assert_batches_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html) — Strict batch comparison
-- [`assert_batches_sorted_eq!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_sorted_eq.html) — Order-independent batch comparison
-- [`assert_contains!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_contains.html) — Partial string match
-- [`assert_not_contains!`](https://docs.rs/datafusion/latest/datafusion/macro.assert_not_contains.html) — Negative string match
+- [`dataframe!`] — Create DataFrames from Rust literals
+- [`DataFrame::from_columns()`] — Create from pre-built Arrow arrays
+- [`SessionContext::read_empty()`] — One-row, zero-column DataFrame
+- [`assert_batches_eq!`] — Strict batch comparison
+- [`assert_batches_sorted_eq!`] — Order-independent batch comparison
+- [`assert_contains!`] — Partial string match
+- [`assert_not_contains!`] — Negative string match
 
 ---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[data-types]: ../../../user-guide/sql/data_types.md
+[from-memory]: from-memory.md
+[type-coercion]: ../Schema-Management/type-coercion.md
+[user-guide-dataframe]: ../../../user-guide/dataframe.md
+
+<!-- Core types -->
+
+[`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
+[`assert_batches_sorted_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_sorted_eq.html
+[`assert_contains!`]: https://docs.rs/datafusion/latest/datafusion/common/macro.assert_contains.html
+[`assert_not_contains!`]: https://docs.rs/datafusion/latest/datafusion/common/macro.assert_not_contains.html
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`dataframe::from_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.from_columns
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[`sessioncontext::read_empty()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_empty
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+
+<!-- Methods and functions -->
+
+[`.from_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.from_columns
+[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
+[`.read_empty()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_empty
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort

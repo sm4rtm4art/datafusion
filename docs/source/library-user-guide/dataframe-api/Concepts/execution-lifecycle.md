@@ -140,7 +140,7 @@ Understanding which methods are **lazy** and which trigger **eager** execution i
 
 | Category              | Lazy/Eager | Purpose                              | Examples                                                                        |
 | --------------------- | ---------- | ------------------------------------ | ------------------------------------------------------------------------------- |
-| **Transformations**   | Lazy       | Build/extend the `LogicalPlan`       | [`.select()`], [`.filter()`], [`.aggregate()`], [`.join()`], [`.with_column()`] |
+| **Transformations**   | Lazy       | Build/extend the [`LogicalPlan`]     | [`.select()`], [`.filter()`], [`.aggregate()`], [`.join()`], [`.with_column()`] |
 | **Execution Actions** | Eager      | Trigger optimization → execution     | [`.collect()`], [`.show()`], [`.execute_stream()`], [`.count()`], [`.cache()`]  |
 | **Write Actions**     | Eager      | Execute and persist results to files | [`.write_parquet()`], [`.write_csv()`], [`.write_table()`]                      |
 | **Introspection**     | Lazy\*     | Inspect plan metadata                | [`.schema()`], [`.explain()`], [`.logical_plan()`], [`.into_optimized_plan()`]  |
@@ -152,12 +152,12 @@ Understanding which methods are **lazy** and which trigger **eager** execution i
 
 :::{admonition} Transformations
 :class: note
-Return a new `DataFrame` wrapping an extended `LogicalPlan`. Chain as many as you like—no data moves until you call an action.
+Return a new [`DataFrame`] wrapping an extended [`LogicalPlan`]. Chain as many as you like—no data moves until you call an action.
 :::
 
 :::{admonition} Execution Actions
 :class: note
-Cross the **ACTION boundary** from the lifecycle diagram: they trigger the Optimizer, create an `ExecutionPlan`, and run it. Results flow back as `RecordBatch`es.
+Cross the **ACTION boundary** from the lifecycle diagram: they trigger the Optimizer, create an [`ExecutionPlan`], and run it. Results flow back as [`RecordBatch`] es.
 :::
 
 :::{admonition} Write Actions
@@ -175,7 +175,7 @@ Methods access plan metadata without executing. Exception: [`.explain()`] with `
 :::{admonition} Further reading
 :class: seealso
 
-For the complete method reference, see [Transformations](transformations.md).
+For the complete method reference, see [Transformations](../Transformations/index.md).
 :::
 
 ---
@@ -214,17 +214,17 @@ When you call an action like [`.collect()`], the lazy plan crosses the ACTION bo
 
 DataFusion uses a **pragmatic hybrid approach** — not a Cascades-style optimizer with memoized search over equivalence classes, but a deterministic, debuggable pipeline:
 
-- **Logical optimization:**<br> Rule-based iterative rewrites (predicate pushdown, projection pruning, etc.).
-- **Physical planning:** <br>Statistics-informed decisions where beneficial (join algorithm selection, partition count).
-- **Design philosophy:** <br>"Solid heuristic optimizer as default + extension points for experimentation" ([#1972](https://github.com/apache/datafusion/issues/1972)).
+- **Logical optimization:** Rule-based iterative rewrites (predicate pushdown, projection pruning, etc.).
+- **Physical planning:** Statistics-informed decisions where beneficial (join algorithm selection, partition count).
+- **Design philosophy:** "Solid heuristic optimizer as default + extension points for experimentation" ([#1972][issue-1972]).
 
 The same DataFrame builder chain produces the same optimized plan every time — predictable and debuggable. While statistics are used, there's no exhaustive cost-based enumeration.
 
 :::{admonition} Further reading
 :class: note
 
-- [Query Optimizer guide](../query-optimizer.md) — optimization phases and rules
-- [DataFusion paper (SIGMOD 2024)](https://dl.acm.org/doi/10.1145/3626246.3653368) — academic foundation
+- [Query Optimizer guide][query-optimizer] — optimization phases and rules
+- [DataFusion paper (SIGMOD 2024)][sigmod-paper] — academic foundation
   :::
 
 ---
@@ -233,16 +233,16 @@ The same DataFrame builder chain produces the same optimized plan every time —
 
 **The `ExecutionPlan` is your window into what DataFusion will actually do — inspecting it before running on large data catches inefficiencies early.**
 
-During query development, the `LogicalPlan` you build describes **what** you want — the `ExecutionPlan` reveals **how** it happens. Most of the time DataFusion's optimizer handles this automatically, but understanding the physical plan helps when you need to diagnose performance issues or verify that optimizations fired as expected.
+During query development, the [`LogicalPlan`] you build describes **what** you want — the [`ExecutionPlan`] reveals **how** it happens. Most of the time DataFusion's optimizer handles this automatically, but understanding the physical plan helps when you need to diagnose performance issues or verify that optimizations fired as expected.
 
 **Common scenarios where understanding the plan helps:**
 
-| Scenario                 | What to look for                      | Impact                                                              |
-| ------------------------ | ------------------------------------- | ------------------------------------------------------------------- |
-| **Filter placement**     | Is the filter pushed before the join? | Filtering 1M→1K rows _before_ joining is orders of magnitude faster |
-| **Join algorithm**       | `HashJoinExec` vs `SortMergeJoinExec` | Hash joins are faster for unsorted data; sort-merge for pre-sorted  |
-| **Build side selection** | Which table builds the hash table?    | Smaller table should be the build side (less memory)                |
-| **Projection pruning**   | Are unused columns eliminated early?  | Reading fewer columns = less I/O, especially for Parquet            |
+| Scenario                 | What to look for                          | Impact                                                              |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| **Filter placement**     | Is the filter pushed before the join?     | Filtering 1M→1K rows _before_ joining is orders of magnitude faster |
+| **Join algorithm**       | [`HashJoinExec`] vs [`SortMergeJoinExec`] | Hash joins are faster for unsorted data; sort-merge for pre-sorted  |
+| **Build side selection** | Which table builds the hash table?        | Smaller table should be the build side (less memory)                |
+| **Projection pruning**   | Are unused columns eliminated early?      | Reading fewer columns = less I/O, especially for Parquet            |
 
 **Example: Filter placement matters**
 
@@ -306,7 +306,7 @@ async fn main() -> Result<()> {
 
 ### Data source matters
 
-For in-memory data (like the [`dataframe!`] macro), optimizations focus on operation order and algorithm selection. For file-based sources (Parquet, CSV), additional optimizations kick in—predicate pushdown to skip row groups, projection pushdown to read only needed columns. See [Creating DataFrames: From Files](creating-dataframes.md#1-from-files) for file-specific tuning.
+For in-memory data (like the [`dataframe!`] macro), optimizations focus on operation order and algorithm selection. For file-based sources (Parquet, CSV), additional optimizations kick in—predicate pushdown to skip row groups, projection pushdown to read only needed columns. See [Creating DataFrames: From Files][from-files] for file-specific tuning.
 
 ### Execution-Level Optimizations
 
@@ -332,7 +332,7 @@ When an action triggers execution, DataFusion doesn't materialize a single monol
 
 - **Partitions** — the unit of parallelism. DataFusion splits work into multiple independent partitions (controlled by [`target_partitions`], defaulting to the number of CPU cores). Each partition runs as a separate async stream on Tokio's thread pool. This is why DataFusion scales across cores without you writing threading code.
 
-- **RecordBatches** — the unit of data. Each partition yields a stream of `RecordBatch` values — Arrow's columnar data format holding up to `batch_size` rows (default: 8192). Operators process one batch at a time: decode, filter, aggregate, then yield to the next operator. This keeps memory usage bounded regardless of total dataset size.
+- **RecordBatches** — the unit of data. Each partition yields a stream of [`RecordBatch`] values — Arrow's columnar data format holding up to [`batch_size`] rows (default: 8192). Operators process one batch at a time: decode, filter, aggregate, then yield to the next operator. This keeps memory usage bounded regardless of total dataset size.
 
 ```text
                      ExecutionPlan
@@ -380,7 +380,7 @@ Use [`.collect()`] for small results or when you need all data at once (e.g., as
 
 **DataFusion uses Tokio as an async runtime for both I/O and CPU-bound query execution.**
 
-Every DataFrame action (`.collect()`, `.show()`, `.execute_stream()`) is an `async` function. DataFusion is built on [Tokio], Rust's most widely used async runtime, which serves as a work-stealing thread pool for both I/O and CPU-bound work.
+Every DataFrame action ([`.collect()`], [`.show()`], [`.execute_stream()`]) is an `async` function. DataFusion is built on [Tokio], Rust's most widely used async runtime, which serves as a work-stealing thread pool for both I/O and CPU-bound work.
 
 ### Why Tokio?
 
@@ -394,7 +394,7 @@ Older Tokio docs advised against using it for CPU-bound tasks, causing confusion
 
 ### How Tokio Works Under the Hood
 
-When you call `.collect()` or `.execute_stream()`:
+When you call [`.collect()`] or [`.execute_stream()`] :
 
 1. **Partitioned Streams**:<br>
    DataFusion creates multiple async [`Stream`]s (one per partition, controlled by [`target_partitions`])
@@ -422,7 +422,7 @@ This order is illustrated in the following diagram:
 
 **In practice: No additional configuration needed, just add `.await`**
 
-For most users, the async details are invisible—you `await` your DataFrame operations and DataFusion handles parallelism automatically:
+For most users, the async details are invisible—you `.await` your DataFrame operations and DataFusion handles parallelism automatically:
 
 ```rust
 use datafusion::prelude::*;
@@ -448,20 +448,20 @@ async fn main() -> Result<()> {
 | Setting               | Purpose                        | Default             |
 | --------------------- | ------------------------------ | ------------------- |
 | [`target_partitions`] | Number of parallel streams     | Number of CPU cores |
-| `batch_size`          | Rows processed before yielding | 8192                |
+| [`batch_size`]        | Rows processed before yielding | 8192                |
 
 :::{admonition} Further reading
 :class: seealso
 
-- [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks] — why async works for compute
+- [Using Rustlang's Async Tokio Runtime for CPU-Bound Tasks][tokio-cpu-bound] — why async works for compute
 - [Using Rust async for Query Execution][async-blog] — deep dive into cooperative scheduling and query cancellation
 - [Thread Scheduling documentation] — complete technical details
-- [Crate Configuration](../../user-guide/crate-configuration.md) — SIMD flags, LTO, PGO, and allocator tuning for maximum performance
+- [Crate Configuration][crate-configuration] — SIMD flags, LTO, PGO, and allocator tuning for maximum performance
   :::
 
 ---
 
-## Ownership vs. Execution: Why You See `.clone()` Everywhere
+## Ownership vs. Execution: Why You See [`.clone()`] Everywhere
 
 **Rust's ownership model means action methods consume the DataFrame handle — cloning gives you multiple handles to the same plan.**
 
@@ -470,16 +470,16 @@ async fn main() -> Result<()> {
 This section explains Rust ownership semantics. If you're calling DataFusion from Python or another language, these details are handled automatically.
 :::
 
-The DataFusion DataFrame-API is written in Rust, enabling Rust's ownership model with all its safety guarantees. Most action methods take `self` (not `&self`), meaning calling an action **transfers ownership** of the DataFrame handle into the method. After the call, Rust's compiler won't let you use that variable again—not because the DataFrame was mutated, but because ownership moved elsewhere. This is why you'll see `.clone()` calls throughout DataFusion code: cloning creates a second handle so you can use one and keep the other.
+The DataFusion DataFrame-API is written in Rust, enabling Rust's ownership model with all its safety guarantees. Most action methods take `self` (**not** `&self`), meaning calling an action **transfers ownership** of the DataFrame handle into the method. After the call, Rust's compiler won't let you use that variable again—not because the DataFrame was mutated, but because ownership moved elsewhere. This is why you'll see [`.clone()`] calls throughout DataFusion code: cloning creates a second handle so you can use one and keep the other.
 
 ### What's actually happening under the hood
 
 - A `DataFrame` is a **lightweight handle:** <br>
-  Just a `LogicalPlan` + `SessionState` clone.
+  Just a [`LogicalPlan`] + [`SessionState`] clone.
 - **Transformations are immutable:** <br>
-  Methods like `.filter()` and `.select()` return _new_ DataFrames; they don't mutate the original.
+  Methods like [`.filter()`] and [`.select()`] return _new_ DataFrames; they don't mutate the original.
 - **Actions consume the handle;** <br>
-  Actions like `.collect()` take ownership of the handle, but your source data (Parquet files, tables) remains untouched (read only).
+  Actions like [`.collect()`] take ownership of the handle, but your source data (Parquet files, tables) remains untouched (read only).
 - **Cloning is cheap:** <br>
   Cloning is cheap because you're cloning reference-counted pointers, not copying data.
 
@@ -491,7 +491,7 @@ The DataFusion DataFrame-API is written in Rust, enabling Rust's ownership model
 | `String`, `Vec<T>` | Allocate + copy all bytes   | **Expensive** (O(n))         | Avoid in hot paths       |
 | `RecordBatch`      | Clone `Arc`-wrapped arrays  | **Cheap**                    | Arrow data sharing       |
 
-DataFusion's `DataFrame` wraps its internals in `Arc`, so `df.clone()` is a standard Rust pattern that costs virtually nothing—clone freely when you need multiple handles to the same plan.
+DataFusion's [`DataFrame`] wraps its internals in [`Arc`], so [`.clone()`] is a standard Rust pattern that costs virtually nothing—clone freely when you need multiple handles to the same plan.
 
 ```rust
 use datafusion::prelude::*;
@@ -526,7 +526,7 @@ Each action re-runs the full plan from source data. If you need to reuse compute
 
 **From lazy plan to streaming results — the complete DataFrame lifecycle in action.**
 
-We've showed **what** DataFrames are (lazy handles wrapping `LogicalPlan` + `SessionState`), **why** laziness matters (optimization before execution), and **how** actions trigger the pipeline. Now let's see the full lifecycle in one example—from building the plan, through introspection, to execution:
+We've showed **what** DataFrames are (lazy handles wrapping [`LogicalPlan`] + [`SessionState`]), **why** laziness matters (optimization before execution), and **how** actions trigger the pipeline. Now let's see the full lifecycle in one example—from building the plan, through introspection, to execution:
 
 ```rust
 use datafusion::prelude::*;
@@ -578,44 +578,111 @@ async fn main() -> Result<()> {
 
 **What you just saw:**
 
-| Code                               | Concept from this section                                          |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| `.filter().aggregate()`            | Transformations are **lazy** — build the plan, don't execute       |
-| `df.clone()`                       | **Ownership** — clone the handle to use it multiple times          |
-| `.explain()`                       | **Introspection** — see the plan before committing to execution    |
-| `.collect()` / `.execute_stream()` | **Actions** — cross the boundary, trigger optimization + execution |
+| Code                                   | Concept from this section                                          |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| `.filter().aggregate()`                | Transformations are **lazy** — build the plan, don't execute       |
+| [`.clone()`]                           | **Ownership** — clone the handle to use it multiple times          |
+| [`.explain()`]                         | **Introspection** — see the plan before committing to execution    |
+| [`.collect()`] / [`.execute_stream()`] | **Actions** — cross the boundary, trigger optimization + execution |
 
-You now understand how DataFrames defer work until an action, why [`.clone()`] appears everywhere, and how to inspect plans before running them. For the complete method reference, see [Transformations](transformations.md). For hands-on query building, continue to [Creating DataFrames](creating-dataframes.md).
-
-With the execution lifecycle understood — from lazy plan through optimization to streaming results — the next section places DataFusion in its broader historical and architectural context: [The Bigger Picture](bigger-picture.md).
+You now understand how DataFrames defer work until an action, why [`.clone()`] appears everywhere, and how to inspect plans before running them. For the complete method reference, see [Transformations](../Transformations/index.md). For hands-on query building, continue to [Creating DataFrames](../Creating-DataFrames/index.md).
 
 ---
 
-## References
+## Conclusions
+
+<!-- TODO: Add conclusions -->
+
+### Futher Reading
 
 **DataFrame-API Guides:**
 
-- [Transformations](transformations.md) — complete method reference
-- [Creating DataFrames](creating-dataframes.md) — sources, registration, creation patterns
-- [Writing DataFrames](writing-dataframes.md) — output formats and sinks
+- [Transformations][transformations] — complete method reference
+- [Creating DataFrames][creating-dataframes] — sources, registration, creation patterns
+- [Writing DataFrames][writing-dataframes] — output formats and sinks
 
 **Architecture & Internals:**
 
-- [Query Optimizer guide](../query-optimizer.md) — optimization phases and rules
+- [Query Optimizer guide][query-optimizer] — optimization phases and rules
 - [Optimizer rules (source)][optimizer-rules] — logical optimizer implementation
 - [Physical optimizer rules (source)][physical-rules] — physical planning rules
 - [`.explain()` usage guide][`.explain()` examples] — understanding execution plans
 
 **Deep Dives:**
 
-- [DataFusion paper (SIGMOD 2024)](https://dl.acm.org/doi/10.1145/3626246.3653368) — academic foundation
+- [DataFusion paper (SIGMOD 2024)][sigmod-paper] — academic foundation
 - [blog: Parquet Pruning] — file/row group/page skipping
 - [blog: Filter Pushdown] — late materialization for row-level filtering
 
 **API Documentation:**
 
-- [`DataFrame`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html) — struct reference
-- [`SessionContext`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html) — entry point
-- [`LogicalPlan`](https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html) — plan structure
+- [`DataFrame`] — struct reference
+- [`SessionContext`] — entry point
+- [`LogicalPlan`] — plan structure
 
 ---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[`.explain()` examples]: ../../../user-guide/explain-usage.md
+[`batch_size`]: ../../../user-guide/configs.md
+[`target_partitions`]: ../../../user-guide/configs.md
+[crate-configuration]: ../../../user-guide/crate-configuration.md
+[creating-dataframes]: ../Creating-DataFrames/index.md
+[from-files]: ../Creating-DataFrames/from-files/index.md
+[query-optimizer]: ../../query-optimizer.md
+[transformations]: ../Transformations/index.md
+[writing-dataframes]: ../Writing-DataFrames/index.md
+
+<!-- Core types -->
+
+[`arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
+[`dataframe!`]: https://docs.rs/datafusion/latest/datafusion/macro.dataframe.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`hashjoinexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.HashJoinExec.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`sortmergejoinexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.SortMergeJoinExec.html
+[`stream`]: https://docs.rs/futures/latest/futures/stream/trait.Stream.html
+
+<!-- Methods and functions -->
+
+[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`.cache()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.cache
+[`.clone()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.clone
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.count()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.count
+[`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
+[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.into_optimized_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_optimized_plan
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.logical_plan
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.write_csv()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_csv
+[`.write_parquet()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_parquet
+[`.write_table()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.write_table
+
+<!-- External resources -->
+
+[architecture section]: https://docs.rs/datafusion/latest/datafusion/#architecture
+[async-blog]: https://datafusion.apache.org/blog/2025/06/30/cancellation/
+[blog: filter pushdown]: https://datafusion.apache.org/blog/2025/03/21/parquet-pushdown/
+[blog: parquet pruning]: https://datafusion.apache.org/blog/2025/03/20/parquet-pruning/
+[cooperative scheduling module]: https://docs.rs/datafusion-physical-plan/latest/datafusion_physical_plan/coop/index.html
+[issue-1972]: https://github.com/apache/datafusion/issues/1972
+[optimizer-rules]: https://github.com/apache/datafusion/blob/main/datafusion/optimizer/src/optimizer.rs#L230-L257
+[physical-rules]: https://github.com/apache/datafusion/blob/main/datafusion/physical-optimizer/src/optimizer.rs#L86-L162
+[rayon]: https://docs.rs/rayon/latest/rayon/
+[sigmod-paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
+[thread scheduling documentation]: https://docs.rs/datafusion/latest/datafusion/index.html#thread-scheduling-cpu--io-thread-pools-and-tokio-runtimes
+[tokio-cpu-bound]: https://www.influxdata.com/blog/using-rustlangs-async-tokio-runtime-for-cpu-bound-tasks/
+[tokio]: https://tokio.rs

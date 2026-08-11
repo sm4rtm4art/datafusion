@@ -17,19 +17,21 @@
   under the License.
 -->
 
-<!--
-MOVE HANDSHAKE: Result-schema shaping, self-join, and chained multi-way join
-material arrived from ../joins.md. The migration source remains unchanged for
-coordinator comparison.
-
-LOCAL TODO OWNERS: JOIN-TODO-001, JOIN-TODO-004, JOIN-TODO-008,
-JOIN-TODO-014, JOIN-TODO-015, JOIN-TODO-016, JOIN-TODO-018, JOIN-TODO-019,
-JOIN-TODO-021, JOIN-TODO-025, and JOIN-TODO-026.
--->
-<!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Key Methods table, first-H2 framing, and conclusion after this leaf stabilizes. -->
-<!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
-
 # Join Workflows
+
+**Compose joins into readable [`DataFrame`] pipelines by controlling input roles, field identity, and the output schema carried into later transformations.**
+
+Relational pipelines often combine data from separate sources before a later transformation consumes the result. In DataFusion, a join workflow is a sequence of lazy [`DataFrame`] transformations whose intermediate schemas make later relationships possible. This page shows how to name and qualify fields, shape joined output, relate two roles of one source, and chain multiple joins. For match coverage, multiplication, Cartesian products, and NULL-key policy, continue with [Join Validation].
+
+**Key Methods**
+
+| Method                     | Purpose                                    | When to use                                                   |
+| :------------------------- | :----------------------------------------- | :------------------------------------------------------------ |
+| [`.alias()`]               | Assign role qualifiers to an input         | Distinguish fields from inputs that represent different roles |
+| [`.with_column_renamed()`] | Give a field a shared domain name          | Make a key name clearer before joining when useful            |
+| [`.join()`]                | Add one Extension DataFrame                | Compose the next relationship in a workflow                   |
+| [`.select()`]              | Define an explicit stable output allowlist | Set the fields required by downstream transformations         |
+| [`.drop_columns()`]        | Exclude a small field list                 | Remove a few qualified fields from a wide joined result       |
 
 :::{admonition} Style Note
 :class: note
@@ -41,8 +43,9 @@ In this document, code elements follow a consistent pattern:
 - **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
 - **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
 - **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
-- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Lazy transformations:** return a `DataFrame` and build the [`LogicalPlan`]
 - **Actions:** (`.collect()`, `.show()`) trigger execution
+- **Input roles:** Base DataFrame = method receiver/left input; Extension DataFrame = argument/right input
 
 :::
 
@@ -51,327 +54,337 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-<!-- JOIN-TODO-004 JOIN-TODO-008 JOIN-TODO-016 JOIN-TODO-018: Schema-shaping material split from the inherited multi-key subtree; distinguish qualification and ambiguity from actual schema errors. -->
+## Compose Joins as a Workflow
 
-## Shape the Result Schema
+**Within a lazy DataFrame pipeline, each join produces another `DataFrame` whose schema and rows feed the next transformation.**
 
-**To avoid duplicate columns**, use different column names on the right side, then select only what you need:
+Joins relate two logical inputs, which can come from different sources or represent two roles of the same source. At each call, the Base DataFrame is the method receiver and left input; the Extension DataFrame is the argument and right input. [Join Concepts] provides the binary-composition model, while [Join Conditions] and [Join Types] cover match construction and row preservation.
+
+The joined output must retain unambiguous fields and keys needed by later lazy transformations. Missing or ambiguous references can fail while the plan is constructed.
+
+:::{admonition} Choose the workflow shape
+:class: note
+
+**SQL parser path:** A fixed multi-way relationship can be easier to scan when `FROM`, `JOIN`, and `SELECT` appear in one statement.
+
+**DataFrame builder path:** Relationships assembled with Rust control flow, reusable expressions, or named intermediate [`DataFrame`] values can be easier to compose as method chains.
+
+**Both paths** converge on the same [`LogicalPlan`], optimizer, and executor, so choose by workflow clarity rather than execution speed.
+
+See [Builder vs. Parser][builder-parser] for the detailed architecture comparison.
+:::
+
+### Prepare, Join, and Shape Two Inputs
+
+**Name the inputs for their domain roles, join the Base DataFrame to its Extension DataFrame, then project the fields needed downstream.**
+
+The example continues the paired-key construction owned by [Join Conditions]. Distinct right-side key names avoid qualifier concerns in this simplest path, while [`.select()`] intentionally defines the downstream schema and demonstrates method composition.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
+    // Before: inventory is the Base DataFrame and sales is the Extension DataFrame.
     let inventory_df = dataframe!(
-        "product_id" => [1, 1, 2, 2],
-        "region" => ["East", "West", "East", "West"],
-        "stock" => [100, 50, 200, 75]
+        "product_id" => [1_i64, 1, 2],
+        "region" => ["east", "west", "east"],
+        "stock" => [100_i64, 50, 200]
     )?;
-
-    // Use different column names for join keys on right side
     let sales_df = dataframe!(
-        "sale_product_id" => [1, 1, 2],
-        "sale_region" => ["East", "West", "East"],
-        "sold" => [30, 20, 80]
+        "sale_product_id" => [1_i64, 2],
+        "sale_region" => ["west", "east"],
+        "sold" => [20_i64, 80]
     )?;
 
-    let joined = inventory_df.join(
+    // Build the lazy join, then shape its output for the next workflow step.
+    let result = inventory_df.join(
         sales_df,
-        JoinType::Left,
+        JoinType::Inner,
         &["product_id", "region"],
         &["sale_product_id", "sale_region"],
-        None
-    )?;
+        None,
+    )?
+        .select(vec![
+            col("product_id"),
+            col("region"),
+            col("stock"),
+            col("sold"),
+        ])?;
 
-    // Select only the columns you need (left-side keys + data)
-    let result = joined.select(vec![
-        col("product_id"),
-        col("region"),
-        col("stock"),
-        col("sold"),
-    ])?;
-
-    result.show().await?;
-    // +------------+--------+-------+------+
-    // | product_id | region | stock | sold |
-    // +------------+--------+-------+------+
-    // | 1          | East   | 100   | 30   |
-    // | 1          | West   | 50    | 20   |
-    // | 2          | East   | 200   | 80   |
-    // | 2          | West   | 75    |      |  ← No sales
-    // +------------+--------+-------+------+
+    // Execute and assert the shaped result.
+    let batches = result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+------------+--------+-------+------+",
+            "| product_id | region | stock | sold |",
+            "+------------+--------+-------+------+",
+            "| 1          | west   | 50    | 20   |",
+            "| 2          | east   | 200   | 80   |",
+            "+------------+--------+-------+------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
 ```
 
-**⚠️ Handling Same-Named Columns**
+:::{admonition} Preserve the intended method order
+:class: caution
 
-DataFusion's [`.join()`] preserves columns from both sides. When join keys share names, use one of these patterns:
-
-| Pattern                        | When to use                                                |
-| ------------------------------ | ---------------------------------------------------------- |
-| **[`.select()`] after join**   | Simple joins—pick the columns you need                     |
-| **[`.alias()`] before join**   | Complex multi-way joins—qualify with `col("alias.column")` |
-| **[`.with_column_renamed()`]** | Rename conflicting columns before joining                  |
-
-**Tip:** Call [`.schema()`] after joining to see actual column names.
+A method like [`.select()`] after the join can use fields from both inputs and shape the joined result; moving it before the join applies it to one input and must retain required join keys.
+Filter placement has separate ON-like and WHERE-like semantics described in [Join Conditions].
+:::
 
 ---
 
-(self-joins-and-qualified-columns)=
+## Keep the Joined Schema Unambiguous and Focused
 
-<!-- JOIN-TODO-008: Move self-joins to composition after the shared aliasing, qualification, renaming, and projection guidance. -->
+**Qualify or rename overlapping input fields before joining, then project the result to the fields and names required downstream.**
 
-## Join a DataFrame to Itself
+At plan-build time, a [`DataFrame`] join derives a result [`DFSchema`]; its inputs do not need fully aligned schemas. Same or overlapping field names can prevent join-plan construction. Distinct qualifiers can permit construction while later bare references remain ambiguous.
 
-A **self-join** joins a table with itself—essential for hierarchical data. Left Join preserves all rows even if they have no match (like Alice, who has no referrer).
+Aliases qualify fields by input role, renames can make a field's domain meaning explicit, and projections retain the fields required downstream. General column-method behavior belongs to [Selecting and Shaping Columns] and [DataFrame Schema Methods].
+
+Join key pairs must resolve to compatible types; [Type Coercion] describes coercion and planning errors.
+
+### Qualify or Rename Input Fields
+
+**Give a shared domain key a clear name, use aliases for role qualifiers, and project the payload fields that the next step needs.**
+
+Rename when you want one domain name; [`.join()`] already accepts differently named key pairs. [`.alias()`] assigns role qualifiers, and the qualified projection chooses the payload fields that persist.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // Extended customers: add referred_by (which customer referred them)
-    let customers_referrals = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"],
-        "referred_by" => [None::<i64>, Some(1), Some(1)]  // Alice referred Bob and Carol
+    // Before: customer IDs and order customer IDs use different source names.
+    let customers_df = dataframe!(
+        "id" => [1_i64, 2],
+        "name" => ["Ada", "Bina"]
+    )?;
+    let orders_df = dataframe!(
+        "order_id" => [100_i64, 101],
+        "customer_id" => [1_i64, 2],
+        "amount" => [40_i64, 75]
     )?;
 
-    // Self-join: alias both sides to disambiguate
-    let customer = customers_referrals.clone().alias("customer")?;
-    let referrer = customers_referrals.clone().alias("referrer")?;
+    // Give the Base key a shared domain name; paired keys may also have distinct names.
+    let customer_base = customers_df
+        .with_column_renamed("id", "customer_id")?
+        .alias("customer")?;
+    // Role aliases qualify fields for the joined projection.
+    let order_extension = orders_df.alias("order")?;
 
-    let with_referrers = customer.join(
-        referrer,
-        JoinType::Left,  // Keep customers without referrers (Alice)
-        &["referred_by"],
-        &["id"],
-        None
-    )?.select(vec![
-        col("customer.name").alias("customer"),
-        col("referrer.name").alias("referred_by"),
-    ])?;
+    // Join and select with role-qualified fields.
+    let result = customer_base
+        .join(
+            order_extension,
+            JoinType::Inner,
+            &["customer_id"],
+            &["customer_id"],
+            None,
+        )?
+        .select(vec![
+            col("customer.name").alias("customer"),
+            col("order.amount"),
+        ])?;
 
-    with_referrers.show().await?;
-    // +----------+-------------+
-    // | customer | referred_by |
-    // +----------+-------------+
-    // | Alice    | NULL        |  ← No referrer
-    // | Bob      | Alice       |
-    // | Carol    | Alice       |
-    // +----------+-------------+
+    let batches = result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+--------+",
+            "| customer | amount |",
+            "+----------+--------+",
+            "| Ada      | 40     |",
+            "| Bina     | 75     |",
+            "+----------+--------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
 ```
 
-**Key pattern:** <br>
-Use [`.alias()`] to create two "views" of the same DataFrame, then join with qualified column names (`customer.name`, `referrer.name`).
+### Select or Drop Result Fields
 
-**Common self-join patterns:**
+**Produce a stable downstream schema with `.select()` for an explicit field list or `.drop_columns()` for a small, qualified exclusion list.**
 
-- **Hierarchy traversal:** employees → managers, categories → parent categories
-- **Sequential comparison:** this_year.sales vs last_year.sales (join on product_id)
-- **Finding pairs:** "Which products are often bought together?" (order_items self-join)
+Two-sided joins often retain keys and payload fields from both inputs. Redundant or ambiguous fields, and upstream additions, can otherwise change the schema contract that downstream code consumes.
+
+Use [`.select()`] as an explicit allowlist, or [`.drop_columns()`] for a small qualified exclusion list. An unqualified exclusion can remove every same-named field, while exclusions pass newly added fields through; [Selecting and Shaping Columns] and [DataFrame Schema Methods] own the general behavior.
 
 ---
 
-<!-- JOIN-TODO-008 JOIN-TODO-016: Move to composition; teach preservation and readability at each leg without prescribing a physical build side or unsupported planning benefits. -->
+## Relate Two Roles with a Self-Join
+
+**Alias one source by role to attach related-row data—such as each employee’s manager—without ambiguous field references.**
+
+A self-join relates two roles from one source; it is not inherently a filter. This example answers who each employee's manager is and preserves an employee without one: `employee` is the Base role and `manager` is the Extension role. [Join Types] explains the left-join preservation behavior.
+
+```rust
+use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Before: employee IDs and manager references share Int64.
+    let employees_df = dataframe!(
+        "employee_id" => [1_i64, 2, 3],
+        "name" => ["Ada", "Bina", "Cora"],
+        "manager_id" => [None::<i64>, Some(1), Some(1)]
+    )?;
+
+    let employee_base = employees_df.clone().alias("employee")?;
+    let manager_extension = employees_df.alias("manager")?;
+
+    // Join the two roles, then keep a role-specific output schema.
+    let result = employee_base
+        .join(
+            manager_extension,
+            JoinType::Left,
+            &["manager_id"],
+            &["employee_id"],
+            None,
+        )?
+        .select(vec![
+            col("employee.name").alias("employee"),
+            col("manager.name").alias("manager"),
+        ])?;
+
+    let batches = result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+---------+",
+            "| employee | manager |",
+            "+----------+---------+",
+            "| Ada      |         |",
+            "| Bina     | Ada     |",
+            "| Cora     | Ada     |",
+            "+----------+---------+",
+        ],
+        &batches
+    );
+
+    Ok(())
+}
+```
+
+Use [`.filter()`] when a NULL `manager_id` predicate is sufficient. Use a self-join to attach related-role fields or check whether non-null references resolve. One self-join resolves one level; use SQL [`WITH RECURSIVE`][with-recursive] or explicit iteration for arbitrary depth.
+
+---
 
 ## Chain Joins Across Multiple DataFrames
 
-**Chain [`.join()`] calls to combine 3+ tables—each join produces a new DataFrame that feeds into the next.**
+**Chain `.join()` calls to extend a relationship one DataFrame at a time while retaining the keys and fields required by each later leg.**
 
-Real-world data is often normalized across multiple tables. A business question like "which customers have paid orders?" requires combining customers → orders → payments. Each chained Inner Join acts as a filter—only rows matching _all_ join conditions survive.
+Chaining keeps each relationship beside the call that adds it. Use a named intermediate [`DataFrame`] instead when one leg needs separate shaping for readability.
+
+At every leg, the current result is the Base DataFrame and the new input is the Extension DataFrame. Keep the fields and keys required by later legs.
+
+Each two-sided join can widen the intermediate schema, so project between legs or at the end while preserving later keys. Keep outer-join grouping explicit because regrouping can change which unmatched rows survive.
 
 ```rust
 use datafusion::prelude::*;
+use datafusion::assert_batches_sorted_eq;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    // customers_df:                 orders_df:
-    // +----+-------+                +----------+-------------+--------+
-    // | id | name  |                | order_id | customer_id | amount |
-    // +----+-------+                +----------+-------------+--------+
-    // | 1  | Alice |                | 101      | 1           | 100    |
-    // | 2  | Bob   |                | 102      | 1           | 200    |
-    // | 3  | Carol |                | 103      | 2           | 150    |
-    // +----+-------+                | 104      | 99          | 300    |
-    //                               +----------+-------------+--------+
+    // Before: customers have orders, and some orders have payment records.
     let customers_df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
+        "id" => [1_i64, 2, 3],
+        "name" => ["Ada", "Bina", "Cora"]
     )?;
-
     let orders_df = dataframe!(
-        "order_id" => [101, 102, 103, 104],
-        "customer_id" => [1, 1, 2, 99],
-        "amount" => [100, 200, 150, 300]
+        "order_id" => [101_i64, 102, 103],
+        "customer_id" => [1_i64, 1, 2],
+        "amount" => [100_i64, 200, 150]
     )?;
-
-    // Introduce a payments table: only orders 101 and 103 have payment records
-    // payments_df:
-    // +------------------+---------+
-    // | payment_order_id | status  |
-    // +------------------+---------+
-    // | 101              | paid    |
-    // | 103              | pending |
-    // +------------------+---------+
     let payments_df = dataframe!(
-        "payment_order_id" => [101, 103],
+        "payment_order_id" => [101_i64, 103],
         "status" => ["paid", "pending"]
     )?;
 
-    // 3-way join: customers → orders → payments
-    // Use .select() to keep only the columns we need (avoids duplicates)
-    let result = customers_df.clone()
-        .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
-        .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?
-        .select(vec![ // for better visibility of the result df
-            col("name"),
+    // The second join's Base DataFrame is the customer-order result.
+    let result = customers_df
+        .join(
+            orders_df,
+            JoinType::Inner,
+            &["id"],
+            &["customer_id"],
+            None,
+        )?
+        .join(
+            payments_df,
+            JoinType::Inner,
+            &["order_id"],
+            &["payment_order_id"],
+            None,
+        )?
+        .select(vec![
+            col("name").alias("customer"),
             col("order_id"),
             col("amount"),
             col("status"),
         ])?;
 
-    result.show().await?;
-    // +-------+----------+--------+---------+
-    // | name  | order_id | amount | status  |
-    // +-------+----------+--------+---------+
-    // | Alice | 101      | 100    | paid    |
-    // | Bob   | 103      | 150    | pending |
-    // +-------+----------+--------+---------+
-    //
-    // What got filtered out:
-    // - Alice's order 102: no payment record
-    // - Carol: no orders at all
-    // - Order 104: orphan (customer_id 99 doesn't exist)
+    let batches = result.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----------+----------+--------+---------+",
+            "| customer | order_id | amount | status  |",
+            "+----------+----------+--------+---------+",
+            "| Ada      | 101      | 100    | paid    |",
+            "| Bina     | 103      | 150    | pending |",
+            "+----------+----------+--------+---------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
 ```
 
-> **Tip:** <br>
-> Use Left Joins at intermediate steps if you need to preserve unmatched rows (e.g., customers without payments).
+For coverage, multiplication, Cartesian-product, and NULL-key checks, continue with [Join Validation].
 
-<!-- JOIN-TODO-016: Keep logical sequencing/readability advice only; verify or remove optimizer-reordering, build-right, and planning-overhead prescriptions. -->
+---
 
-### Join Order Matters
+## Conclusion
 
-The order you chain joins affects both **readability** and **performance**. General principles:
+Qualify or rename fields before joining when needed, preserve the keys and fields required by each later leg, and shape the result for its next consumer. Then validate the joined output against the intended relationship.
 
-| Principle                                     | Why                                                                        |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| **Start with your "main" table (Left-Table)** | Reads naturally: "customers with their orders and payments"                |
-| **Filter early**                              | Reduces intermediate result size before expensive joins                    |
-| **Smaller tables on the right**               | Hash joins build from the right side—smaller = faster                      |
-| **Let the optimizer help**                    | DataFusion may reorder joins, but good initial order reduces planning work |
+---
 
-```rust
-use datafusion::prelude::*;
+<!-- References -->
 
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let customers_df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
+<!-- Internal documentation -->
 
-    let orders_df = dataframe!(
-        "order_id" => [101, 102, 103, 104],
-        "customer_id" => [1, 1, 2, 99],
-        "amount" => [100, 200, 150, 300]
-    )?;
+[builder-parser]: ../../Concepts/builder-parser.md#choosing-the-right-api-for-the-task
+[dataframe schema methods]: ../../Schema-Management/schema-dataframe-methods.md
+[join concepts]: join-concepts.md
+[join conditions]: join-conditions.md
+[join types]: join-types.md
+[join validation]: join-validation.md
+[selecting and shaping columns]: ../selection.md
+[type coercion]: ../../Schema-Management/type-coercion.md
+[with-recursive]: ../../../../user-guide/sql/select.md#with-clause
 
-    let payments_df = dataframe!(
-        "payment_order_id" => [101, 103],
-        "status" => ["paid", "pending"]
-    )?;
+<!-- Core types -->
 
-    // ✅ Good: Start with the table you're "asking about"
-    // "Which customers have payments?"
-    let result = customers_df.clone()
-        .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
-        .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?;
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
 
-    result.show().await?;
-
-    // ✅ Also good: Start with filtered data to reduce intermediate size
-    let high_value_orders = orders_df.clone().filter(col("amount").gt(lit(100)))?;
-    let result = high_value_orders
-        .join(customers_df.clone(), JoinType::Inner, &["customer_id"], &["id"], None)?
-        .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?;
-
-    result.show().await?;
-
-    Ok(())
-}
-```
-
-> **Performance tip:** <br>
-> The optimizer reorders joins when beneficial, but good initial ordering reduces planning overhead. Use [`.explain()`] to see the actual execution plan.
-
-<!-- JOIN-TODO-008 JOIN-TODO-018: Merge with the shared result-schema guidance and distinguish qualification/ambiguity from actual schema errors. -->
-
-### Managing Column Proliferation
-
-Multi-way joins accumulate columns from every table. With each join, you get **all columns from both sides**—including duplicate key columns. Chain [`.select()`] at the end to keep only what you need:
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let customers_df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
-
-    let orders_df = dataframe!(
-        "order_id" => [101, 102, 103, 104],
-        "customer_id" => [1, 1, 2, 99],
-        "amount" => [100, 200, 150, 300]
-    )?;
-
-    let payments_df = dataframe!(
-        "payment_order_id" => [101, 103],
-        "status" => ["paid", "pending"]
-    )?;
-
-    // Without .select(): 2 + 3 + 2 = 7 columns (with redundant id, customer_id, order_id, payment_order_id)
-    // With .select(): pick only the 4 columns that matter
-    let result = customers_df.clone()
-        .join(orders_df.clone(), JoinType::Inner, &["id"], &["customer_id"], None)?
-        .join(payments_df.clone(), JoinType::Inner, &["order_id"], &["payment_order_id"], None)?
-        .select(vec![     // <--- This select removes the clutter
-            col("name").alias("customer"),
-            col("order_id"),
-            col("amount"),
-            col("status").alias("payment_status"),
-        ])?;
-
-    result.show().await?;
-    // +----------+----------+--------+----------------+
-    // | customer | order_id | amount | payment_status |
-    // +----------+----------+--------+----------------+
-    // | Alice    | 101      | 100    | paid           |
-    // | Bob      | 103      | 150    | pending        |
-    // +----------+----------+--------+----------------+
-
-    Ok(())
-}
-```
-
-> **When SQL might be clearer:** <br>
-> Multi-way joins with 4+ tables can become hard to read as chained method calls. Consider [`SessionContext::sql()`] for complex [star-schema queries][databricks_star_schema] where SQL's visual structure helps.
+<!-- Methods and functions -->
 
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
-[`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
+[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
 [`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
 [`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
 [`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
-[`sessioncontext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
-[databricks_star_schema]: https://www.databricks.com/glossary/star-schema

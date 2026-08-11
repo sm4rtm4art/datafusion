@@ -174,7 +174,7 @@ DML (`INSERT INTO`, `COPY`). Unlike `SELECT` queries, **these execute
 eagerly** — the side effect happens inside the [`.sql()`] call itself,
 and the returned [`DataFrame`] is empty (zero rows, no plan). For the
 full SQL syntax, see the
-[SQL Reference](../../user-guide/sql/index.rst).
+[SQL Reference][sql-reference].
 
 :::{admonition} One statement at a time
 :class: warning
@@ -334,7 +334,7 @@ Both steps are required: [`.into_view()`] converts the
 makes it discoverable by name. The view stores the plan, not
 materialized data, so queries compose lazily. For additional
 details on view registration, see
-[Registering DataFrames as Views](registered-tables.md#registering-dataframes-as-views).
+[Registered Tables][registered-tables].
 
 ```rust
 # use std::sync::Arc;
@@ -421,7 +421,7 @@ you need to switch between APIs mid-pipeline.
 
 For the full architectural comparison — including the parser vs.
 builder diagram and security analysis — see
-[Two Paths to the Same Plan](../Concepts/builder-parser.md).
+[Two Paths to the Same Plan][builder-parser].
 
 ### External Data Sources and Pushdown
 
@@ -457,7 +457,7 @@ let df = ctx.table("pg_users").await?
 ```
 
 For implementation details on building custom providers, see
-[Custom Table Providers](../../custom-table-providers.md).
+[Custom Table Providers][custom-table-providers].
 
 ---
 
@@ -475,23 +475,50 @@ pushdown optimization applies identically to both paths.
 
 ---
 
-## References
+## Further Reading
 
 **Concepts & Guides:**
 
-- [Two Paths to the Same Plan](../Concepts/builder-parser.md) — How SQL and DataFrame APIs converge into the same [`LogicalPlan`]
-- [Choosing the Right API](../Concepts/builder-parser.md#choosing-the-right-api-for-the-task) — Decision guide for API selection
-- [Registered Tables](registered-tables.md) — Registration, views, and catalog inspection
-- [SQL Reference](../../user-guide/sql/index.rst) — Full SQL syntax, functions, and data types
-- [Custom Table Providers](../../custom-table-providers.md) — Building providers with filter and projection pushdown
+- [Two Paths to the Same Plan][builder-parser] — How SQL and DataFrame APIs converge into the same [`LogicalPlan`]
+- [Choosing the Right API][builder-parser] — Decision guide for API selection
+- [Registered Tables][registered-tables] — Registration, views, and catalog inspection
+- [SQL Reference][sql-reference] — Full SQL syntax, functions, and data types
+- [Custom Table Providers][custom-table-providers] — Building providers with filter and projection pushdown
 
 **API Documentation:**
 
-- [`SessionContext::sql()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql) — Execute SQL, returns a lazy [`DataFrame`]
-- [`SessionContext::sql_with_options()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql_with_options) — SQL with operation controls
-- [`SessionContext::parse_sql_expr()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.parse_sql_expr) — Parse a SQL expression into an [`Expr`]
-- [`SQLOptions`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SQLOptions.html) — DDL/DML/statement flags
-- [`.into_view()`](https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view) — Convert a [`DataFrame`]'s plan into a [`TableProvider`]
-- [`.register_table()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table) — Place a [`TableProvider`] in the catalog under a name
+- [`SessionContext::sql()`] — Execute SQL, returns a lazy [`DataFrame`]
+- [`SessionContext::sql_with_options()`] — SQL with operation controls
+- [`SessionContext::parse_sql_expr()`] — Parse a SQL expression into an [`Expr`]
+- [`SQLOptions`] — DDL/DML/statement flags
+- [`.into_view()`] — Convert a [`DataFrame`]'s plan into a [`TableProvider`]
+- [`.register_table()`] — Place a [`TableProvider`] in the catalog under a name
 
 ---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[builder-parser]: ../Concepts/builder-parser.md
+[custom-table-providers]: ../../custom-table-providers.md
+[registered-tables]: registered-tables.md
+[sql-reference]: ../../../user-guide/sql/index.rst
+
+<!-- Core types -->
+
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`sqloptions`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SQLOptions.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+
+<!-- Methods and functions -->
+
+[`.into_view()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`.sql_with_options()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql_with_options
+[`sessioncontext::parse_sql_expr()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.parse_sql_expr
+[`sessioncontext::sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`sessioncontext::sql_with_options()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql_with_options

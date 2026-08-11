@@ -63,7 +63,7 @@ The query engine uses the primary metadata for processing and optimizing. The hu
 
 ### What the Contract Contains
 
-The schema contract carries two categories of metadata serving different audiences. For what [`DFSchema`] structurally adds to Arrow's [`Schema`] — table qualifiers, functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer). For the full field-level breakdown, see [Anatomy of a Schema](schema-anatomy.md).
+The schema contract carries two categories of metadata serving different audiences. For what [`DFSchema`] structurally adds to Arrow's [`Schema`] — table qualifiers, functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer). For the full field-level breakdown, see [Anatomy of a Schema][schema-anatomy].
 
 1. **Primary metadata:** structural properties that the query engine uses for planning and execution.
 
@@ -73,42 +73,42 @@ This distinction clarifies which parts of a schema affect query behavior and whi
 
 **Primary metadata in an overview:**
 
-| Property                  | Level       | Purpose                                                             |
-| :------------------------ | :---------- | :------------------------------------------------------------------ |
-| `name`                    | Arrow Field | Column identity — used in selects, joins, filters, group-by         |
-| `data_type`               | Arrow Field | Storage format and compute kernel selection                         |
-| `nullable`                | Arrow Field | Validity bitmap, null-safe operations, schema merging               |
-| `field_qualifiers`        | DFSchema    | Table provenance — disambiguates `users.id` vs `orders.id` in joins |
-| `functional_dependencies` | DFSchema    | Key relationships the optimizer uses for deduplication and ordering |
+| Property                                              | Level       | Purpose                                                             |
+| :---------------------------------------------------- | :---------- | :------------------------------------------------------------------ |
+| [`name`][`field`]                                     | Arrow Field | Column identity — used in selects, joins, filters, group-by         |
+| [`data_type`][`field`]                                | Arrow Field | Storage format and compute kernel selection                         |
+| [`nullable`][`field`]                                 | Arrow Field | Validity bitmap, null-safe operations, schema merging               |
+| [`field_qualifiers`][`tablereference`]                | DFSchema    | Table provenance — disambiguates `users.id` vs `orders.id` in joins |
+| [`functional_dependencies`][`functionaldependencies`] | DFSchema    | Key relationships the optimizer uses for deduplication and ordering |
 
 **Secondary metadata:**
 
-| Property                     | Level                | Purpose                                                                     |
-| :--------------------------- | :------------------- | :-------------------------------------------------------------------------- |
-| `metadata` (key-value pairs) | Arrow Field / Schema | Units (`"unit": "celsius"`), descriptions, PII classification, data lineage |
+| Property                                | Level                | Purpose                                                                     |
+| :-------------------------------------- | :------------------- | :-------------------------------------------------------------------------- |
+| [`metadata`][`field`] (key-value pairs) | Arrow Field / Schema | Units (`"unit": "celsius"`), descriptions, PII classification, data lineage |
 
 DataFusion preserves secondary metadata throughout processing but does not use it for optimization. The query engine operates exclusively on primary metadata.
 
 :::{admonition} File-format statistics are not schema
 :class: note
-Parquet file statistics (min/max values, row counts, null counts) are **not** part of the schema. They reside in the Parquet file footer and are cached at the physical execution layer — by `ListingTable`'s `FileStatisticsCache` for aggregated file-level statistics, and by `RuntimeEnv`'s `FileMetadataCache` for raw footer metadata. The [`LogicalPlan`] and [`DFSchema`] never carry them. These statistics are consumed by `PruningPredicate` during physical execution for row group and page pruning.
+Parquet file statistics (min/max values, row counts, null counts) are **not** part of the schema. They reside in the Parquet file footer and are cached at the physical execution layer — by [`ListingTable`]'s `FileStatisticsCache` for aggregated file-level statistics, and by [`RuntimeEnv`]'s `FileMetadataCache` for raw footer metadata. The [`LogicalPlan`] and [`DFSchema`] never carry them. These statistics are consumed by [`PruningPredicate`] during physical execution for row group and page pruning.
 :::
 
 ### Contract Violations — Fail-Fast at Plan-Build Time
 
 **Schema violations — structural mismatches in column names or types — are caught at plan-build time, before any data is scanned.**
 
-[`DFSchema`] validates the structural contract each time a new [`LogicalPlan`] node is constructed. When you call a lazy method, without execution (`.filter()`, `.select()`, `.union()`, etc.), DataFusion checks the referenced columns and types against the current schema. Errors surface immediately at the point of construction — not during execution. This fail-fast behavior saves compute and debugging time by catching structural mistakes early.
+[`DFSchema`] validates the structural contract each time a new [`LogicalPlan`] node is constructed. When you call a lazy method, without execution ([`.filter()`], [`.select()`], [`.union()`], etc.), DataFusion checks the referenced columns and types against the current schema. Errors surface immediately at the point of construction — not during execution. This fail-fast behavior saves compute and debugging time by catching structural mistakes early.
 
 Two common violations:
 
-- **"Column not found"**: The referenced column does not exist in the current schema. Column names are case-sensitive — `col("Temperature")` and `col("temperature")` are distinct. This error surfaces when calling `.filter()`, `.select()`, or any method that references columns by name.
+- **"Column not found"**: The referenced column does not exist in the current schema. Column names are case-sensitive — [`col("Temperature")`][`col()`] and [`col("temperature")`][`col()`] are distinct. This error surfaces when calling [`.filter()`], [`.select()`], or any method that references columns by name.
 
-- **"Type mismatch"**: Column types are incompatible between schemas — for example, unioning a `Float32` column with a `Utf8` column of the same name. The [`DFSchema`] rejects the combination during plan construction.
+- **"Type mismatch"**: Column types are incompatible between schemas — for example, unioning a `Float32` column with a [`Utf8`][`datatype::utf8`] column of the same name. The [`DFSchema`] rejects the combination during plan construction.
 
 These errors come from [`DFSchema`] validation — the contract doing its job.
 
-For the detailed breakdown of each field property, see [Anatomy of a Schema](schema-anatomy.md). For how types are reconciled when they don't match, see [Type Coercion](type-coercion.md).
+For the detailed breakdown of each field property, see [Anatomy of a Schema][schema-anatomy]. For how types are reconciled when they don't match, see [Type Coercion][type-coercion].
 
 ---
 
@@ -116,14 +116,14 @@ For the detailed breakdown of each field property, see [Anatomy of a Schema](sch
 
 **"Schema" carries different semantics at each abstraction layer in DataFusion — resolving this ambiguity is essential for working with schema management.**
 
-[`DFSchema`] and Arrow [`Schema`] are the two data-describing schemas used throughout this documentation. DataFusion also uses "schema" as a catalog namespace ([`SchemaProvider`]) and provides `Arc`-wrapped reference types (`SchemaRef`, `DFSchemaRef`) for efficient sharing. The table below separates all four:
+[`DFSchema`] and Arrow [`Schema`] are the two data-describing schemas used throughout this documentation. DataFusion also uses "schema" as a catalog namespace ([`SchemaProvider`]) and provides `Arc`-wrapped reference types ([`SchemaRef`], [`DFSchemaRef`]) for efficient sharing. The table below separates all four:
 
-| Term                                  | Abstraction Layer | Description                                                                                                                              | Accessed via                                             |
-| :------------------------------------ | :---------------- | :--------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------- |
-| Catalog Schema ([`SchemaProvider`])   | DataFusion        | A namespace in the catalog hierarchy (like `"public"` in PostgreSQL). Contains registered tables — not a data description.               | `SessionState` → `CatalogProvider` → `SchemaProvider`    |
-| **→ DataFrame Schema ([`DFSchema`])** | **DataFusion**    | **Wraps an Arrow `Schema` and adds table qualifiers and functional dependencies for query planning. Embedded in [`LogicalPlan`].**       | **[`df.schema()`][`.schema()`] returns `&DFSchema`**     |
-| **→ Arrow Schema ([`Schema`])**       | **Apache Arrow**  | **The columnar data description: field names, data types, nullability, and metadata. Knows nothing about table names or query context.** | **[`TableProvider::schema()`] returns `SchemaRef`**      |
-| SchemaRef / DFSchemaRef               | Both              | `Arc`-wrapped reference-counted pointers (`Arc<Schema>` and `Arc<DFSchema>`) for passing schemas cheaply without cloning.                | [`df.schema().inner()`][`.inner()`] returns `&SchemaRef` |
+| Term                                  | Abstraction Layer | Description                                                                                                                              | Accessed via                                                |
+| :------------------------------------ | :---------------- | :--------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------- |
+| Catalog Schema ([`SchemaProvider`])   | DataFusion        | A namespace in the catalog hierarchy (like `"public"` in PostgreSQL). Contains registered tables — not a data description.               | [`SessionState`] → [`CatalogProvider`] → [`SchemaProvider`] |
+| **→ DataFrame Schema ([`DFSchema`])** | **DataFusion**    | **Wraps an Arrow [`Schema`] and adds table qualifiers and functional dependencies for query planning. Embedded in [`LogicalPlan`].**     | **[`df.schema()`][`.schema()`] returns `&DFSchema`**        |
+| **→ Arrow Schema ([`Schema`])**       | **Apache Arrow**  | **The columnar data description: field names, data types, nullability, and metadata. Knows nothing about table names or query context.** | **[`TableProvider::schema()`] returns [`SchemaRef`]**       |
+| [`SchemaRef`] / [`DFSchemaRef`]       | Both              | `Arc`-wrapped reference-counted pointers (`Arc<Schema>` and `Arc<DFSchema>`) for passing schemas cheaply without cloning.                | [`df.schema().inner()`][`.inner()`] returns `&SchemaRef`    |
 
 :::{admonition} For SQL engineers
 :class: tip
@@ -134,7 +134,7 @@ In relational databases like PostgreSQL, Oracle, or SQL Server, "schema" primari
 :class: caution
 The remaining pages in Schema Management focus on [`DFSchema`] and Arrow [`Schema`] — the data-describing contracts. When this documentation says "schema" without qualification, it means the column-level contract, not the catalog namespace.
 
-For the detailed internal structure of `DFSchema` (fields, qualifiers, dependencies), see [Anatomy of a Schema](schema-anatomy.md).
+For the detailed internal structure of [`DFSchema`] (fields, qualifiers, dependencies), see [Anatomy of a Schema][schema-anatomy].
 :::
 
 ---
@@ -143,26 +143,26 @@ For the detailed internal structure of `DFSchema` (fields, qualifiers, dependenc
 
 **[`DFSchema`] enables unambiguous column resolution and optimizer key relationships by wrapping Arrow's [`Schema`] with query-planning context — table qualifiers and functional dependencies — embedded in each [`LogicalPlan`] node.**
 
-[`DFSchema`] wraps an Arrow [`Schema`] and connects the data description with the [`LogicalPlan`]. The Arrow [`Schema`] contains raw Fields — column names, data types, nullability, and metadata — with no relation to the query plan. [`DFSchema`] adds `field_qualifiers` (which table each field belongs to) and `functional_dependencies` (key relationships for the optimizer).
+[`DFSchema`] wraps an Arrow [`Schema`] and connects the data description with the [`LogicalPlan`]. The Arrow [`Schema`] contains raw [`Field`] values — column names, data types, nullability, and metadata — with no relation to the query plan. [`DFSchema`] adds [`field_qualifiers`][`tablereference`] (which table each field belongs to) and [`functional_dependencies`][`functionaldependencies`] (key relationships for the optimizer).
 
-Without `field_qualifiers`, the planner cannot distinguish `users.id` from `orders.id` in joins. Without `functional_dependencies`, the optimizer cannot deduplicate or reduce GROUP BY clauses.
+Without [`field_qualifiers`][`tablereference`], the planner cannot distinguish `users.id` from `orders.id` in joins. Without [`functional_dependencies`][`functionaldependencies`], the optimizer cannot deduplicate or reduce GROUP BY clauses.
 
-When you call DataFrame API methods like `.filter()`, `.select()`, or `.join()`, each method builds a new [`LogicalPlan`] node — and each node's [`DFSchema`] is what enables fail-fast validation and query optimization. Accessed via [`df.schema()`][`.schema()`], the underlying Arrow [`Schema`] via [`.inner()`] or [`.as_arrow()`].
+When you call DataFrame API methods like [`.filter()`], [`.select()`], or [`.join()`], each method builds a new [`LogicalPlan`] node — and each node's [`DFSchema`] is what enables fail-fast validation and query optimization. Accessed via [`df.schema()`][`.schema()`], the underlying Arrow [`Schema`] via [`.inner()`] or [`.as_arrow()`].
 
-| Component                 | Type                          | Purpose                                                                                         |
-| :------------------------ | :---------------------------- | :---------------------------------------------------------------------------------------------- |
-| `inner`                   | `SchemaRef` (`Arc<Schema>`)   | The Arrow Schema — field definitions (name, type, nullable, metadata)                           |
-| `field_qualifiers`        | `Vec<Option<TableReference>>` | Tracks which table each field came from. `None` for computed expressions.                       |
-| `functional_dependencies` | `FunctionalDependencies`      | Key relationships the optimizer uses (e.g., primary keys that uniquely determine other columns) |
+| Component                                             | Type                          | Purpose                                                                                         |
+| :---------------------------------------------------- | :---------------------------- | :---------------------------------------------------------------------------------------------- |
+| `inner`                                               | [`SchemaRef`]                 | The Arrow [`Schema`] — field definitions (name, type, nullable, metadata)                       |
+| [`field_qualifiers`][`tablereference`]                | `Vec<Option<TableReference>>` | Tracks which table each field came from ([`TableReference`]). `None` for computed expressions.  |
+| [`functional_dependencies`][`functionaldependencies`] | [`FunctionalDependencies`]    | Key relationships the optimizer uses (e.g., primary keys that uniquely determine other columns) |
 
 ### Accessing the Underlying Arrow Schema
 
-When you need the Arrow Schema (e.g., for file writers, Arrow compute kernels, or interop with other Arrow-based tools), `DFSchema` provides two accessors:
+When you need the Arrow Schema (e.g., for file writers, Arrow compute kernels, or interop with other Arrow-based tools), [`DFSchema`] provides two accessors:
 
 - [`.inner()`] — returns `&SchemaRef` (`&Arc<Schema>`)
-- [`.as_arrow()`] — returns `&Schema` (the dereferenced Arrow Schema)
+- [`.as_arrow()`] — returns `&Schema` (the dereferenced Arrow [`Schema`])
 
-`LogicalPlan::schema()` returns `&DFSchemaRef` (i.e., `&Arc<DFSchema>`), which derefs to `&DFSchema`. [`DataFrame::schema()`][`.schema()`] delegates to this and returns `&DFSchema` directly.
+[`LogicalPlan::schema()`][`logicalplan::schema()`] returns `&DFSchemaRef` (i.e., `&Arc<DFSchema>`), which derefs to `&DFSchema`. [`DataFrame::schema()`][`.schema()`] delegates to this and returns `&DFSchema` directly.
 
 ### Schema Immutability
 
@@ -170,14 +170,14 @@ When you need the Arrow Schema (e.g., for file writers, Arrow compute kernels, o
 
 ### Expression Validation
 
-Schema errors in expressions surface at plan-build time — every `col()` reference and operator is checked against the current [`DFSchema`] before the plan node is constructed. When you write `col("amount").gt(lit(100))`, DataFusion verifies that `amount` exists in the schema and that the `>` operator is valid for its data type. Invalid references fail immediately, not during execution.
+Schema errors in expressions surface at plan-build time — every [`col()`] reference and operator is checked against the current [`DFSchema`] before the plan node is constructed. When you write `col("amount").gt(lit(100))`, DataFusion verifies that `amount` exists in the schema and that the `>` operator is valid for its data type. Invalid references fail immediately, not during execution.
 
 :::{admonition} Type coercion and DFSchema
 :class: seealso
-The optimizer's [`TypeCoercion`] rule reads the [`DFSchema`] to insert implicit widening casts. See [Type Coercion at a Glance](#type-coercion-at-a-glance) and [Type Coercion](type-coercion.md).
+The optimizer's [`TypeCoercion`] rule reads the [`DFSchema`] to insert implicit widening casts. See [Type Coercion at a Glance](#type-coercion-at-a-glance) and [Type Coercion][type-coercion].
 :::
 
-For the detailed field-level anatomy (name, data_type, nullable, metadata), see [Anatomy of a Schema](schema-anatomy.md).
+For the detailed field-level anatomy (name, data_type, nullable, metadata), see [Anatomy of a Schema][schema-anatomy].
 
 ---
 
@@ -185,20 +185,20 @@ For the detailed field-level anatomy (name, data_type, nullable, metadata), see 
 
 **Output schemas may contain wider types than the input — DataFusion's type coercion automatically widens compatible types to prevent data loss, with different rules for expressions and set operations.**
 
-When an `Int32` column is added to an `Int64` column, the result column is `Int64` — the schema of the resulting [`DataFrame`] reflects this widened type, even though no explicit cast was requested. Type coercion inserts these widening casts automatically, preventing data loss while keeping the API ergonomic. This is distinct from schema validation: validation catches structural errors at plan-build time, while coercion runs as a separate [`TypeCoercion`] analyzer rule during the optimization phase — after the plan is constructed.
+When an [`Int32`][`datatype::int32`] column is added to an [`Int64`][`datatype::int64`] column, the result column is [`Int64`][`datatype::int64`] — the schema of the resulting [`DataFrame`] reflects this widened type, even though no explicit cast was requested. Type coercion inserts these widening casts automatically, preventing data loss while keeping the API ergonomic. This is distinct from schema validation: validation catches structural errors at plan-build time, while coercion runs as a separate [`TypeCoercion`] analyzer rule during the optimization phase — after the plan is constructed.
 
 DataFusion applies coercion in two modes:
 
-1. **Auto-coercion in expressions** (`.select()`, `.filter()`, `.with_column()`): The optimizer widens types automatically. `Int32 + Int64` produces `Int64`. This is convenient and safe — it always widens, never narrows.
+1. **Auto-coercion in expressions** ([`.select()`], [`.filter()`], [`.with_column()`]): The optimizer widens types automatically. [`Int32`][`datatype::int32`] + [`Int64`][`datatype::int64`] produces [`Int64`][`datatype::int64`]. This is convenient and safe — it always widens, never narrows.
 
-2. **Strict matching in set operations** (`.union()`, `.except()`, `.intersect()`): Columns in corresponding positions must have compatible types. If no safe coercion path exists, you must cast explicitly. This strictness is a deliberate safety measure to prevent silent data corruption when combining DataFrames.
+2. **Strict matching in set operations** ([`.union()`], [`.except()`], [`.intersect()`]): Columns in corresponding positions must have compatible types. If no safe coercion path exists, you must cast explicitly. This strictness is a deliberate safety measure to prevent silent data corruption when combining DataFrames.
 
 :::{admonition} Join keys are auto-coerced
 :class: note
-Join keys are an exception to strict matching — DataFusion automatically coerces join keys to a common type (e.g., `Int32 = Int64` becomes `Int64 = Int64`). This happens transparently via the [`TypeCoercion`] analyzer rule.
+Join keys are an exception to strict matching — DataFusion automatically coerces join keys to a common type (e.g., [`Int32`][`datatype::int32`] = [`Int64`][`datatype::int64`] becomes [`Int64`][`datatype::int64`] = [`Int64`][`datatype::int64`]). This happens transparently via the [`TypeCoercion`] analyzer rule.
 :::
 
-For the full coercion hierarchy, widening rules, and examples, see [Type Coercion](type-coercion.md).
+For the full coercion hierarchy, widening rules, and examples, see [Type Coercion][type-coercion].
 
 ---
 
@@ -206,7 +206,7 @@ For the full coercion hierarchy, widening rules, and examples, see [Type Coercio
 
 **Every query begins with a schema from the data source — the accuracy and stability of this initial schema determines the reliability of the entire pipeline.**
 
-The initial schema is the first [`DFSchema`] in the plan tree, set at the `TableScan` node by the [`TableProvider`]. Getting the initial schema right is critical: every subsequent transformation derives from it, and inference errors propagate through the entire plan. DataFusion determines the initial schema in one of three ways:
+The initial schema is the first [`DFSchema`] in the plan tree, set at the [`TableScan`][`logicalplan::tablescan`] node by the [`TableProvider`]. Getting the initial schema right is critical: every subsequent transformation derives from it, and inference errors propagate through the entire plan. DataFusion determines the initial schema in one of three ways:
 
 1. **Self-describing formats** ([Parquet], Avro, Arrow IPC): The schema is embedded in the file metadata. Types are known instantly at scan time — no inference needed.
 
@@ -216,10 +216,10 @@ The initial schema is the first [`DFSchema`] in the plan tree, set at the `Table
 
 :::{admonition} Schema drift
 :class: warning
-Inferred schemas can drift as data evolves — a column inferred as `Int32` today may encounter values exceeding its range tomorrow. Explicit schemas eliminate drift entirely. For details and mitigation strategies, see [Schema Inference](schema-inference.md).
+Inferred schemas can drift as data evolves — a column inferred as [`Int32`][`datatype::int32`] today may encounter values exceeding its range tomorrow. Explicit schemas eliminate drift entirely. For details and mitigation strategies, see [Schema Inference][schema-inference].
 :::
 
-For constructing schemas programmatically, see [Creating Schemas](schema-creation.md). For applying schemas to specific formats (CSV, Parquet, partitioned data), see [Applying Schemas](schema-application.md).
+For constructing schemas programmatically, see [Creating Schemas][schema-creation]. For applying schemas to specific formats (CSV, Parquet, partitioned data), see [Applying Schemas][schema-application].
 
 ---
 
@@ -227,17 +227,17 @@ For constructing schemas programmatically, see [Creating Schemas](schema-creatio
 
 **The [`LogicalPlan`] is the schema owner; the [`DataFrame`] is the accessor — understanding this delegation is key to working with schemas in DataFusion.**
 
-Every schema originates at a [`TableProvider`] — the schema creator. Each [`TableProvider`] implements a `.schema()` method that returns an Arrow [`SchemaRef`]. How that [`TableProvider`] is obtained depends on the access pattern — ephemeral reads create one internally, while registered tables store one in the catalog for later retrieval — but both paths converge at [`TableProvider::schema()`].
+Every schema originates at a [`TableProvider`] — the schema creator. Each [`TableProvider`] implements a [`.schema()`][`tableprovider::schema()`] method that returns an Arrow [`SchemaRef`]. How that [`TableProvider`] is obtained depends on the access pattern — ephemeral reads create one internally, while registered tables store one in the catalog for later retrieval — but both paths converge at [`TableProvider::schema()`].
 
 The two access patterns carry different implications for schema management:
 
-1. **Ephemeral reads** (`ctx.read_csv()`, `ctx.read_batch()`): The [`SessionContext`] creates a [`TableProvider`] (e.g., `ListingTable`, `MemTable`) internally and uses it immediately. The schema may come from file inference or explicit options — inference-based schemas carry drift risk as data evolves.
+1. **Ephemeral reads** ([`.read_csv()`], [`.read_batch()`]): The [`SessionContext`] creates a [`TableProvider`] (e.g., [`ListingTable`], [`MemTable`]) internally and uses it immediately. The schema may come from file inference or explicit options — inference-based schemas carry drift risk as data evolves.
 
-2. **Registered tables** (`ctx.register_table()`, then `ctx.table("name")`): The [`TableProvider`] is stored in the catalog and retrieved later via the catalog chain (`SessionState` → `CatalogProvider` → `SchemaProvider` → `TableProvider`). The schema is stable and catalog-managed.
+2. **Registered tables** ([`.register_table()`], then [`.table()`]): The [`TableProvider`] is stored in the catalog and retrieved later via the catalog chain ([`SessionState`] → [`CatalogProvider`] → [`SchemaProvider`] → [`TableProvider`]). The schema is stable and catalog-managed.
 
 Both paths converge inside [`SessionContext`]: the Arrow [`Schema`] from the [`TableProvider`] is wrapped in a [`DFSchema`] (adding qualifiers and functional dependencies) by [`LogicalPlanBuilder`] and embedded in the [`LogicalPlan`] node. The [`DataFrame`] then delegates [`df.schema()`][`.schema()`] to `plan.schema()` — it borrows the schema from the plan, never copies it.
 
-In Rust ownership terms: [`DFSchema`] is wrapped in `Arc<DFSchema>` (`DFSchemaRef`) for shared ownership via reference counting. The [`LogicalPlan`] _owns_ its `DFSchemaRef`. The [`DataFrame`] holds the [`LogicalPlan`] and borrows the schema through `plan.schema()`, which returns `&DFSchema`. No schema data is cloned during this delegation.
+In Rust ownership terms: [`DFSchema`] is wrapped in `Arc<DFSchema>` ([`DFSchemaRef`]) for shared ownership via reference counting. The [`LogicalPlan`] _owns_ its [`DFSchemaRef`]. The [`DataFrame`] holds the [`LogicalPlan`] and borrows the schema through `plan.schema()`, which returns `&DFSchema`. No schema data is cloned during this delegation.
 
 ```text
 SCHEMA OWNERSHIP FLOW
@@ -307,29 +307,29 @@ SCHEMA OWNERSHIP FLOW
 
 :::{admonition} SessionState and DataFrame internals
 :class: seealso
-For a detailed explanation of the `SessionState` clone semantics and how each `DataFrame` captures its execution environment, see [Anatomy of a DataFrame](../Concepts/anatomy-dataframe.md).
+For a detailed explanation of the [`SessionState`] clone semantics and how each [`DataFrame`] captures its execution environment, see [Anatomy of a DataFrame](../Concepts/anatomy-dataframe.md).
 :::
 
-For what lives inside the [`DFSchema`] — fields, qualifiers, and functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer) above and [Anatomy of a Schema](schema-anatomy.md).
+For what lives inside the [`DFSchema`] — fields, qualifiers, and functional dependencies — see [DFSchema — The Query-Planning Layer](#dfschema-the-query-planning-layer) above and [Anatomy of a Schema][schema-anatomy].
 
 ---
 
 ## Schema Propagation Through Transformations
 
-**The schema evolves with every transformation — each `.filter()`, `.select()`, or `.aggregate()` produces a new [`DFSchema`], validated at plan-build time before the node is added to the plan tree.**
+**The schema evolves with every transformation — each [`.filter()`], [`.select()`], or [`.aggregate()`] produces a new [`DFSchema`], validated at plan-build time before the node is added to the plan tree.**
 
-Schema propagation is how the [`DFSchema`] changes as transformations are chained on a [`DataFrame`]. Each call appends a new [`LogicalPlan`] node and derives its output schema from the input schema. Every derivation is validated immediately — structural errors are caught at the point of construction, not during `.collect()`. When `.collect()` (or another action method) triggers execution, the physical plan uses the already-validated schema; no further schema checks occur at runtime.
+Schema propagation is how the [`DFSchema`] changes as transformations are chained on a [`DataFrame`]. Each call appends a new [`LogicalPlan`] node and derives its output schema from the input schema. Every derivation is validated immediately — structural errors are caught at the point of construction, not during [`.collect()`]. When [`.collect()`] (or another action method) triggers execution, the physical plan uses the already-validated schema; no further schema checks occur at runtime.
 
 Each node derives its output schema from its input:
 
-| Operation                    | Schema effect                                                                                                                                                                                       |
-| :--------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.filter(expr)`              | Schema passes through unchanged — filtering rows does not change columns                                                                                                                            |
-| `.select(exprs)`             | New schema with only the selected/computed columns                                                                                                                                                  |
-| `.aggregate(group_by, aggs)` | New schema with group-by columns + aggregate result columns                                                                                                                                         |
-| `.join(right, ...)`          | Combined schema from both inputs — qualifiers prevent column ambiguity. `LEFT`, `RIGHT`, and `FULL` joins force nullability on the null-extended side, even if the source fields were non-nullable. |
-| `.with_column(name, expr)`   | Existing schema + one new or replaced column                                                                                                                                                        |
-| `.drop_columns(names)`       | Existing schema minus the dropped columns                                                                                                                                                           |
+| Operation                                      | Schema effect                                                                                                                                                                                       |
+| :--------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`.filter(expr)`][`.filter()`]                 | Schema passes through unchanged — filtering rows does not change columns                                                                                                                            |
+| [`.select(exprs)`][`.select()`]                | New schema with only the selected/computed columns                                                                                                                                                  |
+| [`.aggregate(group_by, aggs)`][`.aggregate()`] | New schema with group-by columns + aggregate result columns                                                                                                                                         |
+| [`.join(right, ...)`][`.join()`]               | Combined schema from both inputs — qualifiers prevent column ambiguity. `LEFT`, `RIGHT`, and `FULL` joins force nullability on the null-extended side, even if the source fields were non-nullable. |
+| [`.with_column(name, expr)`][`.with_column()`] | Existing schema + one new or replaced column                                                                                                                                                        |
+| [`.drop_columns(names)`][`.drop_columns()`]    | Existing schema minus the dropped columns                                                                                                                                                           |
 
 The plan tree below illustrates how the schema narrows at each step:
 
@@ -344,9 +344,9 @@ Aggregate(group=[region], agg=[sum(amount)])
           DFSchema: {id: Int64, region: Utf8, amount: Float64}  ← 3 columns
 ```
 
-Schema validation happens at plan-build time — `.filter(col("nonexistent").gt(lit(100)))` fails immediately with a "Column not found" error, before any data is scanned. For the full list of contract violations and error types, see [Contract Violations](#contract-violations--fail-fast-at-plan-build-time).
+Schema validation happens at plan-build time — [`.filter(col("nonexistent").gt(lit(100)))`][`.filter()`] fails immediately with a "Column not found" error, before any data is scanned. For the full list of contract violations and error types, see [Contract Violations](#contract-violations--fail-fast-at-plan-build-time).
 
-For detailed transformation patterns (qualifiers, combining schemas, nullability handling), see [Schema Transformation](schema-transformation.md). For the specific DataFrame methods that change schema, see [DataFrame Methods](schema-dataframe-methods.md).
+For detailed transformation patterns (qualifiers, combining schemas, nullability handling), see [Schema Transformation][schema-transformation]. For the specific DataFrame methods that change schema, see [DataFrame Methods][schema-dataframe-methods].
 
 ---
 
@@ -354,11 +354,11 @@ For detailed transformation patterns (qualifiers, combining schemas, nullability
 
 **[`df.schema()`][`.schema()`] returns the _logical_ schema — what the plan expects to produce. The actual physical memory layout during execution may differ.**
 
-The logical schema is the [`DFSchema`] attached to the [`LogicalPlan`] — column names, data types, and nullability as determined by the plan tree. The physical schema is the actual memory layout of `RecordBatch` results during execution. Understanding the distinction matters when implementing a custom [`TableProvider`], debugging unexpected types in output batches, or tuning physical execution performance. DataFusion enforces a core invariant: the physical schema (column names and types) must match the logical schema with qualifiers stripped — `RecordBatch` results always align with what [`df.schema()`][`.schema()`] promised.
+The logical schema is the [`DFSchema`] attached to the [`LogicalPlan`] — column names, data types, and nullability as determined by the plan tree. The physical schema is the actual memory layout of [`RecordBatch`] results during execution. Understanding the distinction matters when implementing a custom [`TableProvider`], debugging unexpected types in output batches, or tuning physical execution performance. DataFusion enforces a core invariant: the physical schema (column names and types) must match the logical schema with qualifiers stripped — [`RecordBatch`] results always align with what [`df.schema()`][`.schema()`] promised.
 
 The physical execution layer may diverge from the logical schema in three implementation details:
 
-- **Dictionary encoding**: A `Utf8` column may be physically stored as dictionary-encoded integers for memory efficiency.
+- **Dictionary encoding**: A [`Utf8`][`datatype::utf8`] column may be physically stored as dictionary-encoded integers for memory efficiency.
 - **Nullability adjustments**: The optimizer may tighten or relax nullability based on analysis passes.
 - **Implicit casts**: The [`TypeCoercion`] analyzer may insert cast operations that change the physical representation while preserving logical semantics.
 
@@ -374,57 +374,118 @@ Schema management in DataFusion follows one principle: define the data contract 
 
 SQL queries in DataFusion follow the same schema lifecycle — parsing produces a [`LogicalPlan`] with identical [`DFSchema`] validation, coercion, and propagation rules.
 
-The next step is to explore the internal structure of [`DFSchema`] in detail — see [Anatomy of a Schema](schema-anatomy.md) for the field-level deep dive into names, types, nullability, and metadata.
+The next step is to explore the internal structure of [`DFSchema`] in detail — see [Anatomy of a Schema][schema-anatomy] for the field-level deep dive into names, types, nullability, and metadata.
 
 :::{admonition} Related documents
 :class: seealso
 
-- [Anatomy of a Schema](schema-anatomy.md) — field-level deep dive into names, types, nullability, and metadata
-- [Creating Schemas](schema-creation.md) — constructing Arrow and `DFSchema` contracts
-- [Applying Schemas](schema-application.md) — wiring schemas into readers at the read boundary
-- [Inspecting and Validating Schemas](schema-inspection.md) — checking schemas before execution
-- [Type Coercion](type-coercion.md) — automatic type reconciliation and explicit casts
+- [Anatomy of a Schema][schema-anatomy] — field-level deep dive into names, types, nullability, and metadata
+- [Creating Schemas][schema-creation] — constructing Arrow and [`DFSchema`] contracts
+- [Applying Schemas][schema-application] — wiring schemas into readers at the read boundary
+- [Inspecting and Validating Schemas][schema-inspection] — checking schemas before execution
+- [Type Coercion][type-coercion] — automatic type reconciliation and explicit casts
   :::
 
 ### Further Reading
 
 External specifications and DataFusion references for Arrow's type system, schema metadata, and coercion rules, useful when debugging schema mismatches, unexpected casts, or expensive conversions:
 
-| Resource                                                                                                             | Description                                                                                                               |
-| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| [Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)                                   | Physical memory layout, validity bitmaps, and variable-size views (for example, `StringView`) — why some casts cost.      |
-| [Arrow Schema IPC Message](https://arrow.apache.org/docs/format/Columnar.html#schema-message)                        | How fields, metadata, and nullability are serialized — helpful when diagnosing "schema mismatch" errors.                  |
-| [Parquet Logical Types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md)                        | How Parquet logical types (`DECIMAL`, timestamps, etc.) map into Arrow types.                                             |
-| [DataFusion Type Coercion Rules](https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/index.html) | The exact rules DataFusion uses to reconcile type differences (for example, joining or unioning `Int32` with `Int64`).    |
-| [DataFusion Optimizer Rules](https://docs.rs/datafusion/latest/datafusion/optimizer/index.html)                      | How the optimizer rewrites plans (it may insert implicit `CAST`s); start with `type_coercion` and `simplify_expressions`. |
+| Resource                                              | Description                                                                                                                                                      |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Apache Arrow Columnar Format][arrow-columnar-format] | Physical memory layout, validity bitmaps, and variable-size views (for example, `StringView`) — why some casts cost.                                             |
+| [Arrow Schema IPC Message][arrow-schema-ipc]          | How fields, metadata, and nullability are serialized — helpful when diagnosing "schema mismatch" errors.                                                         |
+| [Parquet Logical Types][parquet-logical-types]        | How Parquet logical types (`DECIMAL`, timestamps, etc.) map into Arrow types.                                                                                    |
+| [DataFusion Type Coercion Rules][type-coercion-rules] | The exact rules DataFusion uses to reconcile type differences (for example, joining or unioning [`Int32`][`datatype::int32`] with [`Int64`][`datatype::int64`]). |
+| [DataFusion Optimizer Rules][optimizer-rules]         | How the optimizer rewrites plans (it may insert implicit `CAST`s); start with `type_coercion` and `simplify_expressions`.                                        |
 
 **Foundational books** on data modeling and query-engine internals:
 
-| Resource                                                 | Description                                                                                                                                                                                                                                                               |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The Data Model Resource Book (Vol 1–3) — Len Silverston  | Universal data models for common domains (Vol [1](https://www.oreilly.com/library/view/the-data-model/9780471380238/), [2](https://www.oreilly.com/library/view/the-data-model/9780471353485/), [3](https://www.oreilly.com/library/view/the-data-model/9780470178454/)). |
-| Patterns of Data Modeling — David Hay                    | Conceptual modeling patterns that translate well to analytical schemas ([O'Reilly](https://www.oreilly.com/library/view/patterns-of-data/9781439819906/)).                                                                                                                |
-| The Data Warehouse Toolkit — Kimball & Ross              | Dimensional modeling (star schemas) for analytics ([O'Reilly](https://www.oreilly.com/library/view/the-data-warehouse/9781118530801/)).                                                                                                                                   |
-| Designing Data-Intensive Applications — Martin Kleppmann | Schema evolution and encoding trade-offs ([O'Reilly](https://www.oreilly.com/library/view/designing-data-intensive-applications/9781491903063/)).                                                                                                                         |
-| How Query Engines Work — Andy Grove                      | Query engine internals (DataFusion's creator) ([Leanpub](https://leanpub.com/how-query-engines-work)).                                                                                                                                                                    |
+| Resource                                                                                 | Description                                                                                                                        |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| The Data Model Resource Book (Vol 1–3) — Len Silverston                                  | Universal data models for common domains (Vol [1][wiley-data-model-vol1], [2][wiley-data-model-vol2], [3][wiley-data-model-vol3]). |
+| [Patterns of Data Modeling][routledge-patterns-of-data] — Michael Blaha                  | Conceptual modeling patterns that translate well to analytical schemas.                                                            |
+| [The Data Warehouse Toolkit][wiley-data-warehouse-toolkit] — Kimball & Ross              | Dimensional modeling (star schemas) for analytics.                                                                                 |
+| [Designing Data-Intensive Applications][dataintensive] (2nd ed.) — Kleppmann & Riccomini | Schema evolution and encoding trade-offs.                                                                                          |
+| [How Query Engines Work][leanpub-query-engines] — Andy Grove                             | Query engine internals (father of DataFusion).                                                                                     |
 
 ---
 
-<!-- Link references -->
+<!-- References -->
 
+<!-- Internal documentation -->
+
+[schema-anatomy]: schema-anatomy.md
+[schema-application]: schema-application.md
+[schema-creation]: schema-creation.md
+[schema-dataframe-methods]: schema-dataframe-methods.md
+[schema-inference]: schema-inference.md
+[schema-inspection]: schema-inspection.md
+[schema-transformation]: schema-transformation.md
+[type-coercion]: type-coercion.md
+
+<!-- Core types -->
+
+[`catalogprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`datatype::int32`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html#variant.Int32
+[`datatype::int64`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html#variant.Int64
+[`datatype::utf8`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html#variant.Utf8
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`dfschemaref`]: https://docs.rs/datafusion/latest/datafusion/common/type.DFSchemaRef.html
+[`field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
+[`functionaldependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`logicalplan::tablescan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html#variant.TableScan
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html
+[`pruningpredicate`]: https://docs.rs/datafusion-pruning/latest/datafusion_pruning/struct.PruningPredicate.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[`runtimeenv`]: https://docs.rs/datafusion/latest/datafusion/execution/runtime_env/struct.RuntimeEnv.html
+[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
+[`schemaref`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
 [`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
 [`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
-[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[`schemaref`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
-[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
 [`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
+[`tablereference`]: https://docs.rs/datafusion/latest/datafusion/common/enum.TableReference.html
 [`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+
+<!-- Methods and functions -->
+
+[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
+[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
+[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
 [`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.inner
-[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html#method.as_arrow
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
+[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`col()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.col.html
+[`logicalplan::schema()`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html#method.schema
+[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
+
+<!-- External resources -->
+
+[arrow-columnar-format]: https://arrow.apache.org/docs/format/Columnar.html
+[arrow-schema-ipc]: https://arrow.apache.org/docs/format/Columnar.html#schema-message
+[dataintensive]: https://dataintensive.net/
+[leanpub-query-engines]: https://leanpub.com/how-query-engines-work
+[optimizer-rules]: https://docs.rs/datafusion/latest/datafusion/optimizer/index.html
+[routledge-patterns-of-data]: https://www.routledge.com/Patterns-of-Data-Modeling/Blaha/p/book/9781439819890
+[wiley-data-model-vol1]: https://www.wiley.com/en-us/The+Data+Model+Resource+Book%2C+Volume+1%3A+A+Library+of+Universal+Data+Models+for+All+Enterprises%2C+Revised+Edition-p-9780471380238
+[wiley-data-model-vol2]: https://www.wiley.com/en-us/The+Data+Model+Resource+Book%2C+Volume+2%3A+A+Library+of+Universal+Data+Models+by+Industry+Types-p-9780471353485
+[wiley-data-model-vol3]: https://www.wiley.com/en-us/The+Data+Model+Resource+Book%2C+Volume+3%3A+Universal+Patterns+for+Data+Modeling-p-9780470178454
+[wiley-data-warehouse-toolkit]: https://www.wiley.com/en-us/the-data-warehouse-toolkit-the-definitive-guide-to-dimensional-modeling-3rd-edition-p-9781118530801
 [parquet]: https://parquet.apache.org/
+[parquet-logical-types]: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
+[type-coercion-rules]: https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/index.html

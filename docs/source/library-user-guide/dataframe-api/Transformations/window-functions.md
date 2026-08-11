@@ -25,6 +25,15 @@ Window-oriented transformations add per-row analytical context from related rows
 
 This page shows how to construct built-in window expressions with DataFusion’s Rust [`DataFrame`] API, choose among ranking, aggregate, and positional calculations, configure partitioning, ordering, and frames where they affect correctness, and compose the resulting columns with later derivation, filtering, and sorting.
 
+**Key Methods**
+
+| Method             | Purpose                                                                |
+| :----------------- | :--------------------------------------------------------------------- |
+| [`.window()`]      | Append window-expression results while retaining the input grain       |
+| [`.with_column()`] | Derive ordinary columns from window results                            |
+| [`.filter()`]      | Filter on window results after they are computed                       |
+| [`.sort()`]        | Establish presentation order independently of the window specification |
+
 :::{admonition} Style Note
 :class: note
 :collapsible: closed

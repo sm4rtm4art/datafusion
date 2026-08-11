@@ -18,23 +18,30 @@
 -->
 
 <!--
-MOVE HANDSHAKE: Join construction, composite-key, expression-condition, and
-outer-join-filter material arrived from ../joins.md. The migration source
-remains unchanged for coordinator comparison.
-
-LOCAL TODO OWNERS: JOIN-TODO-001, JOIN-TODO-004, JOIN-TODO-005,
-JOIN-TODO-006, JOIN-TODO-014, JOIN-TODO-015, JOIN-TODO-016, JOIN-TODO-018,
-JOIN-TODO-019, JOIN-TODO-021, JOIN-TODO-022, JOIN-TODO-025, and
+LOCAL TODO OWNERS: JOIN-TODO-001, JOIN-TODO-015, JOIN-TODO-019, and
 JOIN-TODO-026.
 -->
-<!-- JOIN-TODO-001: Add the title-line highlighting sentence, abstract, Key Methods table, first-H2 framing, and conclusion after this leaf stabilizes. -->
-<!-- JOIN-TODO-025: Register this leaf as a doctest after Author approval. -->
+<!-- JOIN-TODO-001: Key Methods table added; finalize highlight/abstract polish with the leaf. -->
 
 # Join Conditions
 
+**Use [`.join()`] for named equality keys, [`.join_on()`] for Boolean conditions, and place predicates according to whether they define matches or filter joined rows.**
+
+Build joins from named keys or Boolean conditions, then decide whether a predicate participates in matching or filters the joined result. The `.join()` `filter` argument adds an ON-like matching predicate, while a later [`.filter()`] is WHERE-like result filtering.
+
+Use SQL when its `USING`, `NATURAL JOIN`, `CROSS JOIN`, or `LATERAL` forms express the relationship more directly than a DataFrame method.
+
+**Key Methods**
+
+| Method                                      | Purpose                                                                          |
+| :------------------------------------------ | :------------------------------------------------------------------------------- |
+| [`.join()`](#join-named-equality-keys)      | Match on paired named equality keys; optional `filter` adds an ON-like predicate |
+| [`.join_on()`](#join_on-boolean-conditions) | Match on complete Boolean conditions                                             |
+| [`.filter()`]                               | Filter joined rows afterward (WHERE-like); not the `.join()` `filter` argument   |
+
 :::{admonition} Style Note
 :class: note
-:collapsible: closed
+:collapsible: open
 
 In this document, code elements follow a consistent pattern:
 
@@ -44,6 +51,8 @@ In this document, code elements follow a consistent pattern:
 - **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
 - **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
 - **Actions:** (`.collect()`, `.show()`) trigger execution
+- **Input roles:** Base DataFrame = method receiver/left input; Extension DataFrame = right argument/right input; `JoinType` controls preservation.
+- **Filter terms:** `filter` = [`.join()`] argument participating in matching; [`.filter()`] = `DataFrame` method filtering rows at its pipeline position.
 
 :::
 
@@ -52,288 +61,264 @@ In this document, code elements follow a consistent pattern:
 :depth: 2
 ```
 
-<!-- JOIN-TODO-004 JOIN-TODO-005: The construction boundary is established; revise this H2 subtree in the next iteration. -->
+## Join Methods: Matching Rows in the DataFrame API
 
-## Build Joins with Keys and Conditions
+**A join supplies two logical inputs, a `JoinType`, and a matching condition that identifies which row combinations can match.**
 
-<!-- JOIN-TODO-004: Move the signature and method-choice material into separate `.join()` and `.join_on()` construction subsections; preserve AND/OR behavior but remove physical-algorithm guarantees. -->
+Joining two `DataFrame` inputs requires a left input, a right input, a `JoinType`, and a matching condition. The **Base DataFrame** is the method receiver and left input, while the **Extension DataFrame** is the right argument and right input; these are call-position mnemonics, and `JoinType` owns preservation and payload. Both public join methods build lazily.
 
-The [`.join()`] method signature in the datafusion dataframe-API:
+SQL writes `FROM left JOIN right ON condition`, while the DataFrame API has no `ON` clause. [`.join()`] supplies paired named-column slices plus `filter: Option<Expr>`, and [`.join_on()`] accepts complete Boolean conditions; they are alternate builders for the same logical join.
 
-```rust
-use datafusion::prelude::*;  // Includes JoinType
+(join-named-equality-keys)=
 
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let left_df = dataframe!("id" => [1, 2])?;
-    let right_df = dataframe!("customer_id" => [1, 2])?;
+### `.join()`: Named Equality Keys
 
-    let joined = left_df.join(
-        right_df,                    // 1. Right DataFrame
-        JoinType::Inner,             // 2. Join type
-        &["id"],                     // 3. Left key columns
-        &["customer_id"],            // 4. Right key columns
-        None,                        // 5. Optional filter expression
-    )?;
+**[`.join()`] expresses equality between paired named columns, including composite keys.**
 
-    joined.show().await?;
-    Ok(())
-}
-```
-
-**Two ways to specify joins:**
-
-- [`.join()`] â€” Pass column names (`&[&str]`) for each side plus an optional `filter: Option<Expr>`. DataFusion builds equality predicates from the columns.
-- [`.join_on()`] â€” Pass the full join condition as `Expr`s. Internally this wraps [`.join()`] with empty key lists and a combined filter expression (`expr_1 AND expr_2 ...`). Optimizer passes then extract equality predicates and treat them as equi-join keys.
-
-<!-- JOIN-TODO-004: Rewrite this claim; construction method does not guarantee a specific physical join algorithm. -->
-
-After optimization, both methods produce equivalent plansâ€”**no performance difference** for standard equi-joins. However, [`.join()`] is the "safer" choice: you explicitly declare equi-join keys, guaranteeing hash/sort-merge algorithms. With [`.join_on()`], if the optimizer can't extract equality predicates from your expression, it may fall back to nested loop joins.
-
-Pick whichever reads better for your use case.
-
-**Gotcha: [`.join_on()`] uses AND, not OR**
-
-Multiple expressions passed to [`.join_on()`] are combined with [`AND`]:
+Use [`.join()`] when paired named columns express equality. Call [`.join()`] on the Base DataFrame, which becomes the left input, and pass the Extension DataFrame as its first argument, which becomes the right input. Then supply a `JoinType` and equal-position left and right key slices. The final `filter: Option<Expr>` argument is required by the Rust signature: pass `None` when no additional predicate exists, or `Some(expr)` for an additional ON-like matching predicate as the filter subsection below describes.
 
 ```rust
+use datafusion::assert_batches_sorted_eq;
 use datafusion::prelude::*;
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
-    let left = dataframe!("a" => [1], "b" => [2])?.alias("l")?;
-    let right = dataframe!("a2" => [1], "b2" => [2])?.alias("r")?;
-    // This means: a = a2 AND b = b2 (not OR!)
-    let joined = left.join_on(right, JoinType::Inner, [col("l.a").eq(col("r.a2")), col("l.b").eq(col("r.b2"))])?;
-    joined.show().await?;
-    Ok(())
-}
-```
-
-For [`OR`] logic, build a single expression:
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let left = dataframe!("a" => [1], "b" => [2])?.alias("l")?;
-    let right = dataframe!("a2" => [1], "b2" => [2])?.alias("r")?;
-    // Match if EITHER a or b matches
-    let joined = left.join_on(right, JoinType::Inner, [col("l.a").eq(col("r.a2")).or(col("l.b").eq(col("r.b2")))])?;
-    joined.show().await?;
-    Ok(())
-}
-```
-
-**Trade-off: DataFrame vs SQL**
-
-| DataFrame API Advantages                                                                                                                                                     | SQL Advantages                                                          |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| **First-class Semi/Anti joins** â€” `JoinType::LeftAnti`, `LeftSemi` etc. are explicit; no workarounds needed (unlike PySpark where you'd use `LEFT JOIN` + `WHERE IS NULL`) | **Visual clarity** â€” Multi-table joins read naturally in SQL syntax   |
-| **Type-safe composition** â€” Build joins conditionally with `if/else`; compiler catches column typos                                                                        | **Familiar syntax** â€” Standard `ON` clause understood by any SQL user |
-| **Chained transformations** â€” `.join().filter().select()` flows naturally                                                                                                  | Copy-paste ready\*\* â€” Test queries directly in SQL tools             |
-| **Complex conditions** â€” [`.join_on()`] accepts any `Expr`, not just column equality                                                                                       | **Self-documenting** â€” SQL is often readable by non-programmers       |
-
-> **DataFusion-specific advantage:** Unlike many DataFrame libraries, DataFusion exposes the _full_ set of join types ([`LeftSemi`], [`RightSemi`], [`LeftAnti`], [`RightAnti`], [`LeftMark`], [`RightMark`]) as first-class operationsâ€”no need to emulate anti-joins with outer joins and null checks.
-
-<!-- JOIN-TODO-022: Decide whether source-system join guidance has a supported owner and scenario-specific evidence. -->
-
-**Performance note:** <br>
-For joins via row-based [`TableProvider`], consider whether the join should happen at the source. If both tables are in Postgres with foreign key indexes, the DB's index-backed joins may outperform transferring data to DataFusion. For cross-source joins or large analytical joins without indexes, DataFusion's hash/sort-merge algorithms excel.
-
----
-
-<!-- JOIN-TODO-004 JOIN-TODO-008 JOIN-TODO-016 JOIN-TODO-018: Move composite keys to construction, schema-name handling to composition, and remove the unsupported temporal percentage claim. -->
-
-## Match Multiple Key Columns
-
-Join on multiple columns when a single key isn't enough to uniquely identify matchesâ€”common with composite keys or temporal constraints.
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    // Regional sales: same product_id can exist in different regions
     let inventory_df = dataframe!(
-        "product_id" => [1, 1, 2, 2],
-        "region" => ["East", "West", "East", "West"],
-        "stock" => [100, 50, 200, 75]
+        "product_id" => [1_i64, 1, 2],
+        "region" => ["east", "west", "east"],
+        "stock" => [100_i64, 50, 200]
     )?;
-
-    // Use different column names to avoid duplicate field error
     let sales_df = dataframe!(
-        "sale_product_id" => [1, 1, 2],
-        "sale_region" => ["East", "West", "East"],
-        "sold" => [30, 20, 80]
+        "sale_product_id" => [1_i64, 2],
+        "sale_region" => ["west", "east"],
+        "sold" => [20_i64, 80]
     )?;
 
-    // Multi-key join: match on BOTH product_id AND region
+    // Pair each left key with the key at the same position on the right.
     let joined = inventory_df.join(
         sales_df,
-        JoinType::Left,  // Keep all inventory, even unsold
+        JoinType::Inner,
         &["product_id", "region"],
         &["sale_product_id", "sale_region"],
-        None
+        // No additional ON-like predicate; matching uses only the paired keys.
+        None,
     )?;
 
-    joined.show().await?;
-    // +------------+--------+-------+-----------------+-------------+------+
-    // | product_id | region | stock | sale_product_id | sale_region | sold |
-    // +------------+--------+-------+-----------------+-------------+------+
-    // | 1          | East   | 100   | 1               | East        | 30   |
-    // | 1          | West   | 50    | 1               | West        | 20   |
-    // | 2          | East   | 200   | 2               | East        | 80   |
-    // | 2          | West   | 75    |                 |             |      |
-    // +------------+--------+-------+-----------------+-------------+------+
+    let batches = joined.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+------------+--------+-------+-----------------+-------------+------+",
+            "| product_id | region | stock | sale_product_id | sale_region | sold |",
+            "+------------+--------+-------+-----------------+-------------+------+",
+            "| 1          | west   | 50    | 1               | west        | 20   |",
+            "| 2          | east   | 200   | 2               | east        | 80   |",
+            "+------------+--------+-------+-----------------+-------------+------+",
+        ],
+        &batches
+    );
 
     Ok(())
 }
 ```
 
-> **Pro tip for time-dependent data:** <br>
+Unequal key-slice lengths and unresolved columns are planning errors that must be corrected. Choose [`.join_on()`] when a valid complete matching condition is clearer as Boolean expressions for non-equality, explicit `OR`, computed expressions, or null-safe logic; for null-safe matching, use [Null Handling](../../Concepts/null-handling.md#null-handling-in-join)'s `binary_expr(..., Operator::IsNotDistinctFrom, ...)` pattern.
 
-<!-- JOIN-TODO-016: Delete or replace this unsupported temporal mismatch statistic with a scenario-specific, sourced example. -->
+#### [`.join()`] filter: `Option<Expr>`
 
-> Multi-key joins on temporal columns work well when truncated to appropriate granularity using [`date_trunc()`]. Joining on `DATE` (day) has minimal edge cases (~0.004% at midnight); joining on raw `TIMESTAMP` (milliseconds) risks silent mismatches.
+[`.join()`] accepts an optional fifth `Option<Expr>` argument after its named equality-key slices. Despite the Rust parameter name `filter`, `.join(..., Some(expr))` is still ON-like matching, while [`.join_on()`] conditions also define matching. A subsequent [`.filter()`] is WHERE-like result filtering and may remove NULL-extended rows.
+
+:::{admonition} Distinguish join and row filters
+:class: caution
+
+**Trap: the join `filter` parameter ≠ the [`.filter()`] method ≠ SQL `WHERE`.**
+
+The comparison below maps match construction and result filtering to SQL clauses.
+
+| DataFrame spelling / placement     | Role                          | SQL analogue              |
+| ---------------------------------- | ----------------------------- | ------------------------- |
+| [`.join()`] key slices             | Equality matching             | [`ON`][sql-join]-like     |
+| [`.join()`] `filter: Option<Expr>` | Additional matching predicate | [`ON`][sql-join]-like     |
+| [`.join_on([...])`][`.join_on()`]  | Complete Boolean condition    | [`ON`][sql-join]-like     |
+| [`.filter()`] after a join         | Result-row filtering          | [`WHERE`][sql-where]-like |
+
+:::
+
+For a left join, a predicate such as `amount > 100` in the join condition keeps the NULL-extended row for a customer without an order, while the same predicate after joining removes it.
+
+```rust
+use datafusion::assert_batches_sorted_eq;
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    // Before: customers include Carol, who has no order.
+    let customers_df = dataframe!(
+        "id" => [1_i64, 2, 3],
+        "name" => ["Alice", "Bob", "Carol"]
+    )?;
+    let orders_df = dataframe!(
+        "order_id" => [101_i64, 102, 103],
+        "customer_id" => [1_i64, 1, 2],
+        "amount" => [100_i64, 200, 150]
+    )?;
+
+    // This predicate decides which left-join pairs match; Carol remains preserved.
+    let join_filtered = customers_df.clone().join(
+        orders_df.clone(),
+        JoinType::Left,
+        &["id"],
+        &["customer_id"],
+        Some(col("amount").gt(lit(100))),
+    )?;
+    // This predicate filters result rows, so Carol's NULL-extended row is removed.
+    let post_join_filtered = customers_df
+        .join(
+            orders_df,
+            JoinType::Left,
+            &["id"],
+            &["customer_id"],
+            None,
+        )?
+        .filter(col("amount").gt(lit(100)))?;
+
+    let join_filtered_batches = join_filtered.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+----------+-------------+--------+",
+            "| id | name  | order_id | customer_id | amount |",
+            "+----+-------+----------+-------------+--------+",
+            "| 1  | Alice | 102      | 1           | 200    |",
+            "| 2  | Bob   | 103      | 2           | 150    |",
+            "| 3  | Carol |          |             |        |",
+            "+----+-------+----------+-------------+--------+",
+        ],
+        &join_filtered_batches
+    );
+
+    let post_join_filtered_batches = post_join_filtered.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+----+-------+----------+-------------+--------+",
+            "| id | name  | order_id | customer_id | amount |",
+            "+----+-------+----------+-------------+--------+",
+            "| 1  | Alice | 102      | 1           | 200    |",
+            "| 2  | Bob   | 103      | 2           | 150    |",
+            "+----+-------+----------+-------------+--------+",
+        ],
+        &post_join_filtered_batches
+    );
+
+    Ok(())
+}
+```
+
+(join_on-boolean-conditions)=
+
+### `.join_on()`: Boolean Conditions
+
+**[`.join_on()`] expresses complete Boolean conditions, including non-equality, explicit `OR`, and null-safe comparisons.**
+
+Use [`.join_on()`] when matching cannot be represented solely by paired named equality keys or reads more clearly as a complete Boolean condition. It accepts complete Boolean conditions through `impl IntoIterator<Item = Expr>`; every condition must resolve to a Boolean, including non-equality conditions such as `col("orders.created_at").gt_eq(col("promotions.starts_at"))`.
+
+Multiple iterator items are `AND`-combined, so build `OR` inside one `Expr`. For equality that treats `NULL` values as equal, construct the condition as described in [Null Handling](../../Concepts/null-handling.md#null-handling-in-join). Qualify column references when names could be ambiguous; aliases provide those qualifiers, while [join workflows](join-workflows.md) covers aliasing and schema-shaping recipes.
+
+```rust
+use datafusion::assert_batches_sorted_eq;
+use datafusion::prelude::*;
+
+#[tokio::main]
+async fn main() -> datafusion::error::Result<()> {
+    let customers = dataframe!(
+        "customer_id" => [1_i64, 2],
+        "region" => ["east", "west"]
+    )?
+    .alias("customers")?;
+    let accounts = dataframe!(
+        "account_customer_id" => [1_i64, 3],
+        "account_region" => ["east", "west"]
+    )?
+    .alias("accounts")?;
+
+    // [AND] Both the customer ID and region must match.
+    let all_conditions = customers.clone().join_on(
+        accounts.clone(),
+        JoinType::Inner,
+        [
+            col("customers.customer_id").eq(col("accounts.account_customer_id")),
+            col("customers.region").eq(col("accounts.account_region")),
+        ],
+    )?;
+    let batches = all_conditions.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+-------------+--------+---------------------+----------------+",
+            "| customer_id | region | account_customer_id | account_region |",
+            "+-------------+--------+---------------------+----------------+",
+            "| 1           | east   | 1                   | east           |",
+            "+-------------+--------+---------------------+----------------+",
+        ],
+        &batches
+    );
+
+    // [OR] Either the customer ID or region may match.
+    let either_condition = col("customers.customer_id")
+        .eq(col("accounts.account_customer_id"))
+        .or(col("customers.region").eq(col("accounts.account_region")));
+
+    let either_condition_join = customers.join_on(
+        accounts,
+        JoinType::Inner,
+        [either_condition],
+    )?;
+    let batches = either_condition_join.collect().await?;
+    assert_batches_sorted_eq!(
+        &[
+            "+-------------+--------+---------------------+----------------+",
+            "| customer_id | region | account_customer_id | account_region |",
+            "+-------------+--------+---------------------+----------------+",
+            "| 1           | east   | 1                   | east           |",
+            "| 2           | west   | 3                   | west           |",
+            "+-------------+--------+---------------------+----------------+",
+        ],
+        &batches
+    );
+
+    Ok(())
+}
+```
+
+Plain named equality is the more explicit [`.join()`] form. Non-Boolean, unresolved, or ambiguous expressions fail planning; qualify columns when needed.
 
 ---
 
-<!-- JOIN-TODO-004: Move to `.join_on()` construction; explain qualified conditions, AND reduction, explicit OR, and optimizer extraction without method-level performance promises. -->
+## When the DataFrame API Has No Dedicated Join Form
 
-## Join with Complex Conditions
+**SQL directly names `USING`, `NATURAL JOIN`, `CROSS JOIN`, and `LATERAL`, for which the DataFrame API has no dedicated methods.**
 
-Sometimes you need more than simple column equality. Range joins ("orders placed within 7 days of signup"), inequality predicates ("amount > threshold"), or compound logic ("match on id AND status = 'active'") require expressions that [`.join()`] can't express with just column names.
+Those four are the complete set of documented SQL join forms without a DataFrame counterpart; other SQL join types map to [`.join()`] / [`.join_on()`] and [`JoinType`][jointype]. This subsection stays deliberately short: it marks that boundary and points to SQL rather than re-teaching those forms here.
 
-[`.join_on()`] accepts arbitrary boolean expressions as join conditions. Internally it wraps [`.join()`] with empty key lists and passes your expressions as a filterâ€”the optimizer then extracts any equality predicates for efficient hash/sort-merge execution.
+Use SQL when one of those forms makes the relationship clearer. `USING` is a condition spelling, not a join type. A conditionless inner join can represent a Cartesian product, but SQL `CROSS JOIN` states that intent directly.
 
-| Use Case           | Example Condition                                                       |
-| ------------------ | ----------------------------------------------------------------------- |
-| **Range join**     | `order_date.between(start_date, end_date)`                              |
-| **Inequality**     | `col("amount").gt(col("threshold"))`                                    |
-| **Compound logic** | `col("id").eq(col("customer_id")).and(col("status").eq(lit("active")))` |
+Both APIs use the same planning and execution pipeline, so choose the interface that expresses the relationship more clearly rather than for speed. Use [hybrid SQL](../hybrid-sql.md) to cross the SQL/DataFrame boundary, the [SQL JOIN reference](../../../../user-guide/sql/select.md#join-clause) for syntax, and the [subquery reference](../../../../user-guide/sql/subqueries.md) for `LATERAL` context. Use [Join Validation](join-validation.md) to avoid accidental Cartesian products.
 
-```rust
-use datafusion::prelude::*;
+---
 
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let customers_df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
+## Conclusion
 
-    let orders_df = dataframe!(
-        "order_id" => [101, 102, 103, 104],
-        "customer_id" => [1, 1, 2, 99],
-        "amount" => [100, 200, 150, 300]
-    )?;
+Use [`.join()`] for paired named equality keys and [`.join_on()`] for complete Boolean conditions. Put matching predicates in the join like SQL `ON`, filter result rows afterward like `WHERE`, and use SQL when its dedicated join forms express the relationship more clearly.
 
-    // Give DataFrames aliases so we can qualify column references
-    let customers = customers_df.clone().alias("customers")?;
-    let orders = orders_df.clone().alias("orders")?;
+### Further Reading
 
-    // Join with compound condition: match on id AND filter amount > 100
-    let high_value = customers.join_on(
-        orders,
-        JoinType::Inner,
-        [col("customers.id").eq(col("orders.customer_id"))
-            .and(col("orders.amount").gt(lit(100)))]
-    )?;
+- [Join Concepts](join-concepts.md) — Predict join results through matching, preservation, cardinality, and payload.
+- [Join Types](join-types.md#jointype-catalogue) — Choose which matched and unmatched rows survive.
+- [Join Validation](join-validation.md) — Check coverage, row multiplication, Cartesian products, and plans.
+- [Mixing SQL and DataFrames](../hybrid-sql.md) — Move between SQL and DataFrame pipelines.
+- [Null Handling](../../Concepts/null-handling.md#null-handling-in-join) — Construct ordinary and null-safe equality conditions.
+- [DataFusion SQL `JOIN` reference](../../../../user-guide/sql/select.md#join-clause) — Use DataFusion's supported SQL join syntax.
 
-    high_value.show().await?;
-    // +----+-------+----------+-------------+--------+
-    // | id | name  | order_id | customer_id | amount |
-    // +----+-------+----------+-------------+--------+
-    // | 1  | Alice | 102      | 1           | 200    |
-    // | 2  | Bob   | 103      | 2           | 150    |
-    // +----+-------+----------+-------------+--------+
-    // Alice's order 101 (amount=100) excludedâ€”doesn't meet amount > 100
-    // Carol excludedâ€”no orders at all
-
-    Ok(())
-}
-```
-
-> **Tip:** <br>
-> When using [`.join_on()`], column names may clash between tables. Use [`.alias()`] to qualify references: `col("customers.id")` vs `col("orders.id")`.
-
-<!-- JOIN-TODO-004 JOIN-TODO-006: Promote this correctness boundary within construction and show why an ON-like filter differs from a later `.filter()` for outer joins. -->
-
-### The `filter` Argument on Outer Joins
-
-The [`.join()`] method's fifth parameter is [`filter: Option<Expr>`][join_filter_param]â€”easy to overlook in the signature but powerful for outer joins. This filter has **subtle but important semantics**: it applies only to _matched_ rows, not to preserved unmatched rows.
-
-This distinction matters because:
-
-- A [`WHERE`] clause **after** the join would filter out unmatched rows (turning your Left Join into an Inner Join)
-- The `filter` argument applies **during** the join, controlling which matches are considered valid while still preserving unmatched rows
-
-| Approach                                      | Behavior                         | Result                              |
-| --------------------------------------------- | -------------------------------- | ----------------------------------- |
-| [`.join(..., Some(filter))`][`.join()`]       | Filter is part of join condition | Unmatched rows preserved with NULLs |
-| [`.join(..., None).filter(...)`][`.filter()`] | Filter applied after join        | Unmatched rows may be removed       |
-
-```rust
-use datafusion::prelude::*;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
-    let customers_df = dataframe!(
-        "id" => [1, 2, 3],
-        "name" => ["Alice", "Bob", "Carol"]
-    )?;
-
-    let orders_df = dataframe!(
-        "order_id" => [101, 102, 103, 104],
-        "customer_id" => [1, 1, 2, 99],
-        "amount" => [100, 200, 150, 300]
-    )?;
-
-    // Left join with filter: Carol still appears, but only orders > 100 attach
-    let result = customers_df.clone().join(
-        orders_df.clone(),
-        JoinType::Left,
-        &["id"],                           // left_cols
-        &["customer_id"],                  // right_cols
-        Some(col("amount").gt(lit(100))),  // filter (5th param) - applied only to matched rows
-    )?;
-
-    result.show().await?;
-    // +----+-------+----------+-------------+--------+
-    // | id | name  | order_id | customer_id | amount |
-    // +----+-------+----------+-------------+--------+
-    // | 1  | Alice | 102      | 1           | 200    |  â†  > 100 attached
-    // | 2  | Bob   | 103      | 2           | 150    |
-    // | 3  | Carol |          |             |        |  â† Preserved!
-    // +----+-------+----------+-------------+--------+
-    // Alice's order 101 (amount=100) excluded by filter
-    // Carol preserved because Left Join keeps all left rows
-
-    Ok(())
-}
-```
-
-> **Mental model:** <br>
-> Think of `filter` as part of the _join condition_, not a `WHERE` after the join. It controls which matches are valid during the join itself.
-
-> **Also applies to [`.join_on()`]:** <br>
-> Since [`.join_on()`] is implemented as [`.join()`] with empty key lists and combined `on_exprs` as `filter`, the same semantics apply.
-
-[`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
 [`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
 [`.join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
 [`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
-[join_filter_param]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join "See the 'filter' parameter in the join() signature"
-[`leftanti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftAnti "Left rows that have NO match (no right columns)"
-[`leftsemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftSemi "Left rows that have a match (no right columns)"
-[`leftmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.LeftMark "Mark join for EXISTS subquery decorrelation"
-[`rightanti`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightAnti
-[`rightsemi`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightSemi
-[`rightmark`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.JoinType.html#variant.RightMark "Mark join for EXISTS subquery decorrelation"
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`date_trunc()`]: https://docs.rs/datafusion/latest/datafusion/functions/datetime/expr_fn/fn.date_trunc.html
-[`and`]: ../../../../user-guide/sql/operators.md#logical-operators
-[`where`]: ../../../../user-guide/sql/select.md#where-clause
-[`or`]: ../../../../user-guide/sql/operators.md#logical-operators
+[jointype]: https://docs.rs/datafusion/latest/datafusion/common/enum.JoinType.html
+[sql-join]: ../../../../user-guide/sql/select.md#join-clause
+[sql-where]: ../../../../user-guide/sql/select.md#where-clause

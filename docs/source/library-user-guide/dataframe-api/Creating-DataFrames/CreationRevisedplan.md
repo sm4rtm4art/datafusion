@@ -893,7 +893,7 @@ None.
 ### N1 — MINOR: Building Logical Plans references are broken
 
 - **Location:** Target lines 203–225.
-- **Direction:** Correct the relative path; Sphinx reports both uses of `../../library-user-guide/building-logical-plans.md` as unresolved.
+- **Direction:** Correct the relative path; Sphinx reports both uses of `../../building-logical-plans.md` as unresolved.
 
 ### N2 — MINOR: Final H2 structure is incomplete
 

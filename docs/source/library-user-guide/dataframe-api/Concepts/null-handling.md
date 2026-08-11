@@ -92,7 +92,7 @@ Inference by sampling rows cannot guarantee nullability — all inferred columns
 
 :::{admonition} Deep dive
 :class: seealso
-For the full structure of Arrow fields — name, data type, nullability, and metadata — see [Anatomy of a Schema — Arrow Field Properties](../Schema-Management/schema-anatomy.md#arrow-field-the-four-properties).
+For the full structure of Arrow fields — name, data type, nullability, and metadata — see [Anatomy of a Schema — Arrow Field Properties][schema-anatomy].
 :::
 
 ---
@@ -339,7 +339,7 @@ The `ExtractEquijoinPredicate` optimizer rule detects `IsNotDistinctFrom` predic
 
 :::{admonition} API gap: no convenience method
 :class: caution
-DataFusion does not yet provide a convenience method like `col("a").is_not_distinct_from(col("b"))`. The `binary_expr()` + `Operator::IsNotDistinctFrom` pattern shown above is the current DataFrame API approach. For advanced use cases, [`LogicalPlanBuilder::join_detailed()`][`logicalplanbuilder`] accepts a [`NullEquality`] parameter directly.
+DataFusion does not yet provide a convenience method like `col("a").is_not_distinct_from(col("b"))`. The `binary_expr()` + `Operator::IsNotDistinctFrom` pattern shown above is the current DataFrame API approach. For advanced use cases, [`LogicalPlanBuilder::join_detailed()`] accepts a [`NullEquality`] parameter directly.
 :::
 
 :::{admonition} SQL equivalent
@@ -445,7 +445,7 @@ Null propagation during transformations determines _where_ nulls appear — the 
 
 :::{admonition} NULL is not NaN
 :class: warning
-`NaN` (Not a Number) is a valid IEEE 754 floating-point value — it is **not** null. `is_null()` returns `FALSE` for NaN, and `.fill_null()` will not replace NaN values. Use `isnan()` to detect NaN and `nanvl(expr, replacement)` to replace it.
+`NaN` (Not a Number) is a valid IEEE 754 floating-point value — it is **not** null. `is_null()` returns `FALSE` for NaN, and `.fill_null()` will not replace NaN values. Use [`isnan()`] to detect NaN and [`nanvl()`] (`nanvl(expr, replacement)`) to replace it.
 
 | Check           | NULL   | NaN   |
 | --------------- | ------ | ----- |
@@ -552,7 +552,7 @@ Beyond plan-level optimizations, marking a column `NOT NULL` has a physical bene
 
 :::{admonition} Unlock optimizer benefits
 :class: tip
-Schema inference defaults all columns to `nullable = true`, disabling these optimizations. Declaring explicit schemas with accurate nullability constraints — via `SchemaBuilder` or read options — enables the optimizer to simplify expressions and prune data at the physical level. See [Schema Inference](../Schema-Management/schema-inference.md) for strategies.
+Schema inference defaults all columns to `nullable = true`, disabling these optimizations. Declaring explicit schemas with accurate nullability constraints — via `SchemaBuilder` or read options — enables the optimizer to simplify expressions and prune data at the physical level. See [Schema Inference][schema-inference] for strategies.
 :::
 
 ---
@@ -563,36 +563,56 @@ Schema inference defaults all columns to `nullable = true`, disabling these opti
 
 The key patterns to remember:
 
-- **Test explicitly** with `is_null()` / `is_not_null()` rather than relying on equality checks
-- **Replace defensively** with `coalesce()`, `nvl()`, or `.fill_null()` before downstream operations
-- **Join carefully** using `.join_on()` with `Operator::IsNotDistinctFrom` (DataFrame API) or `IS NOT DISTINCT FROM` (SQL) when NULL keys should match
+- **Test explicitly** with [`is_null()`] / [`is_not_null()`] rather than relying on equality checks
+- **Replace defensively** with [`coalesce()`], [`nvl()`], or [`.fill_null()`] before downstream operations
+- **Join carefully** using [`.join_on()`] with [`Operator::IsNotDistinctFrom`] (DataFrame API) or `IS NOT DISTINCT FROM` (SQL) when NULL keys should match
 - **Declare nullability** in schemas to enable optimizer short-circuits and physical pruning
 
 :::{admonition} Next steps
 :class: seealso
 
-- [Anatomy of a Schema — Nullability](../Schema-Management/schema-anatomy.md#schema-field-nullability) — how nullability is declared in Arrow fields
-- [Schema Inference](../Schema-Management/schema-inference.md) — why inferred schemas default to `nullable = true`
-- [Type Coercion](../Schema-Management/type-coercion.md) — how type mismatches interact with nullability during expression planning
-- [Expressions](expressions.md) — how `Expr` trees propagate nullability through the plan
+- [Anatomy of a Schema][schema-anatomy] — how nullability is declared in Arrow fields
+- [Schema Inference][schema-inference] — why inferred schemas default to `nullable = true`
+- [Type Coercion][type-coercion] — how type mismatches interact with nullability during expression planning
+- [Expressions][expressions] — how [`Expr`] trees propagate nullability through the plan
   :::
 
 ---
 
-With null semantics understood, the next section covers what happens when you trigger execution — lazy plans become optimized physical operators and streaming results. Continue to [Execution Lifecycle](execution-lifecycle.md).
+With null semantics understood, the next section covers what happens when you trigger execution — lazy plans become optimized physical operators and streaming results. Continue to [Execution Lifecycle][execution-lifecycle].
 
-<!-- Link references -->
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[execution-lifecycle]: execution-lifecycle.md
+[expressions]: expressions.md
+[schema-anatomy]: ../Schema-Management/schema-anatomy.md
+[schema-inference]: ../Schema-Management/schema-inference.md
+[type-coercion]: ../Schema-Management/type-coercion.md
+
+<!-- Core types -->
+
+[`expr`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html
+[`nullequality`]: https://docs.rs/datafusion/latest/datafusion/common/enum.NullEquality.html
+[`operator::isnotdistinctfrom`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Operator.html#variant.IsNotDistinctFrom
+
+<!-- Methods and functions -->
+
+[`.fill_null()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.fill_null
+[`.join_on()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join_on
+[`logicalplanbuilder::join_detailed()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html#method.join_detailed
+[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.coalesce.html
+[`is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.is_not_null
+[`is_null()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.is_null
+[`isnan()`]: https://docs.rs/datafusion/latest/datafusion/functions/math/fn.isnan.html
+[`nanvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/math/fn.nanvl.html
+[`nullif()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.nullif.html
+[`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.nvl.html
+
+<!-- External resources -->
 
 [three-valued logic]: https://modern-sql.com/concept/three-valued-logic
 [validity bitmap]: https://arrow.apache.org/docs/format/Columnar.html#validity-bitmaps
-[`is_null()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/trait.ExprFuncExt.html#method.is_null
-[`is_not_null()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/trait.ExprFuncExt.html#method.is_not_null
-[`coalesce()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.coalesce.html
-[`nullif()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.nullif.html
-[`nvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/expr_fn/fn.nvl.html
-[`.fill_null()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.fill_null
-[`nullequality`]: https://docs.rs/datafusion/latest/datafusion/common/enum.NullEquality.html
-[`isnan()`]: https://docs.rs/datafusion/latest/datafusion/functions/math/fn.isnan.html
-[`nanvl()`]: https://docs.rs/datafusion/latest/datafusion/functions/math/fn.nanvl.html
-[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
-[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort

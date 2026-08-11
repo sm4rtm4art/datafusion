@@ -27,7 +27,7 @@ message queues, and NoSQL databases (i.e. MongoDB, Elasticsearch, CouchDB...).
 DataFusion reads JSON in **NDJSON format** by default — also known as JSON
 Lines (`.jsonl`) or Newline-Delimited JSON (`.ndjson`) — where each line
 contains one complete JSON object. Standard **JSON arrays**
-(`[{...}, {...}]`) are also supported via the `.newline_delimited(false)`
+(`[{...}, {...}]`) are also supported via [`.newline_delimited()`][`jsonreadoptions::newline_delimited()`]
 option.
 
 :::{admonition} Style Note
@@ -52,14 +52,14 @@ In this document, code elements follow a consistent pattern:
 
 ## Reading JSON Files
 
-**A single call to `ctx.read_json()` returns a lazy DataFrame — schema
+**A single call to [`.read_json()`] returns a lazy DataFrame — schema
 inference happens at creation time, data processing waits for an action.**
 
-When you call `ctx.read_json()`, DataFusion reads the beginning of the file
-to infer column types, then returns a lazy `DataFrame`. Nested JSON objects
+When you call [`.read_json()`], DataFusion reads the beginning of the file
+to infer column types, then returns a lazy [`DataFrame`]. Nested JSON objects
 flatten to Arrow struct columns — `{"user": {"name": "Alice"}}` becomes a
 struct column accessible as `user.name`. The actual parsing of all rows
-waits until you trigger an action like `.collect()`.
+waits until you trigger an action like [`.collect()`].
 
 ```rust
 use datafusion::prelude::*;
@@ -81,7 +81,7 @@ async fn main() -> datafusion::error::Result<()> {
     // Read NDJSON — schema is inferred at creation time
     let path = "events.json";
     # let path = json_path.to_str().unwrap();
-    let df = ctx.read_json(path, NdJsonReadOptions::default()).await?;
+    let df = ctx.read_json(path, JsonReadOptions::default()).await?;
 
     // The inferred schema is available immediately
     println!("{}", df.schema());
@@ -111,11 +111,11 @@ async fn main() -> datafusion::error::Result<()> {
 DataFusion defaults to **Newline-Delimited JSON** (one complete JSON object
 per line). Standard JSON arrays (`[{"a": 1}, {"b": 2}]`) and
 pretty-printed multi-line objects will produce parsing errors unless you
-explicitly set `.newline_delimited(false)`.
+explicitly set [`.newline_delimited()`][`jsonreadoptions::newline_delimited()`].
 
 ```rust,ignore
 // Read a JSON array file ([{...}, {...}])
-let options = NdJsonReadOptions::default().newline_delimited(false);
+let options = JsonReadOptions::default().newline_delimited(false);
 let df = ctx.read_json("data.json", options).await?;
 ```
 
@@ -129,7 +129,7 @@ LOCATION 'path/to/array.json';
 
 **Limitations:** JSON array format reads the entire file sequentially — it
 cannot split the file into byte ranges for parallel scanning
-(`repartition_file_scans`). For large datasets, NDJSON remains the
+([`datafusion.optimizer.repartition_file_scans`][repartition-file-scans]). For large datasets, NDJSON remains the
 performant choice.
 
 :::
@@ -138,15 +138,15 @@ performant choice.
 :class: warning
 
 JSON files carry no file-level schema — DataFusion infers types from
-the first 1,000 objects (configurable via `.schema_infer_max_records()`).
+the first 1,000 objects (configurable via [`.schema_infer_max_records()`][`jsonreadoptions::schema_infer_max_records()`]).
 Deeply nested, sparse, or late-appearing fields may not be detected.
 **Always provide an explicit schema in production.** See
 [Production Best Practices](#production-best-practices) below.
 :::
 
-## NdJsonReadOptions
+## JsonReadOptions
 
-**[`NdJsonReadOptions`] configures how DataFusion parses JSON files —
+**[`JsonReadOptions`] configures how DataFusion parses JSON files —
 schema, file extensions, compression, format, and streaming behavior.**
 
 JSON's simplicity means fewer variables than Parquet or CSV. There are no
@@ -155,21 +155,21 @@ provide an explicit schema, which file extensions to match, and whether the
 data is compressed or in array format. The following table lists the
 available options.
 
-| Builder Method                                                                            | Default   | Usage                                                                                                  |
-| :---------------------------------------------------------------------------------------- | :-------- | :----------------------------------------------------------------------------------------------------- |
-| **[`.schema(&Schema)`][`ndjsonreadoptions::schema()`]**                                   | `None`    | Explicit schema. **Recommended for production** to enforce strict types and avoid inference surprises. |
-| **[`.schema_infer_max_records(usize)`][`ndjsonreadoptions::schema_infer_max_records()`]** | `1000`    | Number of objects sampled for schema inference. Increase for heterogeneous data; set `0` to disable.   |
-| **`.newline_delimited(bool)`**                                                            | `true`    | Set `false` to read standard JSON arrays (`[{...}, {...}]`). Disables parallel file scanning.          |
-| **[`.file_extension(&str)`][`ndjsonreadoptions::file_extension()`]**                      | `".json"` | Filters input files by suffix. Use `".jsonl"` or `".ndjson"` for non-standard extensions.              |
-| **[`.table_partition_cols(Vec)`][`ndjsonreadoptions::table_partition_cols()`]**           | `[]`      | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                              |
-| **[`.file_sort_order(Vec)`][`ndjsonreadoptions::file_sort_order()`]**                     | `[]`      | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries.         |
-| **[`.mark_infinite(bool)`][`ndjsonreadoptions::mark_infinite()`]**                        | `false`   | Marks this source as unbounded (never reaches EOF). Use for Unix named pipes or streaming inputs.      |
+| Builder Method                                                                          | Default   | Usage                                                                                                  |
+| :-------------------------------------------------------------------------------------- | :-------- | :----------------------------------------------------------------------------------------------------- |
+| **[`.schema(&Schema)`][`jsonreadoptions::schema()`]**                                   | `None`    | Explicit schema. **Recommended for production** to enforce strict types and avoid inference surprises. |
+| **[`.schema_infer_max_records(usize)`][`jsonreadoptions::schema_infer_max_records()`]** | `1000`    | Number of objects sampled for schema inference. Increase for heterogeneous data; set `0` to disable.   |
+| **[`.newline_delimited(bool)`][`jsonreadoptions::newline_delimited()`]**                | `true`    | Set `false` to read standard JSON arrays (`[{...}, {...}]`). Disables parallel file scanning.          |
+| **[`.file_extension(&str)`][`jsonreadoptions::file_extension()`]**                      | `".json"` | Filters input files by suffix. Use `".jsonl"` or `".ndjson"` for non-standard extensions.              |
+| **[`.table_partition_cols(Vec)`][`jsonreadoptions::table_partition_cols()`]**           | `[]`      | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                              |
+| **[`.file_sort_order(Vec)`][`jsonreadoptions::file_sort_order()`]**                     | `[]`      | Tells the optimizer the data is pre-sorted. Use to speed up merge-joins or `ORDER BY` queries.         |
+| **[`.mark_infinite(bool)`][`jsonreadoptions::mark_infinite()`]**                        | `false`   | Marks this source as unbounded (never reaches EOF). Use for Unix named pipes or streaming inputs.      |
 
 :::{admonition} JSON array support
 :class: tip
 
-`NdJsonReadOptions` supports reading standard JSON arrays
-(`[{...}, {...}]`) via the `.newline_delimited(false)` builder method.
+[`JsonReadOptions`] supports reading standard JSON arrays
+(`[{...}, {...}]`) via the [`.newline_delimited()`][`jsonreadoptions::newline_delimited()`] builder method.
 When set, DataFusion streams the array into NDJSON internally — no manual
 conversion needed. See [the admonition above](#reading-json-files) for a
 code example.
@@ -196,9 +196,9 @@ random-access entry points, so the entire file must be read sequentially on
 a single thread. For large files, this creates a significant bottleneck.
 :::
 
-| Builder Method                                                                    | Default        | Usage                                                                                          |
-| :-------------------------------------------------------------------------------- | :------------- | :--------------------------------------------------------------------------------------------- |
-| **[`.file_compression_type(...)`][`ndjsonreadoptions::file_compression_type()`]** | `UNCOMPRESSED` | Compression algorithm (GZIP, BZIP2, XZ, ZSTD). For reading `.json.gz` or `.json.zst` directly. |
+| Builder Method                                                                  | Default        | Usage                                                                                          |
+| :------------------------------------------------------------------------------ | :------------- | :--------------------------------------------------------------------------------------------- |
+| **[`.file_compression_type(...)`][`jsonreadoptions::file_compression_type()`]** | `UNCOMPRESSED` | Compression algorithm (GZIP, BZIP2, XZ, ZSTD). For reading `.json.gz` or `.json.zst` directly. |
 
 :::{admonition} Example: Reading compressed NDJSON
 :class: seealso
@@ -220,7 +220,7 @@ use datafusion::datasource::file_format::file_compression_type::FileCompressionT
 async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
-    let options = NdJsonReadOptions::default()
+    let options = JsonReadOptions::default()
         .file_compression_type(FileCompressionType::GZIP)
         .file_extension(".gz");
 
@@ -288,10 +288,10 @@ saves significant RAM even though all bytes are still read from disk.
 :::{admonition} Register for repeated queries and SQL access
 :class: tip
 
-Use `ctx.register_json("table_name", "path.json", options)` to register the
-JSON file as a named table in the `SessionContext` catalog. This enables:
+Use [`.register_json()`] to register the
+JSON file as a named table in the [`SessionContext`] catalog. This enables:
 
-- **SQL access** — query the table via `ctx.sql("SELECT * FROM table_name")`
+- **SQL access** — query the table via [`.sql()`]
 - **Cross-query reuse** — multiple DataFrame operations and SQL queries
   can reference the same table name without re-reading options or paths
 - **Schema caching** — the inferred (or explicit) schema is resolved once
@@ -312,17 +312,17 @@ heterogeneous data. DataFusion samples a fixed window of objects (default:
 1,000) and locks column types based solely on what it observes. Any field
 that first appears beyond the sample boundary, or any type variation
 (e.g., a field that is sometimes a string and sometimes an integer),
-produces a `DataFusionError` at execution time. Within the sample,
+produces a [`DataFusionError`] at execution time. Within the sample,
 DataFusion handles some coercion (Int64 + Float64 widens to Float64), but
 once the schema is locked, it is fixed — the same mechanics as
-[CSV schema inference](csv.md#production-best-practices).
+[CSV schema inference][csv].
 
 JSON null handling follows the explicit Arrow schema. Missing keys and
 explicit JSON `null` values become NULL when the corresponding `Field` is
 nullable. If a required field is missing or null, DataFusion returns an
 error instead of silently widening the schema contract.
 
-To guarantee safety, use [`NdJsonReadOptions::schema()`] to provide an
+To guarantee safety, use [`JsonReadOptions::schema()`] to provide an
 explicit schema:
 
 ```rust
@@ -352,7 +352,7 @@ async fn main() -> datafusion::error::Result<()> {
 
     let path = "events.json";
     # let path = json_path.to_str().unwrap();
-    let df = ctx.read_json(path, NdJsonReadOptions::default()
+    let df = ctx.read_json(path, JsonReadOptions::default()
         .schema(&schema)
     ).await?;
 
@@ -377,16 +377,54 @@ async fn main() -> datafusion::error::Result<()> {
 :::{admonition} schema() is a builder method
 :class: note
 
-[`NdJsonReadOptions::schema()`] _sets_ the expected schema for the data
+[`JsonReadOptions::schema()`] _sets_ the expected schema for the data
 reader before the file is processed. This defines the contract for how
 DataFusion should parse the incoming bytes.
 
 This differs from [`DataFrame::schema()`], which _returns_ the resolved
-`DFSchema` of an already-created DataFrame.
+[`DFSchema`] of an already-created DataFrame.
 :::
 
 ## JSON References
 
-- [`NdJsonReadOptions` API](https://docs.rs/datafusion/latest/datafusion/prelude/struct.NdJsonReadOptions.html) — All configuration options
-- [JSON Format Options (SQL)](../../../../../user-guide/sql/format_options.md#json-format-options) — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
-- [datafusion-functions-json](https://github.com/datafusion-contrib/datafusion-functions-json) — Community-maintained scalar functions for querying JSON strings (`json_get`, `json_contains`, `json_length`)
+- [`JsonReadOptions` API][`jsonreadoptions`] — All configuration options
+- [JSON Format Options (SQL)][format-options] — SQL-level options for `CREATE EXTERNAL TABLE` and `COPY`
+- [datafusion-functions-json][datafusion-functions-json] — Community-maintained scalar functions for querying JSON strings (`json_get`, `json_contains`, `json_length`)
+
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[csv]: csv.md
+[format-options]: ../../../../user-guide/sql/format_options.md
+[repartition-file-scans]: ../../../../user-guide/configs.md
+
+<!-- Core types -->
+
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`datafusionerror`]: https://docs.rs/datafusion/latest/datafusion/error/enum.DataFusionError.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`jsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+
+<!-- Methods and functions -->
+
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
+[`.register_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_json
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`dataframe::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+[`jsonreadoptions::file_compression_type()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.file_compression_type
+[`jsonreadoptions::file_extension()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.file_extension
+[`jsonreadoptions::file_sort_order()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.file_sort_order
+[`jsonreadoptions::mark_infinite()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.mark_infinite
+[`jsonreadoptions::newline_delimited()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.newline_delimited
+[`jsonreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.schema
+[`jsonreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.schema_infer_max_records
+[`jsonreadoptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.table_partition_cols
+
+<!-- External resources -->
+
+[datafusion-functions-json]: https://github.com/datafusion-contrib/datafusion-functions-json

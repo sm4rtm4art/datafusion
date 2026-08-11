@@ -59,23 +59,42 @@ type system, coercion rules) to practical application (creating, applying,
 inspecting, and transforming schemas). They are designed to be read
 sequentially, but you can jump directly to the topic you need:
 
-| Document                                              |             Focus              | Description                                                                                        |
-| :---------------------------------------------------- | :----------------------------: | :------------------------------------------------------------------------------------------------- |
-| **[Schema Concepts](schema-concepts.md)**             |      Structural contract       | Ownership flow, schema types, `DFSchema` vs Arrow `Schema` — what schemas are and where they live. |
-| **[Anatomy of a Schema](schema-anatomy.md)**          |      Field-level anatomy       | `DFSchema` internals: fields, data types, nullability, metadata, and qualifiers.                   |
-| **[Type Coercion](type-coercion.md)**                 |    Automatic type alignment    | Coercion hierarchy, implicit vs. explicit casting, and how the optimizer reconciles types.         |
-| **[Creating Schemas](schema-creation.md)**            |        Building in code        | Constructing `DFSchema` and Arrow `Schema` programmatically with field types and constraints.      |
-| **[Applying Schemas](schema-application.md)**         |   Format-specific strategies   | Wiring schemas into CSV, NDJSON, Parquet readers, and partitioned datasets.                        |
-| **[Schema Inference](schema-inference.md)**           |     Inferred vs. explicit      | How DataFusion infers schemas from data, and when to provide them explicitly.                      |
-| **[Inspecting & Validating](schema-inspection.md)**   |  Display, access, and checks   | Human-readable display, programmatic field access, existence checks, and schema comparison.        |
-| **[Schema Transformation](schema-transformation.md)** |   Evolving schema structure    | Qualifiers, combining schemas, nullability handling, and schema evolution patterns.                |
-| **[Schema Methods](schema-dataframe-methods.md)**     | Methods that change the schema | DataFrame-specific methods (`.with_column()`, `.with_column_renamed()`, `.unnest_columns()`).      |
+| Document                                           |             Focus              | Description                                                                                        |
+| :------------------------------------------------- | :----------------------------: | :------------------------------------------------------------------------------------------------- |
+| **[Schema Concepts][schema-concepts]**             |      Structural contract       | Ownership flow, schema types, `DFSchema` vs Arrow `Schema` — what schemas are and where they live. |
+| **[Anatomy of a Schema][schema-anatomy]**          |      Field-level anatomy       | `DFSchema` internals: fields, data types, nullability, metadata, and qualifiers.                   |
+| **[Type Coercion][type-coercion]**                 |    Automatic type alignment    | Coercion hierarchy, implicit vs. explicit casting, and how the optimizer reconciles types.         |
+| **[Creating Schemas][schema-creation]**            |        Building in code        | Constructing `DFSchema` and Arrow `Schema` programmatically with field types and constraints.      |
+| **[Applying Schemas][schema-application]**         |   Format-specific strategies   | Wiring schemas into CSV, NDJSON, Parquet readers, and partitioned datasets.                        |
+| **[Schema Inference][schema-inference]**           |     Inferred vs. explicit      | How DataFusion infers schemas from data, and when to provide them explicitly.                      |
+| **[Inspecting & Validating][schema-inspection]**   |  Display, access, and checks   | Human-readable display, programmatic field access, existence checks, and schema comparison.        |
+| **[Schema Transformation][schema-transformation]** |   Evolving schema structure    | Qualifiers, combining schemas, nullability handling, and schema evolution patterns.                |
+| **[Schema Methods][schema-dataframe-methods]**     | Methods that change the schema | DataFrame-specific methods (`.with_column()`, `.with_column_renamed()`, `.unnest_columns()`).      |
 
 ---
 
-<!-- Link references -->
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[schema-anatomy]: schema-anatomy.md
+[schema-application]: schema-application.md
+[schema-concepts]: schema-concepts.md
+[schema-creation]: schema-creation.md
+[schema-dataframe-methods]: schema-dataframe-methods.md
+[schema-inference]: schema-inference.md
+[schema-inspection]: schema-inspection.md
+[schema-transformation]: schema-transformation.md
+[type-coercion]: type-coercion.md
+
+<!-- Core types -->
 
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/dfschema/struct.DFSchema.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+
+<!-- Methods and functions -->
+
 [`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema

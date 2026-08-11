@@ -51,7 +51,7 @@ In this document, code elements follow a consistent pattern:
 
 DataFusion operates on Apache Arrow's columnar memory format. Every [`DataFrame`] column carries an Arrow [`Field`], and each [`Field`] declares a [`DataType`] that determines how the underlying bytes are interpreted. The same raw value (`1735689600_i64`) becomes a date (`2025-01-01T00:00:00`) when the field declares `DataType::Timestamp` instead of `DataType::Int64` — unlocking temporal arithmetic, date-range pruning, and timezone-aware comparisons that an integer type cannot provide.
 
-The table below lists the common Arrow data types encountered in DataFusion. Each entry corresponds to a variant of the [`DataType`] enum (e.g., `DataType::Int32`, `DataType::Utf8`). For the complete SQL-to-Arrow type mapping, see [SQL Data Types](../../sql/data_types.md).
+The table below lists the common Arrow data types encountered in DataFusion. Each entry corresponds to a variant of the [`DataType`] enum (e.g., `DataType::Int32`, `DataType::Utf8`). For the complete SQL-to-Arrow type mapping, see [SQL Data Types][sql-data-types].
 
 | Category           | Arrow Types                                                                | Example Values                        |           Common Use Cases            |
 | :----------------- | :------------------------------------------------------------------------- | :------------------------------------ | :-----------------------------------: |
@@ -64,7 +64,7 @@ The table below lists the common Arrow data types encountered in DataFusion. Eac
 | **Binary**         | `Binary`, `LargeBinary`, `BinaryView`                                      | `[0x12, 0x34]`                        |           Raw data, hashes            |
 | **Nested Types**   | `Struct(Fields)`, `List(Field)`, `Map`                                     | `{"a": 1}`, `[1, 2, 3]`               |  JSON/Parquet data, complex objects   |
 
-Beyond primitive types, DataFusion fully supports Arrow's nested types (`List`, `Struct`, `Map`, `Union`) for complex data structures common in Parquet and semi-structured sources. For details on nested type structures and per-field properties, see [Anatomy of a Schema — Data Type](schema-anatomy.md#data-type).
+Beyond primitive types, DataFusion fully supports Arrow's nested types (`List`, `Struct`, `Map`, `Union`) for complex data structures common in Parquet and semi-structured sources. For details on nested type structures and per-field properties, see [Anatomy of a Schema — Data Type][schema-anatomy].
 
 :::{admonition} DataFrame API types are a superset of SQL types
 :class: note
@@ -195,7 +195,7 @@ Adopts the other operand's type (safe widening).
 
 :::{admonition} Comparison coercion has two variants
 :class: caution
-Binary comparison operators (`col("x").gt(col("y"))`) use [`comparison_coercion()`], which coerces string + numeric → **string**. Some scalar functions with `Comparable` signatures (e.g., `nullif`) use [`comparison_coercion_numeric()`], which coerces string + numeric → **numeric**. When debugging unexpected comparison results, check which coercion path the operation uses.
+Binary comparison operators (`col("x").gt(col("y"))`) use [`comparison_coercion()`], which coerces string + numeric → **string**. Some scalar functions with `Comparable` signatures (e.g., `nullif`) use `comparison_coercion_numeric()`, which coerces string + numeric → **numeric**. When debugging unexpected comparison results, check which coercion path the operation uses.
 :::
 
 The [`TypeCoercion`] analyzer applies these rules in three contexts — expressions, set operations, and literals — each described below.
@@ -383,7 +383,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 **[`try_cast()`] preserves partial results — unconvertible values become `NULL` instead of failing the query.**
 
-Where [`cast()`] treats any conversion failure as fatal, [`try_cast()`] substitutes `NULL` and continues. This makes [`try_cast()`] the safer choice for ETL pipelines, user-provided data, or mixed-format columns where data quality is uncertain. The resulting `NULL` values propagate through downstream expressions following standard [null-handling rules](../Concepts/null-handling.md) — filter them with `.is_not_null()` or replace them with `coalesce()`.
+Where [`cast()`] treats any conversion failure as fatal, [`try_cast()`] substitutes `NULL` and continues. This makes [`try_cast()`] the safer choice for ETL pipelines, user-provided data, or mixed-format columns where data quality is uncertain. The resulting `NULL` values propagate through downstream expressions following standard [null-handling rules][null-handling] — filter them with `.is_not_null()` or replace them with `coalesce()`.
 
 ```rust
 use datafusion::prelude::*;
@@ -421,7 +421,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 :::{admonition} SQL equivalents
 :class: note
-In DataFusion SQL, `CAST(col AS type)` corresponds to [`cast()`], and `TRY_CAST(col AS type)` corresponds to [`try_cast()`]. The `arrow_cast()` SQL function provides Arrow-specific casting with full type syntax (e.g., `arrow_cast(col, 'Timestamp(Second, None)')`), and `arrow_typeof()` returns the Arrow type of any expression — useful for debugging coercion behavior. See [SQL Data Types](../../sql/data_types.md) for details.
+In DataFusion SQL, `CAST(col AS type)` corresponds to [`cast()`], and `TRY_CAST(col AS type)` corresponds to [`try_cast()`]. The `arrow_cast()` SQL function provides Arrow-specific casting with full type syntax (e.g., `arrow_cast(col, 'Timestamp(Second, None)')`), and `arrow_typeof()` returns the Arrow type of any expression — useful for debugging coercion behavior. See [SQL Data Types][sql-data-types] for details.
 :::
 
 ## Conclusion
@@ -433,36 +433,45 @@ Automatic coercion widens within type families and parses literals to match thei
 :::{admonition} Related documents
 :class: seealso
 
-- [Anatomy of a Schema](schema-anatomy.md) — per-column field properties (`name`, `data_type`, `nullable`, `metadata`)
-- [Inspecting and Validating Schemas](schema-inspection.md) — display, access, and programmatic field inspection
-- [Schema Transformation](schema-transformation.md) — qualifier manipulation, combining schemas, nullability handling
-- [DataFrame Methods](schema-dataframe-methods.md) — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
-- [Handling Null Values](../Concepts/null-handling.md) — NULL behavior in expressions, filters, and joins
+- [Anatomy of a Schema][schema-anatomy] — per-column field properties (`name`, `data_type`, `nullable`, `metadata`)
+- [Inspecting and Validating Schemas][schema-inspection] — display, access, and programmatic field inspection
+- [Schema Transformation][schema-transformation] — qualifier manipulation, combining schemas, nullability handling
+- [DataFrame Methods][schema-dataframe-methods] — methods that change the schema (`.with_column()`, `.with_column_renamed()`)
+- [Handling Null Values][null-handling] — NULL behavior in expressions, filters, and joins
   :::
 
-<!-- Link references -->
+---
 
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[null-handling]: ../Concepts/null-handling.md
+[schema-anatomy]: schema-anatomy.md
+[schema-dataframe-methods]: schema-dataframe-methods.md
+[schema-inspection]: schema-inspection.md
+[schema-transformation]: schema-transformation.md
+[sql-data-types]: ../../../user-guide/sql/data_types.md
+
+<!-- Core types -->
+
+[`cast()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.cast.html
+[`comparison_coercion()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/binary/fn.comparison_coercion.html
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`datatype`]: https://docs.rs/arrow/latest/arrow/datatypes/enum.DataType.html
 [`field`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Field.html
-[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
 [`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
-[arrow data types]: https://arrow.apache.org/docs/format/Columnar.html#data-type-descriptions
-[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
-[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
-[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
-[`.union()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.union
-[`.except()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.except
-[`.intersect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.intersect
+[`try_cast()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.try_cast.html
+[`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
+
+<!-- Methods and functions -->
+
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
 [`.explain()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.explain
 [`.schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
-[`cast()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.cast.html
-[`try_cast()`]: https://docs.rs/datafusion/latest/datafusion/prelude/fn.try_cast.html
-[`comparison_coercion()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/type_coercion/binary/fn.comparison_coercion.html
-[`comparison_coercion_numeric()`]: https://docs.rs/datafusion/latest/datafusion/expr_common/type_coercion/binary/fn.comparison_coercion_numeric.html
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`tableprovider::schema()`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.schema
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+
+<!-- External resources -->
+
+[arrow data types]: https://arrow.apache.org/docs/format/Columnar.html#data-type-descriptions

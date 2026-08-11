@@ -35,47 +35,43 @@ anatomy-dataframe
 expressions
 null-handling
 execution-lifecycle
-bigger-picture
-summary
 ```
 
 ## Concept Documentation Overview
 
 Use the following documents to navigate the conceptual architecture of DataFusion DataFrames. They are designed to be read sequentially, but you can jump directly to the topic you need:
 
-| Document                                                 |              Focus               | Description                                                                               |
-| :------------------------------------------------------- | :------------------------------: | :---------------------------------------------------------------------------------------- |
-| **[Architectural Overview](architectural-dataframe.md)** |       Architecture and Fit       | Design philosophy, data flow, and OLAP vs OLTP — when DataFusion is the right tool.       |
-| **[Session Context](sessioncontext.md)**                 |         The Entry point          | Deep dive into the `SessionContext` as the entry point and environment for DataFrames.    |
-| **[Builder vs. Parser](builder-parser.md)**              |    Two API's <br> One engine     | Detailed comparison between SQL string parsing and the programmatic DataFrame builder.    |
-| **[Anatomy of a DataFrame](anatomy-dataframe.md)**       |     Internals of a DataFrame     | Deep dive into the inner workings, exploring the `LogicalPlan` and `SessionState`.        |
-| **[Expressions](expressions.md)**                        |         Row-Level Logic          | Expressions and how they are used to build the `LogicalPlan`.                             |
-| **[Handling Null Values](null-handling.md)**             |          NULL Semantics          | Three-valued logic, null propagation in filters, joins, aggregates, and sorts.            |
-| **[Execution Lifecycle](execution-lifecycle.md)**        |       Lazy Materialization       | Detailed breakdown of the logical optimizer, physical planner, and async execution.       |
-| **[The Bigger Picture](bigger-picture.md)**              | Historical context and evolution | Where DataFusion fits historically (e.g., Volcano model vs. modern vectorized execution). |
-| **[Summary](summary.md)**                                |            Conclusion            | A wrap-up of core concepts, next steps, and further reading resources.                    |
+| Document                                              |           Focus           | Description                                                                            |
+| :---------------------------------------------------- | :-----------------------: | :------------------------------------------------------------------------------------- |
+| **[Architectural Overview][architectural-dataframe]** |   Architecture and Fit    | Design philosophy, data flow, and OLAP vs OLTP — when DataFusion is the right tool.    |
+| **[Session Context][sessioncontext]**                 |      The Entry point      | Deep dive into the `SessionContext` as the entry point and environment for DataFrames. |
+| **[Builder vs. Parser][builder-parser]**              | Two API's <br> One engine | Detailed comparison between SQL string parsing and the programmatic DataFrame builder. |
+| **[Anatomy of a DataFrame][anatomy-dataframe]**       | Internals of a DataFrame  | Deep dive into the inner workings, exploring the `LogicalPlan` and `SessionState`.     |
+| **[Expressions][expressions]**                        |      Row-Level Logic      | Expressions and how they are used to build the `LogicalPlan`.                          |
+| **[Handling Null Values][null-handling]**             |      NULL Semantics       | Three-valued logic, null propagation in filters, joins, aggregates, and sorts.         |
+| **[Execution Lifecycle][execution-lifecycle]**        |   Lazy Materialization    | Detailed breakdown of the logical optimizer, physical planner, and async execution.    |
 
 ## DataFusion as a Query Engine
 
 **DataFusion as a query engine — connecting diverse data sources to a unified execution pipeline.**
 
-DataFusion is an embeddable, modular OLAP query engine built on Apache Arrow. Through the `TableProvider` trait, it connects to files (Parquet, CSV, JSON, Avro), in-memory data, external databases, and lakehouse formats (Iceberg, Delta Lake) — processing everything through its optimized columnar framework. Two equivalent APIs (SQL and DataFrame) converge into the same `LogicalPlan`, optimizer, and parallel execution engine.
+DataFusion is an embeddable, modular OLAP query engine built on Apache Arrow. Through the [`TableProvider`] trait, it connects to files (Parquet, CSV, JSON, Avro), in-memory data, external databases, and lakehouse formats (Iceberg, Delta Lake) — processing everything through its optimized columnar framework. Two equivalent APIs (SQL and DataFrame) converge into the same [`LogicalPlan`], optimizer, and parallel execution engine.
 
-For the full data flow diagram, design philosophy, and architectural context, see [Architectural Overview](architectural-dataframe.md).
+For the full data flow diagram, design philosophy, and architectural context, see [Architectural Overview][architectural-dataframe].
 
 DataFusion shines as an **OLAP** engine — scanning millions of rows, aggregating across partitions, and powering lakehouse query layers. When your workload is **OLTP** (single-row lookups, sub-millisecond point queries, frequent updates), a traditional database with indexes is the better fit. You can still bring OLTP data _into_ DataFusion through a custom `TableProvider` for analytical queries over that data.
 
 :::{note} Rule of Thumb
 "Find one row by ID" → Use a database with indexes.
 "Aggregate a billion rows" → Use DataFusion.
-For the full OLAP vs OLTP comparison, see [Architectural Fit](architectural-dataframe.md#architectural-fit-olap-vs-oltp).
+For the full OLAP vs OLTP comparison, see [Architectural Overview][architectural-dataframe].
 :::
 
 ## SessionContext: The Hub and Entry Point for Datafusion
 
 **SessionContext — the single entry point for both APIs, managing configuration, catalogs, and execution state.**
 
-At the center of this architecture sits the `SessionContext` (commonly abbreviated as `ctx` in code examples). It acts as the central hub and entry point for all queries. The `SessionContext` registers your table providers, manages configurations, and exposes the underlying execution engine to the user through two distinct interfaces. When a DataFrame is created, it receives a structural clone of the `SessionState` — config and functions are independently copied, while the catalog and runtime remain shared via `Arc` (see [The SessionState Clone](../Creating-DataFrames/creating-concepts.md#the-sessionstate-clone)).
+At the center of this architecture sits the [`SessionContext`] (commonly abbreviated as `ctx` in code examples). It acts as the central hub and entry point for all queries. The `SessionContext` registers your table providers, manages configurations, and exposes the underlying execution engine to the user through two distinct interfaces. When a DataFrame is created, it receives a structural clone of the `SessionState` — config and functions are independently copied, while the catalog and runtime remain shared via `Arc` (see [Creating Concepts][creating-concepts]).
 
 ---
 
@@ -127,3 +123,24 @@ To actually process data, you must trigger an action that materializes the resul
 - The **Logical Optimizer** rewrites the plan to make the math more efficient.
 - The **Physical Planner** maps the operations to your hardware, partitioning the work across CPU cores.
 - The **Execution Engine** asynchronously pulls the data, yielding a stream of columnar `RecordBatch` chunks rather than evaluating row-by-row.
+
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[anatomy-dataframe]: anatomy-dataframe.md
+[architectural-dataframe]: architectural-dataframe.md
+[builder-parser]: builder-parser.md
+[creating-concepts]: ../Creating-DataFrames/creating-concepts.md
+[execution-lifecycle]: execution-lifecycle.md
+[expressions]: expressions.md
+[null-handling]: null-handling.md
+[sessioncontext]: sessioncontext.md
+
+<!-- Core types -->
+
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html

@@ -17,21 +17,21 @@
   under the License.
 -->
 
-# Transformations Concepts
+# Transformation Concepts
 
-**Each DataFusion DataFrame transformation describes a change to a lazy query plan rather than mutating data; one contract, five structural dimensions of change, and two families that bend the model — across-row analysis and multi-frame combination — map the whole surface.**
+**Ordinary DataFusion DataFrame transformations describe a change to a lazy query plan rather than mutating data; one contract, five structural dimensions of change, and two families that bend the model — across-row analysis and multi-frame combination — map the whole surface, while `.cache()` is an eager exception.**
 
-Analytical pipelines reshape data through many operations, and DataFusion's DataFrame API exposes dozens of transformations that can appear unrelated. This page shows that every transformation follows one contract: it describes a change to a lazy query plan, returns a new `DataFrame`, and mutates nothing. Its results can differ along five structural dimensions — schema, cardinality, ordering, grain, and frame boundary — a lens for a result's shape rather than a catalog of every effect, while aggregation and windows reason across rows, and joins and set operations combine multiple frames. Transformations run only when an action executes the plan, and an unbounded `.collect()` can exhaust memory.
+Analytical pipelines reshape data through many operations, and DataFusion's DataFrame API exposes dozens of ordinary transformations that can appear unrelated. This page shows that these plan-building transformations follow one contract: each describes a change to a lazy query plan, returns a new `DataFrame`, and mutates nothing. Their results can differ along five structural dimensions — schema, cardinality, ordering, grain, and frame boundary — a lens for a result's shape rather than a catalog of every effect, while aggregation and windows reason across rows, and joins and set operations combine multiple frames. Ordinary transformations run only when an action executes the plan; `.cache()` is an eager exception that returns a `DataFrame` after materializing its default path. An unbounded `.collect()` can exhaust memory.
 
 **Concepts covered on this page:**
 
-| Concept                                                                      | What it covers                                                                                                                            |
-| :--------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------- |
-| [The Transformation Contract](#the-transformation-contract)                  | Where transformations sit in the lifecycle, the one invariant every method follows, and its three facets: two APIs, expressions, laziness |
-| [What Transformations Can Change](#what-transformations-can-change)          | The five structural dimensions of result change — schema, cardinality, ordering, grain, frame boundary — and `grain`                      |
-| [Across Rows: Aggregation and Windows](#across-rows-aggregation-and-windows) | One DataFrame, many rows analyzed together — aggregation changes grain, windows preserve it                                               |
-| [Combining Multiple DataFrames](#combining-multiple-dataframes)              | The transformations that cross the frame boundary — joins and set operations                                                              |
-| [From Concepts to Methods](#from-concepts-to-methods)                        | The contract and dimensions applied — one worked pipeline on the shared dataset                                                           |
+| Concept                                                                      | What it covers                                                                                                                         |
+| :--------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
+| [The Transformation Contract](#the-transformation-contract)                  | Where transformations sit in the lifecycle, the ordinary plan-building contract, and its three facets: two APIs, expressions, laziness |
+| [What Transformations Can Change](#what-transformations-can-change)          | The five structural dimensions of result change — schema, cardinality, ordering, grain, frame boundary — and `grain`                   |
+| [Across Rows: Aggregation and Windows](#across-rows-aggregation-and-windows) | One DataFrame, many rows analyzed together — aggregation changes grain, windows preserve it                                            |
+| [Combining Multiple DataFrames](#combining-multiple-dataframes)              | The transformations that cross the frame boundary — joins and set operations                                                           |
+| [From Concepts to Methods](#from-concepts-to-methods)                        | The contract and dimensions applied — one worked pipeline on the shared dataset                                                        |
 
 :::{admonition} Style Note
 :class: note
@@ -43,23 +43,23 @@ In this document, code elements follow a consistent pattern:
 - **Standalone functions:** `function()` (e.g., `col()`, `lit()`)
 - **Constructors:** `Type::new()` (e.g., `SessionContext::new()`)
 - **Types:** `TypeName` (e.g., `SchemaRef`, `RecordBatch`)
-- **Lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
+- **Ordinary lazy transformations:** return a `DataFrame` and build the `LogicalPlan`
 - **Actions:** (`.collect()`, `.show()`) trigger execution
 
 :::
 
-```{contents} Table of Contents for Transformations Concepts
+```{contents} Table of Contents for Transformation Concepts
 :local:
 :depth: 2
 ```
 
 ## The Transformation Contract
 
-**Transformations are the DataFrame's life phase — the methods that reshape your data — and beneath their variety they share one contract, for predictable and reliable data transformations.**
+**Ordinary plan-building transformations are the DataFrame's life phase — the methods that reshape your data — and beneath their variety they share one contract, for predictable and reliable data transformations.**
 
 Once you [create][creating] a [`DataFrame`], you enter the transformation phase of its [lifecycle][lifecycle]: the stage where you filter, select, join, aggregate, sort, and enrich. The DataFrame API exposes dozens of methods for this, yet they are variations on a single move.
 
-That single move is the contract. A transformation takes an existing [`DataFrame`], describes a logical change to the query plan, and returns a new [`DataFrame`] backed by the updated [`LogicalPlan`] and the schema that plan produces. The source data is never mutated, and no work runs until an [action](#laziness-and-the-point-of-execution) asks for results. That shape never varies — which is what makes the whole surface predictable, and what lets the optimizer rewrite the accumulated plan before a single byte is read.
+That single move is the ordinary plan-building contract. A transformation takes an existing [`DataFrame`], describes a logical change to the query plan, and returns a new [`DataFrame`] backed by the updated [`LogicalPlan`] and the schema that plan produces. The source data is never mutated, and no work runs until an [action](#laziness-and-the-point-of-execution) asks for results. That shape is what makes the ordinary surface predictable and lets the optimizer rewrite the accumulated plan before a single byte is read. `.cache()` is the eager exception: its default path materializes the plan before returning a `DataFrame`.
 
 :::{admonition} Three clarifications: mutation, timing, and schema
 :class: caution
@@ -67,7 +67,7 @@ That single move is the contract. A transformation takes an existing [`DataFrame
 The contract trips readers who bring habits from in-memory collections:
 
 1. A transformation does **not** mutate the DataFrame. It returns a new one and consumes the old, which is why you [`.clone()`][clone-concept] a handle to keep using the original.
-2. Chaining methods does **not** do the work step by step. Each call only extends the plan; execution waits for an action.
+2. Chaining ordinary plan-building methods does **not** do the work step by step. Each call only extends the plan; execution waits for an action.
 3. The derived schema does **not** capture everything a step changed. A transformation can reshape more than its columns — the subject of [What Transformations Can Change](#what-transformations-can-change).
    :::
 
@@ -95,9 +95,9 @@ When a transformation needs row-level logic — which rows to keep, which column
 
 ### Laziness and the Point of Execution
 
-**Transformations are lazy: each call extends the `LogicalPlan` and returns at once, and only an action runs it — so DataFusion optimizes the whole pipeline before any data moves, instead of one step at a time.**
+**Ordinary transformations are lazy: each call extends the `LogicalPlan` and returns at once, and only an action runs it — so DataFusion optimizes the whole pipeline before any data moves, instead of one step at a time.**
 
-Each transformation adds to the plan and returns immediately; the data stays put. Work begins only when you cross the **action boundary** — a call to `.collect()`, `.show()`, or `.write_*()`. Because the whole chain is visible before that moment, the optimizer can reorder filters, push predicates down into the scan, and choose join and aggregation strategies that a step-by-step evaluator could never see. You can inspect the accumulated plan without running it: `df.explain(false, false)?.show().await?`.
+Each ordinary transformation adds to the plan and returns immediately; the data stays put. Work begins only when you cross the **action boundary** — a call to `.collect()`, `.show()`, or `.write_*()`. `.cache()` is an eager exception: although it returns `Result<DataFrame>`, its default path builds a physical plan and collects all partitions into a `MemTable` before returning. Because the whole chain is visible before the action boundary, the optimizer can reorder filters, push predicates down into the scan, and choose join and aggregation strategies that a step-by-step evaluator could never see. You can inspect the accumulated plan without running it: `df.explain(false, false)?.show().await?`.
 
 :::{admonition} Laziness has a flip side
 :class: caution
@@ -171,14 +171,14 @@ join = horizontal (widen)     set op = vertical (stack)
 :::{admonition} Combining inputs has a matching cost
 :class: caution
 
-Combining frames depends on explicit alignment or matching assumptions. Set operations require compatible schemas, and positional and by-name variants apply different alignment rules; joins require keys or a filter, or they become a cross join that can multiply rows instead of matching them. For the exact requirements, see [Set Operations][set-operations] and [Join Patterns][joins].
+Combining frames depends on explicit alignment or matching assumptions. Set operations require compatible schemas, and positional and by-name variants apply different alignment rules; joins require keys or a filter, or they become a cross join that can multiply rows instead of matching them. For the exact requirements, see [Set Operations][set-operations] and [Joins][joins].
 :::
 
 ### Joins in Brief
 
 **A join relates rows from two DataFrames by a matching condition, crossing the frame boundary — the join type governs both which rows survive and which columns come with them.**
 
-Where the single-frame methods reshape one DataFrame, a join crosses the [frame boundary](#what-transformations-can-change): it pairs each row of one frame with rows of the other that satisfy a condition — for example, matching `customer_id` across `customer_df` and `orders_df`. Most join types carry the columns of both inputs into the result, **widening the schema**; the important exception is semi and anti joins, which use the second frame only as an existence test and add none of its columns.
+Where the single-frame methods reshape one DataFrame, a join crosses the [frame boundary](#what-transformations-can-change): it pairs each row of one frame with rows of the other that satisfy a condition — for example, matching `customer_id` across `customer_df` and `orders_df`. Most join types carry the columns of both inputs into the result, **widening the schema**; semi and anti joins instead return columns only from the preserved input: left semi and anti joins preserve the left input, while right semi and anti joins preserve the right.
 
 ```text
 JOIN (inner): relate rows across frames
@@ -199,7 +199,7 @@ Frame A               Frame B
 └────────────────────────┘
 ```
 
-Because the result is assembled from matches, its shape follows the matching: non-matches may disappear, preserved rows may receive nulls on the empty side, and a key that matches many rows may multiply them — so a join can **change cardinality** in either direction. The same mechanism can relate a frame to itself: a self-join joins a DataFrame with an aliased copy of itself — still two logical inputs. See [Join Patterns][joins] for [`.join()`][join-method] / [`.join_on()`][join-on-method], the join-type taxonomy, key and condition options, and execution detail.
+Because the result is assembled from matches, its shape follows the matching: non-matches may disappear, preserved rows may receive nulls on the empty side, and a key that matches many rows may multiply them — so a join can **change cardinality** in either direction. The same mechanism can relate a frame to itself: a self-join joins a DataFrame with an aliased copy of itself — still two logical inputs. See [Joins][joins] for [`.join()`][join-method] / [`.join_on()`][join-on-method], the join-type taxonomy, key and condition options, and execution detail.
 
 ### Set Operations in Brief
 
@@ -324,7 +324,7 @@ Every call returns a new [`DataFrame`] over a lazy [`LogicalPlan`], so the plan 
 
 **One contract, five structural dimensions, and two families that bend the model — that is this page's structural map of DataFusion's DataFrame transformations.**
 
-Every transformation returns a new [`DataFrame`] over a lazy [`LogicalPlan`] and leaves the source untouched until an action runs. Compared by the structural shape of their results, methods sort along five dimensions — schema, cardinality, ordering, grain, or the frame boundary — and only two families need a closer look: aggregation and windows, which reason across rows, and joins and set operations, which cross the frame boundary. With that map in hand, start with [Selection][selection], the first action page, and use the [Transformations index][index] for the reading path through the rest.
+Ordinary transformations return a new [`DataFrame`] over a lazy [`LogicalPlan`] and leave the source untouched until an action runs; `.cache()` is the eager exception. Compared by the structural shape of their results, methods sort along five dimensions — schema, cardinality, ordering, grain, or the frame boundary — and only two families need a closer look: aggregation and windows, which reason across rows, and joins and set operations, which cross the frame boundary. With that map in hand, start with [Selection][selection], the first action page, and use the [Transformations index][index] for the reading path through the rest.
 
 ### Further Reading
 
@@ -360,7 +360,7 @@ Every transformation returns a new [`DataFrame`] over a lazy [`LogicalPlan`] and
 [selection]: selection.md
 [aggregations]: aggregations.md
 [window-functions]: window-functions.md
-[joins]: joins.md
+[joins]: joins/index.md
 [set-operations]: set-operations.md
 [hybrid-sql]: hybrid-sql.md
 [creating]: ../Creating-DataFrames/index.md

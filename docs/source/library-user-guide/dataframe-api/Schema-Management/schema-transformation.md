@@ -29,12 +29,12 @@ This page covers those exceptions across three layers: transforming a [`DFSchema
 
 | Operation                                                     | API Level        | Schema Effect                                             | Section                                                                                                                 |
 | ------------------------------------------------------------- | ---------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| [`.strip_qualifiers()`]                                       | [`DFSchema`]     | Remove all table qualifiers                               | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution)                                              |
-| [`.replace_qualifier()`]                                      | [`DFSchema`]     | Replace every qualifier with one value                    | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution)                                              |
-| [`.with_field_specific_qualified_schema()`]                   | [`DFSchema`]     | Rebuild per-field qualifiers on an existing schema        | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution)                                              |
-| [`.join()`]                                                   | [`DFSchema`]     | Strictly concatenate two schemas                          | [Combining Schemas](#joining-and-merging-schemas)                                                                       |
-| [`.merge()`]                                                  | [`DFSchema`]     | Permissively append non-duplicate fields                  | [Combining Schemas](#joining-and-merging-schemas)                                                                       |
-| [`.with_functional_dependencies()`]                           | [`DFSchema`]     | Attach optimizer key relationships                        | [Annotating Functional Dependencies](#annotating-functional-dependencies)                                               |
+| [`DFSchema::strip_qualifiers()`]                              | [`DFSchema`]     | Remove all table qualifiers                               | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution)                                              |
+| [`DFSchema::replace_qualifier()`]                             | [`DFSchema`]     | Replace every qualifier with one value                    | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution)                                              |
+| [`DFSchema::with_field_specific_qualified_schema()`]          | [`DFSchema`]     | Rebuild per-field qualifiers on an existing schema        | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution)                                              |
+| [`DFSchema::join()`]                                          | [`DFSchema`]     | Strictly concatenate two schemas                          | [Combining Schemas](#joining-and-merging-schemas)                                                                       |
+| [`DFSchema::merge()`]                                         | [`DFSchema`]     | Permissively append non-duplicate fields                  | [Combining Schemas](#joining-and-merging-schemas)                                                                       |
+| [`DFSchema::with_functional_dependencies()`]                  | [`DFSchema`]     | Attach optimizer key relationships                        | [Annotating Functional Dependencies](#annotating-functional-dependencies)                                               |
 | [`.union_by_name()`]                                          | [`DataFrame`]    | Combine rows by column name, filling missing columns NULL | [Unioning DataFrames by Column Name](#unioning-dataframes-by-column-name)                                               |
 | [`.union_by_name_distinct()`]                                 | [`DataFrame`]    | Name-based union with duplicate-row removal               | [Unioning DataFrames by Column Name](#unioning-dataframes-by-column-name)                                               |
 | [`.inner()`] / [`.as_arrow()`] plus [`DFSchema`] constructors | Arrow [`Schema`] | Convert to Arrow and rebuild lost context                 | [Handling Schema Transformation at the Arrow Interop Layer](#handling-schema-transformation-at-the-arrow-interop-layer) |
@@ -65,20 +65,20 @@ In this document, code elements follow a consistent pattern:
 
 **Every schema change — reshaping columns, rebuilding qualifiers, combining evolving inputs, or dropping to the Arrow interop layer — has a natural owner in the API.**
 
-A **schema transformation** derives a new contract from an existing one and leaves the original untouched — a column projected, renamed, added, combined, or requalified. DataFusion recomputes that contract inside the [`LogicalPlan`] as the plan grows; for the conceptual model of how a schema propagates as that plan is built, see [Schema Concepts — Schema Propagation Through Transformations](schema-concepts.md#schema-propagation-through-transformations).
+A **schema transformation** derives a new contract from an existing one and leaves the original untouched — a column projected, renamed, added, combined, or requalified. DataFusion recomputes that contract inside the [`LogicalPlan`] as the plan grows; for the conceptual model of how a schema propagates as that plan is built, see [Schema Concepts — Schema Propagation Through Transformations][schema-concepts].
 
 DataFusion spreads those changes across distinct layers: most ride along with ordinary [`DataFrame`] operations and let the engine derive the new schema, some touch metadata that only the [`DFSchema`] carries — table qualifiers and functional dependencies — and a few surface only when you hand the schema down to Arrow and bring it back. Reaching for the wrong layer is the usual friction, so treat this page as a routing contract: choose the layer whose abstractions already own the task. The table below maps each change to its layer and where to find it — column edits on their own page, the rest in the sections below.
 
 | Desired Change                                      | Layer            | Find It In                                                                                                                                                                                    |
 | --------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add, rename, project, or unnest columns             | [`DataFrame`]    | [Schema Methods](schema-dataframe-methods.md) — separate page                                                                                                                                 |
+| Add, rename, project, or unnest columns             | [`DataFrame`]    | [Schema Methods][schema-dataframe-methods] — separate page                                                                                                                                    |
 | Combine independently evolving DataFrames by name   | [`DataFrame`]    | [Unioning DataFrames by Column Name](#unioning-dataframes-by-column-name) — below                                                                                                             |
 | Requalify, combine, or annotate the schema directly | [`DFSchema`]     | [Rewriting Qualifiers](#rewriting-qualifiers-to-control-column-resolution), [Combining Schemas](#joining-and-merging-schemas), [Functional Dependencies](#annotating-functional-dependencies) |
 | Hand a schema to Arrow and bring it back            | Arrow [`Schema`] | [Handling Schema Transformation at the Arrow Interop Layer](#handling-schema-transformation-at-the-arrow-interop-layer) — below                                                               |
 
 :::{admonition} Construction is a separate step
 :class: seealso
-Constructors such as [`DFSchema::try_from_qualified_schema()`] and [`DFSchema::from_field_specific_qualified_schema()`] build a [`DFSchema`] from an Arrow [`Schema`] — the starting point a transformation works on, not a transformation itself. They appear in the examples below only to set up a schema worth transforming; reach for them whenever you need a schema from scratch, and find the full reference in [Creating Schemas — Defining a `DFSchema` Directly](schema-creation.md#defining-a-dfschema-directly). Note the near-namesakes: the constructor [`DFSchema::from_field_specific_qualified_schema()`] _builds_ a schema from Arrow, while the transform [`.with_field_specific_qualified_schema()`] in the next section _rewrites_ qualifiers on an existing one.
+Constructors such as [`DFSchema::try_from_qualified_schema()`] and [`DFSchema::from_field_specific_qualified_schema()`] build a [`DFSchema`] from an Arrow [`Schema`] — the starting point a transformation works on, not a transformation itself. They appear in the examples below only to set up a schema worth transforming; reach for them whenever you need a schema from scratch, and find the full reference in [Creating Schemas — Defining a `DFSchema` Directly][schema-creation]. Note the near-namesakes: the constructor [`DFSchema::from_field_specific_qualified_schema()`] _builds_ a schema from Arrow, while the transform [`.with_field_specific_qualified_schema()`] in the next section _rewrites_ qualifiers on an existing one.
 :::
 
 ---
@@ -156,7 +156,7 @@ Plan builders and custom plan nodes sometimes need to derive one output schema f
 
 :::{admonition} `DFSchema::join()` is not `DataFrame::join()`
 :class: caution
-[`DFSchema::join()`] and [`DataFrame::join()`] share a name but act on different layers. [`DFSchema::join()`] — with [`DFSchema::merge()`] — combines schema _objects_, field lists and qualifiers, and never reads a row; [`DataFrame::join()`] combines _rows_, matching records across two DataFrames. This section covers the schema-object methods; for row joins see [Join Patterns](../Transformations/joins.md).
+[`DFSchema::join()`] and [`DataFrame::join()`] share a name but act on different layers. [`DFSchema::join()`] — with [`DFSchema::merge()`] — combines schema _objects_, field lists and qualifiers, and never reads a row; [`DataFrame::join()`] combines _rows_, matching records across two DataFrames. This section covers the schema-object methods; for row joins see [Join Patterns](../Transformations/joins/index.md).
 :::
 
 | Method       | Combination                                 | Duplicate Names                                          | Result                  |
@@ -298,7 +298,7 @@ For normal table scans, declare primary-key and unique constraints on the [`Tabl
 
 **At the DataFrame layer, the [`DFSchema`] is reshaped in the background — schema changes ride along with the row-producing operations you call, and the engine derives the new contract.**
 
-Transforming data at the DataFrame layer still moves the [`DFSchema`]. [`.union_by_name()`] is the clearest case: it reconciles two inputs by column name, and that reconciliation reshapes the output schema — adding columns, relaxing nullability, and dropping functional dependencies. Those changes surface as NULLs, which the second half of this section addresses. Single-DataFrame column edits such as [`.select()`] and [`.with_column()`] stay in [Schema Methods](schema-dataframe-methods.md); here the inputs are plural.
+Transforming data at the DataFrame layer still moves the [`DFSchema`]. [`.union_by_name()`] is the clearest case: it reconciles two inputs by column name, and that reconciliation reshapes the output schema — adding columns, relaxing nullability, and dropping functional dependencies. Those changes surface as NULLs, which the second half of this section addresses. Single-DataFrame column edits such as [`.select()`] and [`.with_column()`] stay in [Schema Methods][schema-dataframe-methods]; here the inputs are plural.
 
 ### Unioning DataFrames by Column Name
 
@@ -313,7 +313,7 @@ Transforming data at the DataFrame layer still moves the [`DFSchema`]. [`.union_
 | [`.union_by_name()`]          | name              | allowed         | filled with NULL, made nullable | kept           |
 | [`.union_by_name_distinct()`] | name              | allowed         | filled with NULL, made nullable | removed        |
 
-For row-level set-operation semantics — `UNION` versus `UNION ALL`, deduplication — see [Set Operations by Name](../Transformations/set-operations.md). For the horizontal counterpart — combining columns instead of stacking rows — see [Join Patterns](../Transformations/joins.md).
+For row-level set-operation semantics — `UNION` versus `UNION ALL`, deduplication — see [Set Operations by Name](../Transformations/set-operations.md). For the horizontal counterpart — combining columns instead of stacking rows — see [Join Patterns](../Transformations/joins/index.md).
 
 :::{admonition} SQL equivalent: `UNION BY NAME`
 :class: note
@@ -448,7 +448,7 @@ async fn main() -> datafusion::error::Result<()> {
 }
 ```
 
-For filling a single DataFrame's NULLs in one call — and the nullability change that fill implies — see [`.fill_null()`](schema-dataframe-methods.md#normalizing-types-and-nulls). For expression-level NULL handling (`coalesce`, `CASE`), see [Handling Null Values](../Concepts/null-handling.md). For nullability flags and widening, see [Anatomy of a Schema — Nullability](schema-anatomy.md#nullability).
+For filling a single DataFrame's NULLs in one call — and the nullability change that fill implies — see [`.fill_null()`][schema-dataframe-methods]. For expression-level NULL handling (`coalesce`, `CASE`), see [Handling Null Values][null-handling]. For nullability flags and widening, see [Anatomy of a Schema — Nullability][schema-anatomy].
 
 ---
 
@@ -458,7 +458,7 @@ For filling a single DataFrame's NULLs in one call — and the nullability chang
 
 DataFusion is built on Arrow: every [`DFSchema`] wraps an Arrow [`Schema`] and adds the planning context — table qualifiers and functional dependencies — that the optimizer needs but Arrow does not model. Some work happens below that wrapper, at the bare Arrow layer: feeding Arrow compute kernels, serializing through IPC or Flight, or handing the schema to another Arrow-based library. You reach that layer with [`.inner()`] or [`.as_arrow()`], and when you rebuild a fresh [`DFSchema`] from the result, the added context is gone — columns come back unqualified and optimizer metadata is empty. Rebuild both from application context before the schema re-enters a plan.
 
-The same [`.inner()`] / [`.as_arrow()`] accessors are introduced for inspection in [Inspecting and Validating Schemas — Arrow Interop](schema-inspection.md#arrow-interop); this section covers what the conversion drops and how to restore it. The example below walks the three steps — export the Arrow schema, rebuild a [`DFSchema`] that has lost its qualifiers, then requalify per field to restore resolution:
+The same [`.inner()`] / [`.as_arrow()`] accessors are introduced for inspection in [Inspecting and Validating Schemas — Arrow Interop][schema-inspection]; this section covers what the conversion drops and how to restore it. The example below walks the three steps — export the Arrow schema, rebuild a [`DFSchema`] that has lost its qualifiers, then requalify per field to restore resolution:
 
 ```rust
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -499,7 +499,7 @@ fn main() -> datafusion::error::Result<()> {
 Use this pattern when an Arrow-only API sits between two DataFusion planning steps. The same rebuild applies to optimizer metadata: [`FunctionalDependencies`] cannot be recovered from the Arrow [`Schema`], so reattach them with [`.with_functional_dependencies()`] when they still hold for the rebuilt schema.
 
 :::{seealso}
-To build a [`DFSchema`] from Arrow from scratch rather than recovering one, see [Creating Schemas — Defining a `DFSchema` Directly](schema-creation.md#defining-a-dfschema-directly). To reattach optimizer metadata after the conversion, see [Annotating Functional Dependencies](#annotating-functional-dependencies).
+To build a [`DFSchema`] from Arrow from scratch rather than recovering one, see [Creating Schemas — Defining a `DFSchema` Directly][schema-creation]. To reattach optimizer metadata after the conversion, see [Annotating Functional Dependencies](#annotating-functional-dependencies).
 :::
 
 ---
@@ -508,42 +508,47 @@ To build a [`DFSchema`] from Arrow from scratch rather than recovering one, see 
 
 **You now have a layer for every schema change: reshape rows with DataFrame methods, rewrite planning context on the [`DFSchema`], and treat Arrow as a physical-only boundary whose context you rebuild on return.**
 
-On the [`DFSchema`] layer, requalification controls how DataFusion resolves columns and [`.join()`] / [`.merge()`] build a planning contract without touching rows. At the DataFrame layer, [`.union_by_name()`] evolves independently growing inputs by aligning columns on name and filling the gaps with NULL. Across both, qualifiers and functional dependencies are DataFusion-only metadata that no Arrow conversion preserves — carry them deliberately and rebuild them after the Arrow layer drops them. For the everyday DataFrame methods that add, remove, rename, or reshape columns on a single frame, continue with [Schema Methods](schema-dataframe-methods.md).
+On the [`DFSchema`] layer, requalification controls how DataFusion resolves columns and [`.join()`] / [`.merge()`] build a planning contract without touching rows. At the DataFrame layer, [`.union_by_name()`] evolves independently growing inputs by aligning columns on name and filling the gaps with NULL. Across both, qualifiers and functional dependencies are DataFusion-only metadata that no Arrow conversion preserves — carry them deliberately and rebuild them after the Arrow layer drops them. For the everyday DataFrame methods that add, remove, rename, or reshape columns on a single frame, continue with [Schema Methods][schema-dataframe-methods].
 
 :::{admonition} Related documents
 :class: seealso
 
-- [Schema Concepts](schema-concepts.md) — conceptual propagation model and schema lifecycle
-- [Creating Schemas](schema-creation.md) — Arrow and [`DFSchema`] construction from scratch
-- [Inspecting and Validating Schemas](schema-inspection.md) — display, access, validation, and basic Arrow interop
-- [Anatomy of a Schema](schema-anatomy.md) — field-level properties, qualifiers, nullability, and metadata
-- [Schema Methods](schema-dataframe-methods.md) — DataFrame methods that add, remove, rename, or reshape columns
+- [Schema Concepts][schema-concepts] — conceptual propagation model and schema lifecycle
+- [Creating Schemas][schema-creation] — Arrow and [`DFSchema`] construction from scratch
+- [Inspecting and Validating Schemas][schema-inspection] — display, access, validation, and basic Arrow interop
+- [Anatomy of a Schema][schema-anatomy] — field-level properties, qualifiers, nullability, and metadata
+- [Schema Methods][schema-dataframe-methods] — DataFrame methods that add, remove, rename, or reshape columns
   :::
 
 ---
 
-<!-- Link references -->
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[null-handling]: ../Concepts/null-handling.md
+[schema-anatomy]: schema-anatomy.md
+[schema-concepts]: schema-concepts.md
+[schema-creation]: schema-creation.md
+[schema-dataframe-methods]: schema-dataframe-methods.md
+[schema-inspection]: schema-inspection.md
+
+<!-- Core types -->
 
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`dataframe::alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
-[`dataframe::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
-[`dataframe::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
 [`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
 [`functionaldependencies`]: https://docs.rs/datafusion/latest/datafusion/common/struct.FunctionalDependencies.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
 [`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
-[`schemaref`]: https://docs.rs/arrow/latest/arrow/datatypes/type.SchemaRef.html
 [`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
 [`typecoercion`]: https://docs.rs/datafusion/latest/datafusion/optimizer/analyzer/type_coercion/struct.TypeCoercion.html
-[`dfschema::check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
-[`dfschema::from_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
-[`dfschema::join()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
-[`dfschema::merge()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
-[`dfschema::replace_qualifier()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.replace_qualifier
-[`dfschema::strip_qualifiers()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.strip_qualifiers
-[`dfschema::try_from_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
-[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
+
+<!-- Methods and functions -->
+
 [`.alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`.as_arrow()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.as_arrow
 [`.inner()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.inner
 [`.join()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
 [`.merge()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
@@ -558,4 +563,14 @@ On the [`DFSchema`] layer, requalification controls how DataFusion resolves colu
 [`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
 [`.with_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_field_specific_qualified_schema
 [`.with_functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_functional_dependencies
-[creating schemas]: schema-creation.md
+[`dataframe::alias()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.alias
+[`dataframe::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`dfschema::check_names()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.check_names
+[`dfschema::from_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.from_field_specific_qualified_schema
+[`dfschema::join()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.join
+[`dfschema::merge()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.merge
+[`dfschema::replace_qualifier()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.replace_qualifier
+[`dfschema::strip_qualifiers()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.strip_qualifiers
+[`dfschema::try_from_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.try_from_qualified_schema
+[`dfschema::with_field_specific_qualified_schema()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_field_specific_qualified_schema
+[`dfschema::with_functional_dependencies()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.with_functional_dependencies

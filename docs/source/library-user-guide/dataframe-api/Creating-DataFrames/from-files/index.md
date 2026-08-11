@@ -70,15 +70,15 @@ beyond partition pruning is not possible. This adds startup cost and can be
 a source of type-inference errors.
 
 DataFusion natively supports five file formats. Other formats (ORC, Iceberg,
-Delta Lake, ...) are available via [ecosystem extensions](../ecosystem-sources.md).
+Delta Lake, ...) are available via [ecosystem extensions][ecosystem-sources].
 
-| Format                                              | Layout   | Schema Source                | Startup Cost                | Pruning Support       | Best For                         |
-| --------------------------------------------------- | -------- | ---------------------------- | --------------------------- | --------------------- | -------------------------------- |
-| **[Parquet](parquet.md)** <br>[`.read_parquet()`]   | Columnar | Embedded (footer)            | **Low** (metadata only)     | ✅ Metadata + Columns | Production analytics, large data |
-| **[CSV](csv.md)** <br>[`.read_csv()`]               | Row      | ⚠️ **Inferred** (first 1000) | **High** (inference scan)   | ❌ Partition only     | Simple exchange, imports         |
-| **[NDJSON](json.md)** <br>[`.read_json()`]          | Row      | ⚠️ **Inferred** (first 1000) | **Medium** (inference scan) | ❌ Partition only     | Semi-structured logs/APIs        |
-| **[Avro](avro.md)** <br>[`.read_avro()`]            | Row      | Embedded (header)            | **Low** (header schema)     | ❌ Partition only     | Kafka, schema evolution          |
-| **[Arrow IPC](arrow-ipc.md)** <br>[`.read_arrow()`] | Columnar | Embedded (header)            | **Very Low** (zero-copy\*)  | ❌ Partition only     | Arrow ecosystem, zero-copy       |
+| Format                                           | Layout   | Schema Source                | Startup Cost                | Pruning Support       | Best For                         |
+| ------------------------------------------------ | -------- | ---------------------------- | --------------------------- | --------------------- | -------------------------------- |
+| **[Parquet][parquet]** <br>[`.read_parquet()`]   | Columnar | Embedded (footer)            | **Low** (metadata only)     | ✅ Metadata + Columns | Production analytics, large data |
+| **[CSV][csv]** <br>[`.read_csv()`]               | Row      | ⚠️ **Inferred** (first 1000) | **High** (inference scan)   | ❌ Partition only     | Simple exchange, imports         |
+| **[NDJSON][json]** <br>[`.read_json()`]          | Row      | ⚠️ **Inferred** (first 1000) | **Medium** (inference scan) | ❌ Partition only     | Semi-structured logs/APIs        |
+| **[Avro][avro]** <br>[`.read_avro()`]            | Row      | Embedded (header)            | **Low** (header schema)     | ❌ Partition only     | Kafka, schema evolution          |
+| **[Arrow IPC][arrow-ipc]** <br>[`.read_arrow()`] | Columnar | Embedded (header)            | **Very Low** (zero-copy\*)  | ❌ Partition only     | Arrow ecosystem, zero-copy       |
 
 \* Arrow IPC files already use Arrow's in-memory columnar layout, so
 DataFusion can map the data directly without deserialization — hence
@@ -119,7 +119,7 @@ patterns:
   you choose. The source becomes queryable by both the DataFrame API
   (`ctx.table("sales")`) and SQL (`SELECT * FROM sales`).
 
-**For more details:** See the [Creating DataFrames](../index.md) section.
+**For more details:** See the [Creating DataFrames][creating-dataframes] section.
 
 :::{admonition} Rule of thumb
 :class: tip
@@ -154,7 +154,7 @@ async fn main() -> datafusion::error::Result<()> {
     let path = "data.parquet";
     # // Hidden: use test data for doctests
     # let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    #     .join("parquet-testing/data/alltypes_plain.parquet")
+    #     .join("../../parquet-testing/data/alltypes_plain.parquet")
     #     .to_string_lossy().to_string();
 
     // Read a Parquet file — lazy scan, nothing loads until an action
@@ -203,19 +203,20 @@ use datafusion::prelude::*;
 async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
     # let test_data = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    #     .join("parquet-testing/data");
+    #     .join("../../parquet-testing/data");
 
     // Pattern 1: Multiple explicit paths (Vec)
     let paths = vec!["data/part-000.parquet", "data/part-001.parquet"];
     # let paths: Vec<String> = vec![
     #     test_data.join("alltypes_plain.parquet").to_string_lossy().to_string(),
-    #     test_data.join("alltypes_plain.snappy.parquet").to_string_lossy().to_string(),
+    #     // Same schema twice — parquet-testing's alltypes_plain*.parquet variants differ (Int8 vs Int32).
+    #     test_data.join("alltypes_plain.parquet").to_string_lossy().to_string(),
     # ];
     let df = ctx.read_parquet(paths, ParquetReadOptions::default()).await?;
 
     // Pattern 2: Glob patterns
     let glob_pattern = "data/*.parquet";
-    # let glob_pattern = test_data.join("alltypes*.parquet").to_string_lossy().to_string();
+    # let glob_pattern = test_data.join("alltypes_plain.parquet").to_string_lossy().to_string();
     let df = ctx.read_parquet(&glob_pattern, ParquetReadOptions::default()).await?;
 
     // Pattern 3: Cloud storage (after registering object store)
@@ -294,7 +295,7 @@ async fn main() -> Result<()> {
 :::
 
 For a complete S3 setup (credentials, builder configuration, query), see
-the [S3 example in datafusion-examples](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/query_aws_s3.rs).
+the [S3 example in datafusion-examples][s3-example].
 
 ## Advanced: ListingTable and read_table()
 
@@ -328,7 +329,7 @@ async fn main() -> datafusion::error::Result<()> {
     // Directory containing Parquet files
     let path = "data/";
     # let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    #     .join("parquet-testing/data")
+    #     .join("../../parquet-testing/data/alltypes_plain.parquet")
     #     .to_string_lossy().to_string();
     let table_path = ListingTableUrl::parse(&path)?;
     let listing_options = ListingOptions::new(Arc::new(ParquetFormat::default()));
@@ -348,7 +349,41 @@ async fn main() -> datafusion::error::Result<()> {
 
 ---
 
-[`executionoptions::listing_table_ignore_subdirectory`]: https://docs.rs/datafusion/latest/datafusion/config/struct.ExecutionOptions.html#structfield.listing_table_ignore_subdirectory
-[`executionoptions::collect_statistics`]: https://docs.rs/datafusion/latest/datafusion/config/struct.ExecutionOptions.html#structfield.collect_statistics
+<!-- References -->
 
-<!-- Link references -->
+<!-- Internal documentation -->
+
+[arrow-ipc]: arrow-ipc.md
+[avro]: avro.md
+[creating-dataframes]: ../index.md
+[csv]: csv.md
+[ecosystem-sources]: ../ecosystem-sources.md
+[json]: json.md
+[parquet]: parquet.md
+
+<!-- Core types -->
+
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`objectstore`]: https://docs.rs/datafusion/latest/datafusion/datasource/object_store/index.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+
+<!-- Methods and functions -->
+
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
+[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`executionoptions::collect_statistics`]: https://docs.rs/datafusion/latest/datafusion/config/struct.ExecutionOptions.html#structfield.collect_statistics
+[`executionoptions::listing_table_ignore_subdirectory`]: https://docs.rs/datafusion/latest/datafusion/config/struct.ExecutionOptions.html#structfield.listing_table_ignore_subdirectory
+[`sessioncontext::read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
+
+<!-- External resources -->
+
+[s3-example]: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/query_aws_s3.rs

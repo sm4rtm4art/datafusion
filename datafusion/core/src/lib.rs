@@ -1304,139 +1304,139 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/index.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/index.md",
     dataframe_api_creating_dataframes_index
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/ecosystem-sources.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/ecosystem-sources.md",
     dataframe_api_creating_dataframes_ecosystem_sources
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-logical-plan.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-logical-plan.md",
     dataframe_api_creating_dataframes_from_logical_plan
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-memory.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-memory.md",
     dataframe_api_creating_dataframes_from_memory
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-sql.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-sql.md",
     dataframe_api_creating_dataframes_from_sql
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/inline-data.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/inline-data.md",
     dataframe_api_creating_dataframes_inline_data
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/registered-tables.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/registered-tables.md",
     dataframe_api_creating_dataframes_registered_tables
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/streaming.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/streaming.md",
     dataframe_api_creating_dataframes_streaming
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/index.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-files/index.md",
     dataframe_api_creating_dataframes_from_files_index
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/arrow-ipc.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-files/arrow-ipc.md",
     dataframe_api_creating_dataframes_from_files_arrow_ipc
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/avro.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-files/avro.md",
     dataframe_api_creating_dataframes_from_files_avro
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/csv.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-files/csv.md",
     dataframe_api_creating_dataframes_from_files_csv
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/json.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-files/json.md",
     dataframe_api_creating_dataframes_from_files_json
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/creating-dataframes/from-files/parquet.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Creating-DataFrames/from-files/parquet.md",
     dataframe_api_creating_dataframes_from_files_parquet
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-concepts.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-concepts.md",
     dataframe_api_schema_management_schema_concepts
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-anatomy.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-anatomy.md",
     dataframe_api_schema_management_schema_anatomy
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-creation.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-creation.md",
     dataframe_api_schema_management_schema_creation
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/type-coercion.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/type-coercion.md",
     dataframe_api_schema_management_type_coercion
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-inference.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-inference.md",
     dataframe_api_schema_management_schema_inference
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-application.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-application.md",
     dataframe_api_schema_management_schema_application
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-inspection.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-inspection.md",
     dataframe_api_schema_management_schema_inspection
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-transformation.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-transformation.md",
     dataframe_api_schema_management_schema_transformation
 );
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/schema-management/schema-dataframe-methods.md",
+    "../../../docs/source/library-user-guide/dataframe-api/Schema-Management/schema-dataframe-methods.md",
     dataframe_api_schema_management_schema_dataframe_methods
 );
 
@@ -1466,8 +1466,38 @@ doc_comment::doctest!(
 
 #[cfg(doctest)]
 doc_comment::doctest!(
-    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins.md",
-    dataframe_api_transformations_joins
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins/index.md",
+    dataframe_api_transformations_joins_index
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins/join-concepts.md",
+    dataframe_api_transformations_joins_join_concepts
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins/join-conditions.md",
+    dataframe_api_transformations_joins_join_conditions
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins/join-types.md",
+    dataframe_api_transformations_joins_join_types
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins/join-validation.md",
+    dataframe_api_transformations_joins_join_validation
+);
+
+#[cfg(doctest)]
+doc_comment::doctest!(
+    "../../../docs/source/library-user-guide/dataframe-api/Transformations/joins/join-workflows.md",
+    dataframe_api_transformations_joins_join_workflows
 );
 
 #[cfg(doctest)]

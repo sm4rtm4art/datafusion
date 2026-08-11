@@ -203,13 +203,13 @@ Direct plan access is valuable in a few specific scenarios:
 For deeper coverage of plan construction — manual [`LogicalPlan`]
 assembly, [`LogicalPlanBuilder`] fluent API, [`TreeNodeRewriter`] for
 tree-walking transformations, and physical plan translation — see the
-dedicated [Building Logical Plans] guide.
+dedicated [Building Logical Plans][building-logical-plans] guide.
 
-## References
+## Further Reading
 
 **Guides:**
 
-- [Building Logical Plans] — comprehensive plan construction, `LogicalPlanBuilder`, and `TreeNodeRewriter`
+- [Building Logical Plans][building-logical-plans] — comprehensive plan construction, `LogicalPlanBuilder`, and `TreeNodeRewriter`
 
 **API:**
 
@@ -220,15 +220,25 @@ dedicated [Building Logical Plans] guide.
 - [`LogicalPlan`] — the query tree enum
 - [`LogicalPlanBuilder`] — fluent plan builder
 
-<!-- Link references -->
+---
 
-[building logical plans]: ../../library-user-guide/building-logical-plans.md
-[substrait]: https://substrait.io/
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[building-logical-plans]: ../../building-logical-plans.md
+
+<!-- Core types -->
+
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`dataframe::new()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.new
-[`.into_parts()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts
-[`.logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.logical_plan
-[`.execute_logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.execute_logical_plan
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
 [`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
 [`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`treenoderewriter`]: https://docs.rs/datafusion/latest/datafusion/common/tree_node/trait.TreeNodeRewriter.html
+
+<!-- Methods and functions -->
+
+[`.execute_logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.execute_logical_plan
+[`.into_parts()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts
+[`.logical_plan()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.logical_plan
+[`dataframe::new()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.new

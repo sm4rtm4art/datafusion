@@ -26,13 +26,28 @@ Avro is the standard format for event streaming systems (i.e. Kafka, Pulsar,...)
 schema registries (i.e. Confluent, Apicurio,...). Every Avro file carries its writer
 schema in the header, making it self-describing without the inference
 overhead of CSV or JSON. DataFusion reads Avro **files** through
-`ctx.read_avro()` — event data archived to disk, S3, or any object store.
+[`.read_avro()`] — event data archived to disk, S3, or any object store.
 It does not natively connect to live Kafka or Pulsar brokers; consuming
 streams requires an external connector that writes Avro data to files or
 batches first. DataFusion extracts the schema directly from the file header
 and decodes row-by-row into Arrow columns. As a row-based format, Avro
 does not support predicate pushdown — for analytical workloads, Parquet is
 the better choice.
+
+:::{admonition} Feature flag required
+:class: warning
+
+Avro support is a compile-time opt-in. Without the `avro` feature flag,
+[`.read_avro()`] and [`.register_avro()`] do not exist — your code will
+not compile. This gate exists because Avro pulls in the `apache-avro` crate
+and its transitive dependencies, adding to compile time and binary size.
+Enable it in your `Cargo.toml`:
+
+```toml
+datafusion = { version = "...", features = ["avro"] }
+```
+
+:::
 
 :::{admonition} Style Note
 :class: note
@@ -56,33 +71,18 @@ In this document, code elements follow a consistent pattern:
 
 ## Reading Avro Files
 
-:::{admonition} Feature flag required
-:class: warning
-
-Avro support is a compile-time opt-in. Without the `avro` feature flag,
-`ctx.read_avro()` and `ctx.register_avro()` do not exist — your code will
-not compile. This gate exists because Avro pulls in the `apache-avro` crate
-and its transitive dependencies, adding to compile time and binary size.
-Enable it in your `Cargo.toml`:
-
-```toml
-datafusion = { version = "...", features = ["avro"] }
-```
-
-:::
-
-**A single call to `ctx.read_avro()` reads the schema from the file
-header and returns a lazy DataFrame — no inference, no sampling.**
+**A single call to [`.read_avro()`] reads the schema from the file
+header and returns a lazy [`DataFrame`] — no inference, no sampling.**
 
 Avro files carry their schema in the file header.
 DataFusion reads this embedded schema directly — there is no sampling step
 and no risk of inference errors, unlike CSV or JSON. When reading multiple files, DataFusion
-merges the schemas across all files via `Schema::try_merge()`, supporting
+merges the schemas across all files via [`Schema::try_merge()`], supporting
 files written at different schema versions.
 
 Nested Avro records map to Arrow struct columns, and Avro enums map to
 Arrow dictionary types. The actual data processing waits until you trigger
-an action like `.collect()`.
+an action like [`.collect()`].
 
 ```rust
 # #[cfg(feature = "avro")]
@@ -143,7 +143,7 @@ partitioned directories.
 | Option                                                                        | Default   | Usage                                                                                         |
 | :---------------------------------------------------------------------------- | :-------- | :-------------------------------------------------------------------------------------------- |
 | **[`.schema(&Schema)`][`avroreadoptions::schema()`]**                         | `None`    | Override the embedded schema. Use to enforce strict types or resolve cross-file schema drift. |
-| **`.file_extension`**                                                         | `".avro"` | Filters input files by suffix. No builder method — use struct update syntax (see below).      |
+| **[`file_extension`]**                                                        | `".avro"` | Filters input files by suffix. No builder method — use struct update syntax (see below).      |
 | **[`.table_partition_cols(Vec)`][`avroreadoptions::table_partition_cols()`]** | `[]`      | Maps Hive-style directory paths to columns (e.g., `year=2024/month=01/`).                     |
 
 [`file_extension`] has no builder method. If your files use a different
@@ -161,7 +161,7 @@ let options = AvroReadOptions {
 :collapsible: open
 
 For Hive-partitioned directories (e.g., `events/year=2024/month=01/*.avro`),
-use `.table_partition_cols()` to map directory structure to columns.
+use [`.table_partition_cols()`][`avroreadoptions::table_partition_cols()`] to map directory structure to columns.
 
 ```rust
 # #[cfg(feature = "avro")]
@@ -218,7 +218,7 @@ interchange, not analytics.
   internally (Snappy, Deflate, Bzip2, XZ, Zstandard). The codec is
   embedded in the file header and decompression happens automatically —
   there is nothing to configure. See the
-  [Avro specification](https://avro.apache.org/docs/current/specification/#required-codecs)
+  [Avro specification][avro-spec-codecs]
   for supported codecs
 
 | Avro Shines ✓                                     | Avoid Avro ✗                                        |
@@ -232,10 +232,10 @@ interchange, not analytics.
 :::{admonition} Register for repeated queries and SQL access
 :class: tip
 
-Use `ctx.register_avro("table_name", "path.avro", options)` to register the
-Avro file as a named table in the `SessionContext` catalog. This enables:
+Use [`.register_avro()`] to register the
+Avro file as a named table in the [`SessionContext`] catalog. This enables:
 
-- **SQL access** — query the table via `ctx.sql("SELECT * FROM table_name")`
+- **SQL access** — query the table via [`.sql()`]
 - **Cross-query reuse** — multiple DataFrame operations and SQL queries
   can reference the same table name without re-reading options or paths
 - **Header caching** — the embedded schema is resolved once at registration
@@ -263,17 +263,44 @@ and Avro's schema resolution logic lives outside DataFusion.
   [`AvroReadOptions::schema()`] to enforce a canonical schema when drift
   is a risk.
 - **Schema evolution is Avro's, not DataFusion's** — Avro's
-  [schema resolution rules](https://avro.apache.org/docs/current/specification/#schema-resolution)
+  [schema resolution rules][avro-schema-resolution]
   (defaults for missing fields, field aliasing, type promotion) are
   handled by the underlying `apache-avro` crate. DataFusion reads what the
   Avro decoder produces. If you rely on reader/writer schema resolution,
   test the behavior with your specific schema versions.
 - **Feature flag across environments** — Avro support requires
-  `datafusion = { features = ["avro"] }`. Without it, `read_avro()` and
-  `register_avro()` do not compile. This is easy to miss when moving
+  `datafusion = { features = ["avro"] }`. Without it, [`.read_avro()`] and
+  [`.register_avro()`] do not compile. This is easy to miss when moving
   between development, CI, and production configurations.
 
 ## Avro References
 
-- [`AvroReadOptions` API](https://docs.rs/datafusion/latest/datafusion/prelude/struct.AvroReadOptions.html) — All configuration options
-- [Apache Avro Specification](https://avro.apache.org/docs/current/specification/) — Format specification, schema resolution, codecs
+- [`AvroReadOptions` API][`avroreadoptions`] — All configuration options
+- [Apache Avro Specification][avro-specification] — Format specification, schema resolution, codecs
+
+---
+
+<!-- References -->
+
+<!-- Core types -->
+
+[`avroreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`file_extension`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+
+<!-- Methods and functions -->
+
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
+[`.register_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_avro
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`avroreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html#method.schema
+[`avroreadoptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.AvroReadOptions.html#method.table_partition_cols
+[`schema::try_merge()`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html#method.try_merge
+
+<!-- External resources -->
+
+[avro-schema-resolution]: https://avro.apache.org/docs/current/specification/#schema-resolution
+[avro-spec-codecs]: https://avro.apache.org/docs/current/specification/#required-codecs
+[avro-specification]: https://avro.apache.org/docs/current/specification/

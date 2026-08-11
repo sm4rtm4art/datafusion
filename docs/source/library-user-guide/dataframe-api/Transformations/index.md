@@ -44,7 +44,7 @@ filtering
 sorting-limiting
 aggregations
 window-functions
-joins
+joins/index
 set-operations
 subqueries
 hybrid-sql
@@ -62,7 +62,7 @@ builder-patterns
 | Cardinality    | filtering, limiting, deduplication    | [Filtering](filtering.md), [Sorting & Limiting](sorting-limiting.md), [Set Operations](set-operations.md) |
 | Ordering       | sorting                               | [Sorting & Limiting](sorting-limiting.md)                                                                 |
 | Grain          | aggregation, windows                  | [Aggregations](aggregations.md), [Window Functions](window-functions.md)                                  |
-| Frame boundary | joins, set operations                 | [Joins](joins.md), [Set Operations](set-operations.md)                                                    |
+| Frame boundary | joins, set operations                 | [Joins](joins/index.md), [Set Operations](set-operations.md)                                              |
 
 <!--TODO: remove this claim, this is impossible!
 

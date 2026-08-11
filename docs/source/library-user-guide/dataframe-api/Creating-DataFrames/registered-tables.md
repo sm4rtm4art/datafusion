@@ -87,7 +87,7 @@ high-performance scanning when an action triggers execution.
 
 All registration and query methods are `async`. DataFusion uses Tokio
 for both I/O and parallel execution — see
-[The Tokio Async Runtime](../Concepts/execution-lifecycle.md#the-tokio-async-runtime)
+[Execution Lifecycle][execution-lifecycle]
 for details.
 
 :::{admonition} Why register?
@@ -158,16 +158,16 @@ names address a specific catalog (`"warehouse.analytics.sales"`).
 
 For the complete catalog model — including the trait hierarchy, schema
 disambiguation, name resolution rules, case sensitivity, and extensibility
-— see [The Catalog Model](creating-concepts.md#the-catalog-model).
+— see [Creating Concepts][creating-concepts].
 
 :::{admonition} Cloud storage (Rust)
 :class: note
 To use `s3://`, `gs://`, or `az://` URLs, register an object store in
 the runtime environment. See
 
-- [`datafusion::datasource::object_store`](https://docs.rs/datafusion/latest/datafusion/datasource/object_store/index.html)
+- [`datafusion::datasource::object_store`]
 
-- [S3 setup example](https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/main.rs)
+- [S3 setup example][s3-example-main]
 
 :::
 
@@ -266,7 +266,7 @@ Registered tables live in the [`SessionContext`]'s in-memory catalog.
 When the context is dropped, all registrations are lost — there is no
 persistent catalog by default. For long-running applications, keep the
 context alive or re-register on startup. For persistent catalogs, see
-[Catalogs](../catalogs.md).
+[Catalogs](../../catalogs.md).
 :::
 
 ---
@@ -664,21 +664,73 @@ rather than ping-ponging between APIs step-by-step.
 :::
 
 For SQL-first workflows, round-trip transformations, and advanced
-patterns, see [From SQL Queries](from-sql.md).
+patterns, see [From SQL Queries][from-sql].
 
-## References
+## Further Reading
 
 **DataFusion:**
 
-- [Catalogs Guide](../catalogs.md) — Full catalog hierarchy and custom providers
-- [`TableProvider` trait](https://docs.rs/datafusion/latest/datafusion/datasource/trait.TableProvider.html) — Interface for custom data sources
-- [`CatalogProvider` trait](https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html) — Custom catalog implementations
-- [`information_schema`](../../user-guide/sql/information_schema.md) — SQL inspection of registered objects
-- [Using Rust async for Query Execution](https://datafusion.apache.org/blog/2025/01/28/async-dataframes/) — Async patterns in DataFusion
+- [Catalogs Guide][catalogs] — Full catalog hierarchy and custom providers
+- [`TableProvider` trait][`tableprovider`] — Interface for custom data sources
+- [`CatalogProvider` trait][`catalogprovider`] — Custom catalog implementations
+- [`information_schema`][information-schema] — SQL inspection of registered objects
+- [Using Rust async for Query Execution][async-cancellation-blog] — Async patterns in DataFusion
 
 **Other Systems (for comparison):**
 
-- [Polars: Register DataFrames for SQL](https://docs.pola.rs/user-guide/sql/intro/#register-dataframes) — Similar registration pattern
-- [DuckDB: Registering Objects as Tables](https://duckdb.org/docs/api/python/overview#registering-python-objects-as-tables)
+- [Polars: Register DataFrames for SQL][polars-register] — Similar registration pattern
+- [DuckDB: Registering Objects as Tables][duckdb-register]
 
 ---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[catalogs]: ../../catalogs.md
+[creating-concepts]: creating-concepts.md
+[execution-lifecycle]: ../Concepts/execution-lifecycle.md
+[from-sql]: from-sql.md
+[information-schema]: ../../../user-guide/sql/information_schema.md
+
+<!-- Core types -->
+
+[`catalogprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`datafusion::datasource::object_store`]: https://docs.rs/datafusion/latest/datafusion/datasource/object_store/index.html
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`information_schema`]: ../../../user-guide/sql/information_schema.md
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html
+[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+
+<!-- Methods and functions -->
+
+[`.catalog()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.catalog
+[`.deregister_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.deregister_table
+[`.into_view()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_view
+[`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`.register_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_arrow
+[`.register_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_avro
+[`.register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
+[`.register_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_csv
+[`.register_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_json
+[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`.schema()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.schema
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
+[`.table_exist()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table_exist
+[`.table_names()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table_names
+[tableprovider_scan]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html#tymethod.scan
+
+<!-- External resources -->
+
+[async-cancellation-blog]: https://datafusion.apache.org/blog/2025/06/30/cancellation/
+[duckdb-register]: https://duckdb.org/docs/api/python/overview#registering-python-objects-as-tables
+[polars-register]: https://docs.pola.rs/user-guide/sql/intro/#register-dataframes
+[s3-example-main]: https://github.com/apache/datafusion/blob/main/datafusion-examples/examples/external_dependency/main.rs

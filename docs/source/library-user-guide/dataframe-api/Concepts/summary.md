@@ -82,17 +82,17 @@ These references supplement the Concepts section. Each sub-page also links to it
 
 ### Internal Guides
 
-| Resource                                                     | Description                                                           |
-| ------------------------------------------------------------ | --------------------------------------------------------------------- |
-| [Using the DataFrame API](../using-the-dataframe-api.md)     | Overview + how this guide is structured                               |
-| [Creating DataFrames](../Creating-DataFrames/index.md)       | Read data and build an initial `DataFrame`                            |
-| [Transformations](../Transformations/index.md)               | Add filters, projections, joins, and aggregates (build the lazy plan) |
-| [Writing DataFrames](../Writing-DataFrames/index.md)         | Execute (`.collect()`, `.execute_stream()`) and write results         |
-| [Best Practices](../best-practices.md)                       | Performance tuning and correctness tips                               |
-| [Building Logical Plans](../building-logical-plans.md)       | Work directly with `LogicalPlan` / `LogicalPlanBuilder`               |
-| [Arrow Introduction](../../user-guide/arrow-introduction.md) | Arrow basics: `RecordBatch`, schemas, and columnar memory             |
-| [SQL Data Types](../../user-guide/sql/data_types.md)         | DataFusion’s SQL type system                                          |
-| [Scalar Functions](../../user-guide/sql/scalar_functions.md) | Built-in functions (used from both SQL and DataFrames)                |
+| Resource                                                        | Description                                                           |
+| --------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [Using the DataFrame API](../../using-the-dataframe-api.md)     | Overview + how this guide is structured                               |
+| [Creating DataFrames](../Creating-DataFrames/index.md)          | Read data and build an initial `DataFrame`                            |
+| [Transformations](../Transformations/index.md)                  | Add filters, projections, joins, and aggregates (build the lazy plan) |
+| [Writing DataFrames](../Writing-DataFrames/index.md)            | Execute (`.collect()`, `.execute_stream()`) and write results         |
+| [Best Practices](../best-practices.md)                          | Performance tuning and correctness tips                               |
+| [Building Logical Plans](../../building-logical-plans.md)       | Work directly with `LogicalPlan` / `LogicalPlanBuilder`               |
+| [Arrow Introduction](../../../user-guide/arrow-introduction.md) | Arrow basics: `RecordBatch`, schemas, and columnar memory             |
+| [SQL Data Types](../../../user-guide/sql/data_types.md)         | DataFusion’s SQL type system                                          |
+| [Scalar Functions](../../../user-guide/sql/scalar_functions.md) | Built-in functions (used from both SQL and DataFrames)                |
 
 ---
 

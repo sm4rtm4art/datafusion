@@ -66,7 +66,7 @@ In this document, code elements follow a consistent pattern:
 **Every method on this page wraps [`RecordBatch`]es in a [`MemTable`]
 and returns one lazy [`DataFrame`] — no conversion overhead.**
 
-DataFusion is built on [Apache Arrow](../../user-guide/arrow-introduction.md),
+DataFusion is built on [Apache Arrow](../../../user-guide/arrow-introduction.md),
 and [`RecordBatch`] is Arrow's standard unit for in-memory columnar
 data. A [`RecordBatch`] commonly arrives from Arrow Flight streams,
 IPC deserialization, Parquet readers, or your own application logic.
@@ -79,7 +79,7 @@ Regardless of how many batches you pass, each method call produces
 batches are not physically concatenated; they are stored inside the
 [`MemTable`] and streamed batch-by-batch during execution. For the
 architectural role of [`MemTable`] in DataFusion's provider model,
-see [MemTable (In-Memory)](creating-concepts.md#memtable-in-memory).
+see [MemTable (In-Memory)][creating-concepts].
 
 ### Single Batch with `.read_batch()`
 
@@ -197,7 +197,7 @@ All batches passed to [`.read_batches()`] must share the exact same
 schema (column names, types, order, nullability). A mismatch
 produces an error at creation time. For details on constructing
 [`RecordBatch`]es and common pitfalls, see the
-[Arrow Introduction](../../user-guide/arrow-introduction.md).
+[Arrow Introduction][arrow-introduction].
 :::
 
 ### Registering for Reuse
@@ -264,7 +264,7 @@ async fn main() -> Result<()> {
 
 For details on catalog registration, deregistration, and how
 registered tables interact with SQL, see
-[Registered Tables](registered-tables.md).
+[Registered Tables][registered-tables].
 
 ### Explicit MemTable for Partitioned Data
 
@@ -276,7 +276,7 @@ The convenience methods ([`.read_batch()`], [`.read_batches()`],
 single partition. When you need multiple partitions — for example,
 to let DataFusion process batch groups in parallel across CPU
 cores — construct the [`MemTable`] explicitly with
-`MemTable::try_new()`:
+[`MemTable::try_new()`].
 
 ```rust
 use std::sync::Arc;
@@ -332,14 +332,14 @@ async fn main() -> Result<()> {
 }
 ```
 
-The `partitions` argument to `MemTable::try_new()` is a
+The `partitions` argument to [`MemTable::try_new()`] is a
 `Vec<Vec<RecordBatch>>` — each inner `Vec` is one partition. During
 execution, DataFusion can assign different partitions to different
 threads. Within a partition, batches are streamed sequentially.
 
 :::{admonition} When to use explicit MemTable
 :class: tip
-Use `MemTable::try_new()` when you have naturally partitioned data
+Use [`MemTable::try_new()`] when you have naturally partitioned data
 (e.g., batches from different sources or regions) and want DataFusion
 to parallelize across them. For single-batch or single-partition
 scenarios, the convenience methods are simpler.
@@ -356,12 +356,12 @@ The four methods differ only in their input shape and catalog
 behavior — the resulting [`DataFrame`] is identical regardless of
 which method created it. The table below summarizes the trade-offs.
 
-| Method                | Input                   | Catalog entry | Partitions | Best for                               |
-| --------------------- | ----------------------- | ------------- | ---------- | -------------------------------------- |
-| [`.read_batch()`]     | Single `RecordBatch`    | No            | 1          | One-off processing of a single batch   |
-| [`.read_batches()`]   | `Vec<RecordBatch>`      | No            | 1          | Combining multiple same-schema batches |
-| [`.register_batch()`] | Single `RecordBatch`    | Yes (named)   | 1          | SQL access, multi-query reuse          |
-| `MemTable::try_new()` | `Vec<Vec<RecordBatch>>` | Manual        | N          | Parallel execution across partitions   |
+| Method                  | Input                   | Catalog entry | Partitions | Best for                               |
+| ----------------------- | ----------------------- | ------------- | ---------- | -------------------------------------- |
+| [`.read_batch()`]       | Single `RecordBatch`    | No            | 1          | One-off processing of a single batch   |
+| [`.read_batches()`]     | `Vec<RecordBatch>`      | No            | 1          | Combining multiple same-schema batches |
+| [`.register_batch()`]   | Single `RecordBatch`    | Yes (named)   | 1          | SQL access, multi-query reuse          |
+| [`MemTable::try_new()`] | `Vec<Vec<RecordBatch>>` | Manual        | N          | Parallel execution across partitions   |
 
 :::{admonition} Multiple batches via `.register_batch()`
 :class: note
@@ -380,29 +380,61 @@ a [`MemTable`] and produces a single lazy [`DataFrame`]. Use
 processing. Use [`.register_batch()`] when you need a named table
 accessible to SQL and multiple queries. And when you need
 partitioned parallelism, construct a [`MemTable`] directly with
-`MemTable::try_new()`. In all cases, the data stays in Arrow's
+[`MemTable::try_new()`]. In all cases, the data stays in Arrow's
 native columnar format — no conversion, no serialization overhead.
 
 ---
 
-## References
+## Further Reading
 
 **Concepts & Guides:**
 
-- [Arrow Introduction](../../user-guide/arrow-introduction.md) — RecordBatch fundamentals, construction, and common pitfalls
-- [MemTable (In-Memory)](creating-concepts.md#memtable-in-memory) — Architectural role of MemTable in DataFusion's provider model
-- [Registered Tables](registered-tables.md) — Catalog registration, deregistration, and SQL access
+- [Arrow Introduction][arrow-introduction] — RecordBatch fundamentals, construction, and common pitfalls
+- [MemTable (In-Memory)][creating-concepts] — Architectural role of MemTable in DataFusion's provider model
+- [Registered Tables][registered-tables] — Catalog registration, deregistration, and SQL access
 
 **API Documentation:**
 
-- [`SessionContext::read_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch) — One-shot DataFrame from a single RecordBatch
-- [`SessionContext::read_batches()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batches) — One-shot DataFrame from multiple RecordBatches
-- [`SessionContext::register_batch()`](https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch) — Register a RecordBatch as a named table
-- [`MemTable`](https://docs.rs/datafusion/latest/datafusion/datasource/struct.MemTable.html) — In-memory TableProvider for RecordBatches
-- [`RecordBatch`](https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html) — Arrow's columnar in-memory data format
+- [`SessionContext::read_batch()`] — One-shot DataFrame from a single RecordBatch
+- [`SessionContext::read_batches()`] — One-shot DataFrame from multiple RecordBatches
+- [`SessionContext::register_batch()`] — Register a RecordBatch as a named table
+- [`MemTable`] — In-memory TableProvider for RecordBatches
+- [`RecordBatch`] — Arrow's columnar in-memory data format
 
 **Arrow Ecosystem:**
 
-- [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) — Network protocol for high-performance Arrow data transfer
+- [Arrow Flight][arrow-flight] — Network protocol for high-performance Arrow data transfer
 
 ---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[arrow-introduction]: ../../../user-guide/arrow-introduction.md
+[creating-concepts]: creating-concepts.md
+[registered-tables]: registered-tables.md
+
+<!-- Core types -->
+
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+
+<!-- Methods and functions -->
+
+[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
+[`.read_batches()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batches
+[`.register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table
+[`memtable::try_new()`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html#method.try_new
+[`sessioncontext::read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
+[`sessioncontext::read_batches()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batches
+[`sessioncontext::register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
+
+<!-- External resources -->
+
+[arrow-flight]: https://arrow.apache.org/docs/format/Flight.html

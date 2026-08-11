@@ -78,7 +78,7 @@ DataFusion's DataFrame-API provides **composable validation primitives**—filte
 > **Coming from other ecosystems?** <br>
 > If you've used [Pandera] (Python), [Great Expectations], or [Deequ] (Spark), the patterns here serve a similar purpose: ensuring data meets business rules before processing. The DataFrame-API approach trades declarative schemas for programmatic flexibility—your validation rules are Rust functions you can test, version, and compose.
 >
-> For declarative validation built on DataFusion, projects such as [Term](https://github.com/withterm/term) aim to bring schema-based, declarative validation to the Rust/Arrow ecosystem.
+> For declarative validation built on DataFusion, projects such as Term aim to bring schema-based, declarative validation to the Rust/Arrow ecosystem.
 
 **Three constraint validation strategies:**
 

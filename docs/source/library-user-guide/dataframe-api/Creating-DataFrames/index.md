@@ -66,20 +66,20 @@ ecosystem-sources
 Each method below produces the same lazy DataFrame. The differences are in
 where your data lives and how much catalog integration you need.
 
-A gerneral [Concepts](creating-concepts.md) part is given additionaly the following topics are based on where your data lives.
+A gerneral [Concepts][creating-concepts] part is given additionaly the following topics are based on where your data lives.
 
 **Choose based on where your data lives and how you'll access it:**
 
-| Category               | Method                                    | Best for                                          | Prefer alternatives when                     |
-| ---------------------- | ----------------------------------------- | ------------------------------------------------- | -------------------------------------------- |
-| **Direct Read**        | [From Files](from-files/index.md)         | Ad-hoc analysis, ETL pipelines, one-off scripts   | You need stable names or multi-query reuse   |
-| **DataFusion Catalog** | [Registered Tables](registered-tables.md) | SQL interoperability, shared schemas, multi-query | Simple one-shot queries                      |
-| **SQL**                | [SQL Queries](from-sql.md)                | Complex joins, CTEs, window functions             | Dynamic logic, programmatic column selection |
-| **Native**             | [RecordBatches](from-memory.md)           | Arrow ecosystem, single or multi-batch processing | Large file-based datasets                    |
-| **Testing**            | [Inline Data](inline-data.md)             | Unit tests, small hand-authored examples          | Production ingestion or large datasets       |
-| **Streaming**          | [Streaming Sources](streaming.md)         | Unbounded data, real-time pipelines               | Bounded/batch workloads                      |
-| **Advanced**           | [LogicalPlan](from-logical-plan.md)       | Custom DSLs, federation, optimizer testing        | Higher-level methods suffice                 |
-| **Ecosystem**          | [External Sources](ecosystem-sources.md)  | Lakehouse formats, databases, distributed engines | Core formats (Parquet, CSV, etc.) suffice    |
+| Category               | Method                                   | Best for                                          | Prefer alternatives when                     |
+| ---------------------- | ---------------------------------------- | ------------------------------------------------- | -------------------------------------------- |
+| **Direct Read**        | [From Files][from-files]                 | Ad-hoc analysis, ETL pipelines, one-off scripts   | You need stable names or multi-query reuse   |
+| **DataFusion Catalog** | [Registered Tables][registered-tables]   | SQL interoperability, shared schemas, multi-query | Simple one-shot queries                      |
+| **SQL**                | [SQL Queries][from-sql]                  | Complex joins, CTEs, window functions             | Dynamic logic, programmatic column selection |
+| **Native**             | [RecordBatches][from-memory]             | Arrow ecosystem, single or multi-batch processing | Large file-based datasets                    |
+| **Testing**            | [Inline Data][inline-data]               | Unit tests, small hand-authored examples          | Production ingestion or large datasets       |
+| **Streaming**          | [Streaming Sources][streaming]           | Unbounded data, real-time pipelines               | Bounded/batch workloads                      |
+| **Advanced**           | [LogicalPlan](from-logical-plan.md)      | Custom DSLs, federation, optimizer testing        | Higher-level methods suffice                 |
+| **Ecosystem**          | [External Sources](ecosystem-sources.md) | Lakehouse formats, databases, distributed engines | Core formats (Parquet, CSV, etc.) suffice    |
 
 :::{admonition} Trade-off: Registration vs. Direct Read
 :class: tip
@@ -164,33 +164,49 @@ async fn main() -> Result<()> {
 This pattern—create context, create or register data, query—is the skeleton
 for every example in this guide. For SessionContext configuration (batch
 size, parallelism, object stores), see
-[SessionContext](../Concepts/sessioncontext.md). For how table names resolve
+[SessionContext][sessioncontext-page]. For how table names resolve
 in the catalog, see
-[The Catalog at a Glance](registered-tables.md#the-catalog-at-a-glance).
+[Registered Tables][registered-tables].
 
 ---
 
-<!-- Link references -->
+<!-- References -->
 
-[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
-[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/struct.MemTable.html
-[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+<!-- Internal documentation -->
+
+[creating-concepts]: creating-concepts.md
+[from-files]: from-files/index.md
+[from-memory]: from-memory.md
+[from-sql]: from-sql.md
+[inline-data]: inline-data.md
+[registered-tables]: registered-tables.md
+[sessioncontext-page]: ../Concepts/sessioncontext.md
+[streaming]: streaming.md
+
+<!-- Core types -->
+
 [`assert_batches_eq!`]: https://docs.rs/datafusion/latest/datafusion/macro.assert_batches_eq.html
-[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+
+<!-- Methods and functions -->
+
+[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
+[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
+[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
 [`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
 [`.read_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_json
-[`.read_avro()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_avro
-[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
-[`.read_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_batch
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
 [`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
-[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`.register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
 [`.register_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_csv
 [`.register_json()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_json
+[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
 [`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`.register_batch()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_batch
 [`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
 [`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table

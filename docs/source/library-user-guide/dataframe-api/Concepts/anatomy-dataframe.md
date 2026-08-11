@@ -19,7 +19,7 @@
 
 # Anatomy of a Dataframe: LogicalPlan + SessionState
 
-**A DataFrame is a lightweight handle pairing an immutable query plan (LogicalPlan) with a cloned execution environment (SessionState) — the two components needed for query execution.**
+**A [`DataFrame`] is a lightweight handle pairing an immutable query plan ([`LogicalPlan`]) with a cloned execution environment ([`SessionState`]) — the two components needed for query execution.**
 
 Every DataFrame you create captures two things: a LogicalPlan describing what to compute, and a SessionState clone providing the execution environment. Each LogicalPlan node carries a DFSchema that validates column names, types, and provenance at build time — long before any data flows. This separation is what makes DataFrames lightweight, cheaply cloneable, and safe to use across async boundaries.
 
@@ -47,7 +47,7 @@ DataFrame
 
 The **left branch** — the [`LogicalPlan`] — is the query recipe. Each node in the plan tree represents a relational operation (filter, join, aggregate) and carries a [`DFSchema`] that validates column names, types, and provenance at plan-build time (see [DFSchema: The Schema Layer](#dfschema-the-schema-layer) below). The **right branch** — the [`SessionState`] — is a structural clone of the execution environment at creation time.
 
-The [`SessionContext`] is mutable and evolves over your session, but each `DataFrame` holds its own [`SessionState`] clone. The clone is **structural, not deep**: value-type fields (config, function registries) become independent copies, while Arc-wrapped fields (catalog, runtime) remain shared references. Transformations like `.filter()` or `.select()` return new DataFrames with updated plans but the same state clone; actions like `.collect()` execute using that state.
+The [`SessionContext`] is mutable and evolves over your session, but each [`DataFrame`] holds its own [`SessionState`] clone. The clone is **structural, not deep**: value-type fields (config, function registries) become independent copies, while Arc-wrapped fields (catalog, runtime) remain shared references. Transformations like [`.filter()`] or [`.select()`] return new DataFrames with updated plans but the same state clone; actions like [`.collect()`] execute using that state.
 
 | What's independent (cloned by value)      | What's shared (via Arc)                         |
 | ----------------------------------------- | ----------------------------------------------- |
@@ -55,9 +55,9 @@ The [`SessionContext`] is mutable and evolves over your session, but each `DataF
 | Function registries (UDFs, UDAFs, UDWFs)  | Runtime environment (memory pool, disk manager) |
 | Query start timestamp                     |                                                 |
 
-For the complete clone semantics, see [The SessionState Clone](../Creating-DataFrames/creating-concepts.md#the-sessionstate-clone).
+For the complete clone semantics, see [Creating Concepts][creating-concepts].
 
-The rest of this page explores each component in detail: first the inner workings with a step-by-step walkthrough, then the schema layer that validates every transformation, and finally the escape hatch to `LogicalPlanBuilder` for advanced use.
+The rest of this page explores each component in detail: first the inner workings with a step-by-step walkthrough, then the schema layer that validates every transformation, and finally the escape hatch to [`LogicalPlanBuilder`] for advanced use.
 
 ---
 
@@ -132,23 +132,15 @@ Here's how this flows through the system in a nutshell:
 
 Unlike a single plate, the meal arrives in **RecordBatches**—sliced like a Sunday roast 🍖, one portion at a time. This streaming approach lets DataFusion handle datasets much larger than memory.
 
-<!-- NOTICE TO PCM/CONTRIBUTORS: Tempted to add alphabet soup image here for the "meal" metaphor!
-
-Inspiration:
-
-https://media.istockphoto.com/id/1210366546/de/foto/tomatensuppe-mit-buchstabennudeln-auf-l%C3%B6ffel.jpg?s=2048x2048&w=is&k=20&c=SaZ0yj4WLabqvd41RKJZlS7dRgZw_A-jVtuGrfGgvZo=
-
-Of cause without copyright etc. !
--->
 
 :::{admonition} Best practice
 :class: tip
-Register UDFs and tables **before** creating DataFrames that depend on them. If you need a new UDF or table mid-processing, register it on the `SessionContext`, then create a **new DataFrame** — existing DataFrames keep their original snapshots.
+Register UDFs and tables **before** creating DataFrames that depend on them. If you need a new UDF or table mid-processing, register it on the [`SessionContext`], then create a **new DataFrame** — existing DataFrames keep their original snapshots.
 :::
 
 :::{admonition} Learn more
 :class: seealso
-See [SessionContext and SessionState relationship][sessioncontext and sessionstate] for implementation details.
+See [SessionContext][sessioncontext] for implementation details.
 :::
 
 ---
@@ -157,15 +149,15 @@ See [SessionContext and SessionState relationship][sessioncontext and sessionsta
 
 **Every `LogicalPlan` node knows exactly what columns it produces — before any data is touched.**
 
-[`DFSchema`] is DataFusion's schema wrapper around Arrow's `Schema`. While Arrow's `Schema` describes columnar data at rest (column name + data type + nullable), `DFSchema` adds the metadata the query planner needs to validate and optimize queries:
+[`DFSchema`] is DataFusion's schema wrapper around Arrow's [`Schema`]. While Arrow's [`Schema`] describes columnar data at rest (column name + data type + nullable), [`DFSchema`] adds the metadata the query planner needs to validate and optimize queries:
 
-| What `DFSchema` tracks                      | Why it matters                                                     |
+| What [`DFSchema`] tracks                    | Why it matters                                                     |
 | :------------------------------------------ | :----------------------------------------------------------------- |
-| **Column names + data types + nullability** | Same as Arrow `Schema` — the basics                                |
+| **Column names + data types + nullability** | Same as Arrow [`Schema`] — the basics                              |
 | **Table qualifier** (e.g., `orders.amount`) | Disambiguates columns after joins involving same-named columns     |
 | **Functional dependencies**                 | Tracks which columns uniquely determine others (used by optimizer) |
 
-Every node in a `LogicalPlan` tree carries its own `DFSchema`. When you chain transformations, DataFusion validates the schema at each step — this is what enables the fail-fast behavior:
+Every node in a [`LogicalPlan`] tree carries its own [`DFSchema`]. When you chain transformations, DataFusion validates the schema at each step — this is what enables the fail-fast behavior:
 
 ```text
 Aggregate(group=[region], agg=[sum(amount)])   ← DFSchema: {region: Utf8, sum(amount): Float64}
@@ -173,11 +165,11 @@ Aggregate(group=[region], agg=[sum(amount)])   ← DFSchema: {region: Utf8, sum(
        └─ TableScan("sales")                   ← DFSchema: {id: Int64, region: Utf8, amount: Int64}
 ```
 
-If you reference a column that doesn't exist, the `.filter()` or `.select()` call fails immediately with a clear error — long before any data is scanned. Table qualifiers (`a.id` vs `b.id`) prevent ambiguity in joins, and the optimizer leverages schema metadata (functional dependencies, nullability) to apply more aggressive rewrites.
+If you reference a column that doesn't exist, the [`.filter()`] or [`.select()`] call fails immediately with a clear error — long before any data is scanned. Table qualifiers (`a.id` vs `b.id`) prevent ambiguity in joins, and the optimizer leverages schema metadata (functional dependencies, nullability) to apply more aggressive rewrites.
 
 :::{admonition} Deep dive
 :class: seealso
-For the full schema API — creating schemas, coercion rules, inspection methods, and schema-aware DataFrame operations — see the [Schema Management](../Schema-Management/index.md) section.
+For the full schema API — creating schemas, coercion rules, inspection methods, and schema-aware DataFrame operations — see the [Schema Management][schema-management] section.
 :::
 
 ---
@@ -186,7 +178,7 @@ For the full schema API — creating schemas, coercion rules, inspection methods
 
 **`DataFrame` methods are convenience wrappers around `LogicalPlanBuilder` — for most users the DataFrame API is sufficient, but you can drop to the builder level when you need fine-grained control.**
 
-For standard queries and transformations, the `DataFrame` API handles everything: it manages the `SessionState`, chains transformations, and triggers execution. Under the hood, each `DataFrame` method maps directly to a `LogicalPlanBuilder` method — they produce identical plans:
+For standard queries and transformations, the [`DataFrame`] API handles everything: it manages the [`SessionState`], chains transformations, and triggers execution. Under the hood, each [`DataFrame`] method maps directly to a [`LogicalPlanBuilder`] method — they produce identical plans:
 
 | DataFrame method           | LogicalPlanBuilder equivalent       |
 | -------------------------- | ----------------------------------- |
@@ -195,7 +187,7 @@ For standard queries and transformations, the `DataFrame` API handles everything
 | [`DataFrame::aggregate()`] | [`LogicalPlanBuilder::aggregate()`] |
 | [`DataFrame::join()`]      | [`LogicalPlanBuilder::join()`]      |
 
-Sometimes you need direct `LogicalPlan` access — custom optimizer rules, query rewriting systems, or programmatic plan inspection. DataFusion lets you move freely between the two levels using [`.into_parts()`], which consumes the DataFrame and returns `(SessionState, LogicalPlan)` as separate values:
+Sometimes you need direct [`LogicalPlan`] access — custom optimizer rules, query rewriting systems, or programmatic plan inspection. DataFusion lets you move freely between the two levels using [`.into_parts()`], which consumes the [`DataFrame`] and returns `(SessionState, LogicalPlan)` as separate values:
 
 | Use DataFrame API for...             | Use LogicalPlanBuilder for...  |
 | ------------------------------------ | ------------------------------ |
@@ -250,10 +242,47 @@ DataFrame → create_physical_plan() → ExecutionPlan
 :::{admonition} Further reading
 :class: seealso
 
-- [Building Logical Plans](../building-logical-plans.md) — advanced [`LogicalPlanBuilder`] usage
-- [`LogicalPlanBuilder` API docs][logicalplanbuilder] — full method reference
+- [Building Logical Plans][building-logical-plans] — advanced [`LogicalPlanBuilder`] usage
+- [`LogicalPlanBuilder` API docs][`logicalplanbuilder`] — full method reference
   :::
 
 ---
 
-With the anatomy clear — `LogicalPlan` for the recipe, `SessionState` for the frozen environment, `DFSchema` for validation at every step — the next question is: what happens when you call `.collect()`? See [Execution Lifecycle](execution-lifecycle.md) for the full journey from lazy plan to parallel execution.
+With the anatomy clear — [`LogicalPlan`] for the recipe, [`SessionState`] for the frozen environment, [`DFSchema`] for validation at every step — the next question is: what happens when you call [`.collect()`]? See [Execution Lifecycle][execution-lifecycle] for the full journey from lazy plan to parallel execution.
+
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[building-logical-plans]: ../../building-logical-plans.md
+[creating-concepts]: ../Creating-DataFrames/creating-concepts.md
+[execution-lifecycle]: execution-lifecycle.md
+[schema-management]: ../Schema-Management/index.md
+[sessioncontext]: sessioncontext.md
+
+<!-- Core types -->
+
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`logicalplanbuilder`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html
+[`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+
+<!-- Methods and functions -->
+
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`.into_parts()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.into_parts
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`dataframe::aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`dataframe::filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
+[`dataframe::join()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.join
+[`dataframe::select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`logicalplanbuilder::aggregate()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html#method.aggregate
+[`logicalplanbuilder::filter()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html#method.filter
+[`logicalplanbuilder::join()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html#method.join
+[`logicalplanbuilder::project()`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/struct.LogicalPlanBuilder.html#method.project

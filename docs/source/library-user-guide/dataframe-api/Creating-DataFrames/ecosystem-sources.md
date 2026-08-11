@@ -135,14 +135,14 @@ LOCATION 's3://bucket/events/';
 Check each crate's documentation for DDL support.
 :::
 
-For a complete guide on building your own `TableProvider`, see the
-[Custom Table Provider Guide]. For the registration pattern in detail,
-see [Custom TableProviders](registered-tables.md#custom-tableproviders).
+For a complete guide on building your own [`TableProvider`], see the
+[Custom Table Provider Guide][custom-table-provider-guide]. For the registration pattern in detail,
+see [Registered Tables][registered-tables].
 
 ## Available Sources
 
 **DataFusion's ecosystem spans lakehouse formats, database connectors,
-and distributed execution — all integrated through `TableProvider`.**
+and distributed execution — all integrated through [`TableProvider`].**
 
 ### Lakehouse Formats
 
@@ -151,19 +151,19 @@ travel, schema evolution — on top of object storage. Each crate
 implements [`TableProvider`] for both reads and writes, so the same
 registration pattern produces a fully queryable [`DataFrame`].
 
-| Format         | Crate                                                  | Highlights                                   | Status           |
-| -------------- | ------------------------------------------------------ | -------------------------------------------- | ---------------- |
-| Delta Lake     | [delta-rs](https://github.com/delta-io/delta-rs)       | ACID transactions, time travel, Z-ordering   | Production-ready |
-| Apache Iceberg | [iceberg-rust](https://github.com/apache/iceberg-rust) | Hidden partitioning, partition evolution     | Maturing         |
-| Lance          | [lance](https://github.com/lancedb/lance)              | ML-optimized columnar with vector search     | Production-ready |
-| Apache Hudi    | [hudi-rs](https://github.com/apache/hudi-rs)           | Incremental processing, record-level upserts | Incubating       |
+| Format         | Crate                        | Highlights                                   | Status           |
+| -------------- | ---------------------------- | -------------------------------------------- | ---------------- |
+| Delta Lake     | [delta-rs][delta-rs]         | ACID transactions, time travel, Z-ordering   | Production-ready |
+| Apache Iceberg | [iceberg-rust][iceberg-rust] | Hidden partitioning, partition evolution     | Maturing         |
+| Lance          | [lance][lance]               | ML-optimized columnar with vector search     | Production-ready |
+| Apache Hudi    | [hudi-rs][hudi-rs]           | Incremental processing, record-level upserts | Incubating       |
 
 For write-side integration (`.write_table()` with lakehouse formats),
-see [When to Consider Lakehouse Table Formats].
+see [When to Consider Lakehouse Table Formats][writing-dataframes].
 
 ### Database and Flight Connectors
 
-The [DataFusion Table Providers] crate bridges relational databases and
+The [DataFusion Table Providers][datafusion-table-providers] crate bridges relational databases and
 Arrow Flight sources into DataFusion. Each connector supports predicate
 pushdown where the source database can handle it, minimizing data
 transfer.
@@ -181,29 +181,29 @@ transfer.
 For workloads that exceed a single node, DataFusion serves as the
 execution kernel inside distributed frameworks:
 
-| Project             | What it does                                   | Link                                                    |
-| ------------------- | ---------------------------------------------- | ------------------------------------------------------- |
-| DataFusion Ballista | Distributed query execution using DataFusion   | [GitHub](https://github.com/apache/datafusion-ballista) |
-| DataFusion Comet    | Spark and Iceberg accelerator using DataFusion | [Docs](https://datafusion.apache.org/comet/)            |
+| Project             | What it does                                   | Link                      |
+| ------------------- | ---------------------------------------------- | ------------------------- |
+| DataFusion Ballista | Distributed query execution using DataFusion   | [GitHub][ballista-github] |
+| DataFusion Comet    | Spark and Iceberg accelerator using DataFusion | [Docs][comet-docs]        |
 
 ### More Community Extensions
 
 The [`datafusion-contrib`] organization hosts additional extensions.
-See the full [Extensions List] for an up-to-date catalog.
+See the full [Extensions List][extensions-list] for an up-to-date catalog.
 
-| Extension                   | Type            | Description                                |
-| --------------------------- | --------------- | ------------------------------------------ |
-| [DataFusion Federation]     | Framework       | Execute (parts of) plans on remote engines |
-| [DataFusion ORC]            | `TableProvider` | Apache ORC file format                     |
-| [DataFusion JSON Functions] | Functions       | Scalar functions for querying JSON strings |
+| Extension                                              | Type              | Description                                |
+| ------------------------------------------------------ | ----------------- | ------------------------------------------ |
+| [DataFusion Federation][datafusion-federation]         | Framework         | Execute (parts of) plans on remote engines |
+| [DataFusion ORC][datafusion-orc]                       | [`TableProvider`] | Apache ORC file format                     |
+| [DataFusion JSON Functions][datafusion-json-functions] | Functions         | Scalar functions for querying JSON strings |
 
 :::{admonition} Cloud Object Stores
 :class: seealso
 
 Cloud storage (S3, GCS, Azure) is a transport layer, not a data source
 format. DataFusion reads cloud-hosted files through object store URLs
-after registering an `ObjectStore` implementation. See
-[Cloud Storage](from-files/index.md#cloud-storage) for setup details.
+after registering an [`ObjectStore`] implementation. See
+[Cloud Storage][from-files-index] for setup details.
 :::
 
 :::{admonition} Community crates evolve independently
@@ -215,14 +215,14 @@ documentation** for the latest API compatibility, supported DataFusion
 versions, and feature status.
 :::
 
-## References
+## Further Reading
 
 **Guides:**
 
-- [Custom Table Provider Guide] — build your own `TableProvider`
-- [Registered Tables](registered-tables.md) — registration patterns and catalog integration
-- [Extensions List] — full community extensions catalog
-- [When to Consider Lakehouse Table Formats] — write-side lakehouse integration
+- [Custom Table Provider Guide][custom-table-provider-guide] — build your own `TableProvider`
+- [Registered Tables][registered-tables] — registration patterns and catalog integration
+- [Extensions List][extensions-list] — full community extensions catalog
+- [When to Consider Lakehouse Table Formats][writing-dataframes] — write-side lakehouse integration
 
 **API:**
 
@@ -230,17 +230,39 @@ versions, and feature status.
 - [`.register_table()`] — register any provider in the catalog
 - [`TableProviderFactory`] — enable DDL-based registration
 
-<!-- Link references -->
+---
 
-[custom table provider guide]: ../../custom-table-providers.md
-[extensions list]: ../../extensions.md
-[when to consider lakehouse table formats]: ../Writing-DataFrames/writing-dataframes.md#when-to-consider-lakehouse-table-formats
-[datafusion table providers]: https://github.com/datafusion-contrib/datafusion-table-providers
-[datafusion federation]: https://github.com/datafusion-contrib/datafusion-federation
-[datafusion orc]: https://github.com/datafusion-contrib/datafusion-orc
-[datafusion json functions]: https://github.com/datafusion-contrib/datafusion-functions-json
-[`datafusion-contrib`]: https://github.com/datafusion-contrib
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`tableproviderfactory`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProviderFactory.html
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[custom-table-provider-guide]: ../../custom-table-providers.md
+[extensions-list]: ../../extensions.md
+[from-files-index]: from-files/index.md
+[registered-tables]: registered-tables.md
+[writing-dataframes]: ../Writing-DataFrames/writing-dataframes.md
+
+<!-- Core types -->
+
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`datafusion-contrib`]: https://github.com/datafusion-contrib
+[`objectstore`]: https://docs.rs/datafusion/latest/datafusion/datasource/object_store/index.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+[`tableproviderfactory`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProviderFactory.html
+
+<!-- Methods and functions -->
+
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+
+<!-- External resources -->
+
+[ballista-github]: https://github.com/apache/datafusion-ballista
+[comet-docs]: https://datafusion.apache.org/comet/
+[datafusion-federation]: https://github.com/datafusion-contrib/datafusion-federation
+[datafusion-json-functions]: https://github.com/datafusion-contrib/datafusion-functions-json
+[datafusion-orc]: https://github.com/datafusion-contrib/datafusion-orc
+[datafusion-table-providers]: https://github.com/datafusion-contrib/datafusion-table-providers
+[delta-rs]: https://github.com/delta-io/delta-rs
+[hudi-rs]: https://github.com/apache/hudi-rs
+[iceberg-rust]: https://github.com/apache/iceberg-rust
+[lance]: https://github.com/lance-format/lance

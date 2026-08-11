@@ -76,7 +76,7 @@ DataFusion also uses "streaming" to describe its internal execution
 model, where _any_ DataFrame (even from a bounded Parquet file) delivers
 results as an incremental `RecordBatch` stream. For that execution-side
 topic, see
-[Streaming Execution](../Writing-DataFrames/streaming-execution.md).
+[Streaming Execution][streaming-execution].
 :::
 
 Streaming data in the DataFusion context means _unbounded data_ —
@@ -257,7 +257,7 @@ On Unix systems, create a named pipe with `mkfifo /tmp/sensor.pipe`,
 then point `FileStreamProvider` at the pipe path. A separate process
 writes CSV or JSON lines into the pipe, and DataFusion reads them as an
 unbounded stream. See the
-[FIFO integration test](https://github.com/apache/datafusion/blob/main/datafusion/core/tests/fifo/mod.rs)
+[FIFO integration test][fifo-test]
 for a complete working example.
 :::
 
@@ -296,7 +296,7 @@ planner to use incremental operators (e.g. streaming aggregation on
 ordered keys) without inserting a full sort.
 
 For the complete SQL syntax, see
-[DDL: CREATE EXTERNAL TABLE](../../../../user-guide/sql/ddl.md).
+[DDL: CREATE EXTERNAL TABLE][ddl].
 
 ### Custom Sources with `StreamingTable`
 
@@ -439,7 +439,7 @@ bounded memory, while on an unordered stream they require infinite memory.
 
 For the full optimization pipeline and how `Boundedness` propagates
 through plan nodes, see
-[Execution Lifecycle](../Concepts/execution-lifecycle.md).
+[Execution Lifecycle][execution-lifecycle].
 
 ## What DataFusion Does Not Provide
 
@@ -464,21 +464,21 @@ does not provide turnkey watermarking, its sort-order tracking and
 interval-based pruning in streaming joins provide the primitives that
 downstream frameworks build upon. Several projects do exactly that:
 
-- [**Arroyo**](https://github.com/ArroyoSystems/arroyo) — distributed
+- [**Arroyo**][arroyo] — distributed
   stream processing engine using DataFusion for SQL parsing and logical
   plan generation, with custom streaming operators, Kafka connectors,
   and Chandy-Lamport checkpointing.
-- [**Denormalized**](https://github.com/probably-nothing-labs/denormalized) —
+- [**Denormalized**][denormalized] —
   a "DuckDB for streaming" focused on single-node windowed
   aggregations on top of DataFusion.
-- [**Synnada**](https://synnada.ai/) — building a unified batch and
+- [**Synnada**][synnada] — building a unified batch and
   streaming engine on DataFusion, contributing streaming operator
   improvements upstream.
 
 :::{admonition} Community discussion
 :class: seealso
 For the ongoing conversation about streaming support in DataFusion,
-see [GitHub Discussion #11404](https://github.com/apache/datafusion/issues/11404).
+see [GitHub Discussion #11404][streaming-discussion].
 :::
 
 ## Choosing the Right Approach
@@ -493,25 +493,25 @@ and how much control you need.**
 | [`StreamingTable`]                | Any `PartitionStream` | Medium        | Moderate     | Channel-based sources, custom integrations        |
 | Custom [`TableProvider`]          | Anything              | Full          | Significant  | Kafka, gRPC, websockets, sources needing pushdown |
 
-For simple file-based streaming, `StreamTable` or the SQL `UNBOUNDED`
+For simple file-based streaming, [`StreamTable`] or the SQL `UNBOUNDED`
 path suffices. For custom sources (message queues, network streams),
-implement `PartitionStream` and use `StreamingTable`. For sources that
+implement [`PartitionStream`] and use [`StreamingTable`]. For sources that
 need predicate pushdown, custom partitioning, or sink capabilities,
-implement the full `TableProvider` trait directly.
+implement the full [`TableProvider`] trait directly.
 
-## References
+## Further Reading
 
 **Concepts and Guides:**
 
-- [Streaming Execution](../Writing-DataFrames/streaming-execution.md) —
+- [Streaming Execution][streaming-execution] —
   consuming DataFrames incrementally via `.execute_stream()`
-- [Execution Lifecycle](../Concepts/execution-lifecycle.md) —
+- [Execution Lifecycle][execution-lifecycle] —
   how plans move from lazy construction through optimization to execution
-- [How DataFrame Creation Works](creating-concepts.md) —
+- [How DataFrame Creation Works][creating-concepts] —
   the `TableProvider` architecture and built-in providers
-- [Registered Tables](registered-tables.md) —
+- [Registered Tables][registered-tables] —
   registering and managing tables in the catalog
-- [DDL: CREATE EXTERNAL TABLE](../../../../user-guide/sql/ddl.md) —
+- [DDL: CREATE EXTERNAL TABLE][ddl] —
   full SQL syntax including `UNBOUNDED` and `WITH ORDER`
 
 **API Documentation:**
@@ -525,22 +525,45 @@ implement the full `TableProvider` trait directly.
 - [`StreamProvider`] — trait for custom file-like stream sources
 - [`TableProvider`] — the core trait for all data sources
 
-<!-- Link references -->
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[creating-concepts]: creating-concepts.md
+[ddl]: ../../../user-guide/sql/ddl.md
+[execution-lifecycle]: ../Concepts/execution-lifecycle.md
+[registered-tables]: registered-tables.md
+[streaming-execution]: ../Writing-DataFrames/streaming-execution.md
+
+<!-- Core types -->
 
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
-[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
-[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
-[`streamtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTable.html
-[`streamconfig`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamConfig.html
-[`streamprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/trait.StreamProvider.html
 [`filestreamprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.FileStreamProvider.html
-[`streamtablefactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTableFactory.html
-[`streamingtable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.StreamingTable.html
 [`partitionstream`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/trait.PartitionStream.html
-[`streamingtableexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/struct.StreamingTableExec.html
 [`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
 [`sanitycheckplan`]: https://docs.rs/datafusion/latest/datafusion/physical_optimizer/sanity_checker/struct.SanityCheckPlan.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`streamconfig`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamConfig.html
+[`streamingtable`]: https://docs.rs/datafusion/latest/datafusion/catalog/streaming/struct.StreamingTable.html
+[`streamingtableexec`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/struct.StreamingTableExec.html
+[`streamprovider`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/trait.StreamProvider.html
+[`streamtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTable.html
+[`streamtablefactory`]: https://docs.rs/datafusion/latest/datafusion/datasource/stream/struct.StreamTableFactory.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+
+<!-- Methods and functions -->
+
+[`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
+[`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
+[`.read_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_table
+[`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
+
+<!-- External resources -->
+
+[arroyo]: https://github.com/ArroyoSystems/arroyo
+[denormalized]: https://github.com/probably-nothing-labs/denormalized
+[fifo-test]: https://github.com/apache/datafusion/blob/main/datafusion/core/tests/fifo/mod.rs
+[streaming-discussion]: https://github.com/apache/datafusion/issues/11404
+[synnada]: https://synnada.ai/

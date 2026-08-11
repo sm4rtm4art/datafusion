@@ -40,7 +40,6 @@ Creating-DataFrames/index
 Schema-Management/index
 Transformations/index
 Writing-DataFrames/index
-Test-sphinx
 ```
 
 ## The DataFrame Lifecycle
@@ -76,12 +75,13 @@ The documentation follows the **lifecycle of a DataFrame**—from creation to ex
 | Execute DataFrames and get results      | [Writing & Executing](writing-dataframes.md#dataframe-execution)                  |
 | Save results to files                   | [Writing DataFrames](writing-dataframes.md#writing-dataframes-persistent-storage) |
 | Stream large results                    | [Streaming Execution](writing-dataframes.md#partitioned--streaming-execution)     |
-|                                         |                                                                                   |
+|                                         |                                                              
+<!--TODO: Remove or repoint >                     |
 | **Optimize & Debug**                    |                                                                                   |
 | Improve query performance               | [Best Practices](best-practices.md)                                               |
 | Debug query plans                       | [Best Practices § Debugging](best-practices.md#debugging-techniques)              |
 | Configure batch sizes                   | [Best Practices § Configuration](best-practices.md#configuration-reference)       |
-
+-->
 ## Common Operations Quick Reference
 
 ```text

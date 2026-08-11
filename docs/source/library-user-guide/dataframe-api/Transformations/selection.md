@@ -44,13 +44,13 @@ Column-oriented transformations reshape the schema of a lazy [`DataFrame`] witho
 
 **Key Methods**
 
-| Method                                                             | Purpose                                                                    |
-| :----------------------------------------------------------------- | :------------------------------------------------------------------------- |
-| [`.select_columns()`](#choosing-select_columns-or-select)          | Define the complete output from existing fields named explicitly           |
-| [`.select()`](#choosing-select_columns-or-select)                  | Define the complete output from column references and computed expressions |
-| [`.with_column()`](#adding-replacing-and-renaming-columns)         | Preserve surrounding fields while adding or replacing one named expression |
-| [`.with_column_renamed()`](#adding-replacing-and-renaming-columns) | Preserve the column set while changing one field name                      |
-| [`.drop_columns()`](#removing-columns)                             | Preserve the remaining fields while excluding named columns                |
+| Method                     | Purpose                                                                    |
+| :------------------------- | :------------------------------------------------------------------------- |
+| [`.select_columns()`]      | Define the complete output from existing fields named explicitly           |
+| [`.select()`]              | Define the complete output from column references and computed expressions |
+| [`.with_column()`]         | Preserve surrounding fields while adding or replacing one named expression |
+| [`.with_column_renamed()`] | Preserve the column set while changing one field name                      |
+| [`.drop_columns()`]        | Preserve the remaining fields while excluding named columns                |
 
 :::{admonition} Style Note
 :class: note
@@ -459,6 +459,11 @@ Complete projections and targeted column changes serve different stages of a tra
 
 <!-- DataFrame methods -->
 
+[`.drop_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.drop_columns
+[`.select()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
+[`.select_columns()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns
+[`.with_column()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column
+[`.with_column_renamed()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column_renamed
 [select-columns-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select_columns
 [select-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.select
 [with-column-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.with_column

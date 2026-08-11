@@ -58,7 +58,7 @@ By default, the Rust compiler produces code for a wide range of CPUs, which may 
 RUSTFLAGS='-C target-cpu=native' cargo build --release
 ```
 
-This can significantly improve performance for filtering, aggregation, and joins. See [Crate Configuration: Generate Code with CPU Specific Instructions](../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for more options including LTO and PGO.
+This can significantly improve performance for filtering, aggregation, and joins. See [Crate Configuration: Generate Code with CPU Specific Instructions](../../../user-guide/crate-configuration.md#generate-code-with-cpu-specific-instructions) for more options including LTO and PGO.
 :::
 
 ---

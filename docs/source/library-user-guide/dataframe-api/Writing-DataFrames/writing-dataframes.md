@@ -126,7 +126,7 @@ The table below summarizes the key concerns. Think of these as a mental checklis
 | **Path handling**    | Write methods accept `&str` paths. Use `path.display().to_string()` (not `.to_str().unwrap()`) to convert `PathBuf`—it avoids panics on non-UTF-8 paths.           |
 
 > **Tip:** <br>
-> For production pipelines, validate write targets early (check permissions, available space) and implement retry logic for transient failures. See [Best Practices](best-practices.md) for patterns.
+> For production pipelines, validate write targets early (check permissions, available space) and implement retry logic for transient failures. See [Best Practices](../best-practices.md) for patterns.
 
 ### Write Methods Overview
 
@@ -145,7 +145,7 @@ Each DataFrame write method has a SQL equivalent that produces the same [`Logica
 
 For SQL syntax details, see:
 
-- [DML: `COPY` and `INSERT`](../../user-guide/sql/dml.md).
+- [DML: `COPY` and `INSERT`](../../../user-guide/sql/dml.md).
 
 **File writes:** ([`.write_parquet()`], [`.write_csv()`], [`.write_json()`]) stream `RecordBatch`es directly to storage using format-specific serializers. <br>
 **Table writes;** ([`.write_table()`]) delegate to the target provider's `insert_into` implementation, which may write files, send data over a network, or perform custom logic.
@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
 > Use `memory://` for tests and examples, **not for persistent storage.**
 
 > **Tip:** <br>
-> For S3 / Azure / GCS configuration, see [Advanced Topics](dataframes-advance.md).
+> For S3 / Azure / GCS configuration, see [Advanced Topics](../dataframes-advance.md).
 > <br>
 > DataFusion SQL-API users can use `COPY ... TO 's3://...'` with the same object store configuration.
 
@@ -293,7 +293,7 @@ Here a small overview of the different behaviour of the common files should be g
 
 For format-specific writer options (compression codecs, delimiters, etc.), see:
 
-- [Format Options](../../user-guide/sql/format_options.md) — SQL-level options for `COPY` statements
+- [Format Options](../../../user-guide/sql/format_options.md) — SQL-level options for `COPY` statements
 - Format-specific sections below for DataFrame API options
 
 ### Configuring Writes
@@ -303,7 +303,7 @@ For format-specific writer options (compression codecs, delimiters, etc.), see:
 To apply the configuration, call a write action (for example, [`.write_parquet()`]) with a `path`, `options`, and optional format-specific `writer_options`.
 
 **SQL equivalent:** <br>
-Use a `COPY ... STORED AS ...` statement (and `INSERT INTO ...` for table writes). See [DML: `COPY` and `INSERT`](../../user-guide/sql/dml.md).
+Use a `COPY ... STORED AS ...` statement (and `INSERT INTO ...` for table writes). See [DML: `COPY` and `INSERT`](../../../user-guide/sql/dml.md).
 
 | Parameter        | Type                      | Required | Purpose                                        |
 | ---------------- | ------------------------- | -------- | ---------------------------------------------- |
@@ -748,7 +748,7 @@ The DataFrame schema must be **logically equivalent** to the target table's sche
 
 If schemas don't match, use [`.select()`] with [`.alias()`] to reorder/rename, or [`.cast_to()`] to align types before writing.
 
-> **See also:** <br> > [Schema Management](./schema-management.md) covers type coercion rules, validation patterns, and debugging mismatches in depth.
+> **See also:** <br> > [Schema Management](../Schema-Management/index.md) covers type coercion rules, validation patterns, and debugging mismatches in depth.
 
 #### Built-in TableProvider Implementations
 

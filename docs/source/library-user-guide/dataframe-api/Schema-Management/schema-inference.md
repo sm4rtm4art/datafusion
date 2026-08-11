@@ -21,17 +21,17 @@
 
 **Inference derives column names and types from data samples — useful for exploration, but risky as a production contract.**
 
-DataFusion can derive an Arrow `Schema` — column names, data types, and nullability — automatically when reading CSV or JSON files, sampling the first N records and guessing types from the values it finds. This document covers when to prefer explicit schemas over inference, how the sampling mechanism works, how multi-file reads merge schemas, and the failure modes that make inferred schemas risky in production pipelines. For the query-planning schema (`DFSchema`) that wraps the inferred result, see [Schema Concepts](schema-concepts.md).
+DataFusion can derive an Arrow `Schema` — column names, data types, and nullability — automatically when reading CSV or JSON files, sampling the first N records and guessing types from the values it finds. This document covers when to prefer explicit schemas over inference, how the sampling mechanism works, how multi-file reads merge schemas, and the failure modes that make inferred schemas risky in production pipelines. For the query-planning schema (`DFSchema`) that wraps the inferred result, see [Schema Concepts][schema-concepts].
 
 **Key methods:**
 
-| Method                                            | Purpose                                             | Section                                                          |
-| :------------------------------------------------ | :-------------------------------------------------- | :--------------------------------------------------------------- |
-| [`CsvReadOptions::schema_infer_max_records()`]    | Configure CSV inference sample size                 | [Configuring the Sample Size](#configuring-the-sample-size)      |
-| [`NdJsonReadOptions::schema_infer_max_records()`] | Configure JSON inference sample size                | [Configuring the Sample Size](#configuring-the-sample-size)      |
-| [`FileFormat::infer_schema()`]                    | Discover schemas through the format abstraction     | [Multi-File Inference](#multi-file-inference-and-schema-merging) |
-| [`Schema::try_merge()`]                           | Merge sampled schemas across files                  | [Multi-File Inference](#multi-file-inference-and-schema-merging) |
-| [`has_equivalent_names_and_types()`]              | Compare inferred names and types against a contract | [Validating an Inferred Schema](#validating-an-inferred-schema)  |
+| Method                                                                                  | Purpose                                             | Section                                                          |
+| :-------------------------------------------------------------------------------------- | :-------------------------------------------------- | :--------------------------------------------------------------- |
+| [`CsvReadOptions::schema_infer_max_records()`][csv-schema-infer-max]                    | Configure CSV inference sample size                 | [Configuring the Sample Size](#configuring-the-sample-size)      |
+| [`NdJsonReadOptions::schema_infer_max_records()`][ndjson-schema-infer-max]              | Configure JSON inference sample size                | [Configuring the Sample Size](#configuring-the-sample-size)      |
+| [`FileFormat::infer_schema()`][fileformat-infer-schema]                                 | Discover schemas through the format abstraction     | [Multi-File Inference](#multi-file-inference-and-schema-merging) |
+| [`Schema::try_merge()`][schema-try-merge]                                               | Merge sampled schemas across files                  | [Multi-File Inference](#multi-file-inference-and-schema-merging) |
+| [`DFSchema::has_equivalent_names_and_types()`][dfschema-has-equivalent-names-and-types] | Compare inferred names and types against a contract | [Validating an Inferred Schema](#validating-an-inferred-schema)  |
 
 :::{admonition} Style Note
 :class: note
@@ -72,8 +72,8 @@ Schema inference derives column names and types from a data sample automatically
 :::{admonition} Constructing and applying explicit schemas
 :class: seealso
 
-- [Creating Schemas](schema-creation.md) for constructing Arrow `Schema` and `DFSchema` programmatically.
-- [Applying Explicit Schemas at Read Time](schema-application.md) for passing schemas to [`CsvReadOptions`], [`NdJsonReadOptions`], and other format-specific readers.
+- [Creating Schemas][schema-creation] for constructing Arrow `Schema` and `DFSchema` programmatically.
+- [Applying Explicit Schemas at Read Time][schema-application] for passing schemas to [`CsvReadOptions`], [`NdJsonReadOptions`], and other format-specific readers.
 
 ::::
 
@@ -103,7 +103,7 @@ CSV inference recognizes ISO-like date and timestamp strings and can infer `Date
 
 :::{admonition} Format-specific details
 :class: seealso
-For detailed reading options, error handling, and compression support beyond inference, see [Reading CSV Files](../Creating-DataFrames/from-files/csv.md) and [Reading JSON Files](../Creating-DataFrames/from-files/json.md).
+For detailed reading options, error handling, and compression support beyond inference, see [Reading CSV Files][csv] and [Reading JSON Files][json].
 :::
 
 The following example reads a CSV file with inference, shows the resulting data, and inspects the inferred schema:
@@ -216,7 +216,7 @@ When DataFusion reads multiple files (e.g., a directory of CSV files via [`Listi
 After sampling, DataFusion merges the per-file schemas using Arrow's [`Schema::try_merge()`]. The merge:
 
 - **Unions fields** — a field appearing in any sampled file appears in the merged schema.
-- **Fails on type conflicts** — if file A has `amount: Int64` and file B has `amount: Utf8`, the merge returns an error. Arrow does not widen types during merge (e.g., `Int32` and `Int64` for the same field is a conflict, not a promotion). DataFusion's [type coercion](type-coercion.md) rules apply later, inside the `LogicalPlan` — not at the merge step.
+- **Fails on type conflicts** — if file A has `amount: Int64` and file B has `amount: Utf8`, the merge returns an error. Arrow does not widen types during merge (e.g., `Int32` and `Int64` for the same field is a conflict, not a promotion). DataFusion's [type coercion][type-coercion] rules apply later, inside the `LogicalPlan` — not at the merge step.
 
 :::{admonition} Self-describing formats
 :class: note
@@ -236,7 +236,7 @@ Schema inference can fail in three distinct ways, each with different symptoms a
 
 ### Schema Drift
 
-A column inferred as `Int64` from the first 1,000 rows may encounter float values, strings, or nulls further into the file. The inferred schema is fixed at inference time and does not adapt. At execution time, values that cannot parse into the inferred type can fail the read, while values that fit the inferred type but not the business meaning can produce silent semantic drift. For how DataFusion reconciles types _within_ a plan, see [Type Coercion](type-coercion.md) — but coercion cannot fix a fundamentally wrong inferred source type.
+A column inferred as `Int64` from the first 1,000 rows may encounter float values, strings, or nulls further into the file. The inferred schema is fixed at inference time and does not adapt. At execution time, values that cannot parse into the inferred type can fail the read, while values that fit the inferred type but not the business meaning can produce silent semantic drift. For how DataFusion reconciles types _within_ a plan, see [Type Coercion][type-coercion] — but coercion cannot fix a fundamentally wrong inferred source type.
 
 | Scenario                     | Inferred Result                        | Actual Data                           | Consequence                                  |
 | :--------------------------- | :------------------------------------- | :------------------------------------ | :------------------------------------------- |
@@ -251,7 +251,7 @@ When reading multiple files, files sampled later in the loop may have different 
 
 ### Validating an Inferred Schema
 
-Use [`has_equivalent_names_and_types()`] from [Inspecting and Validating Schemas](schema-inspection.md) to compare inferred field names and data types against an expected contract before executing the pipeline. The method returns `Ok(())` on match and a descriptive error on mismatch, making it a natural guard clause for names and types. It intentionally ignores nullability and metadata; use the deeper validation methods in the inspection page when those properties are part of the contract.
+Use [`has_equivalent_names_and_types()`] from [Inspecting and Validating Schemas][schema-inspection] to compare inferred field names and data types against an expected contract before executing the pipeline. The method returns `Ok(())` on match and a descriptive error on mismatch, making it a natural guard clause for names and types. It intentionally ignores nullability and metadata; use the deeper validation methods in the inspection page when those properties are part of the contract.
 
 The following example uses the same `sensor_readings.csv` data, constructs an expected schema, and validates the inferred result:
 
@@ -295,7 +295,7 @@ async fn main() -> datafusion::error::Result<()> {
 
 :::{admonition} When inference picks the wrong type
 :class: tip
-If validation fails — for example, inference chose `Float64` for a currency column that needs `Decimal128(19, 2)` — the fix is to provide an explicit schema via [`CsvReadOptions::schema()`] instead of relying on inference. See [Creating Schemas](schema-creation.md) for how to construct one.
+If validation fails — for example, inference chose `Float64` for a currency column that needs `Decimal128(19, 2)` — the fix is to provide an explicit schema via [`CsvReadOptions::schema()`] instead of relying on inference. See [Creating Schemas][schema-creation] for how to construct one.
 :::
 
 ## Conclusion
@@ -307,25 +307,43 @@ Schema inference provides a fast on-ramp for exploration, but the guess is based
 :::{admonition} Related documents
 :class: seealso
 
-- [Creating Schemas](schema-creation.md) — constructing explicit schemas programmatically
-- [Applying Explicit Schemas at Read Time](schema-application.md) — format-specific schema strategies
-- [Inspecting and Validating Schemas](schema-inspection.md) — checking inferred schemas before use
+- [Creating Schemas][schema-creation] — constructing explicit schemas programmatically
+- [Applying Explicit Schemas at Read Time][schema-application] — format-specific schema strategies
+- [Inspecting and Validating Schemas][schema-inspection] — checking inferred schemas before use
   :::
 
-<!-- Link references -->
+---
 
-[`schema`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
-[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[csv]: ../Creating-DataFrames/from-files/csv.md
+[json]: ../Creating-DataFrames/from-files/json.md
+[schema-application]: schema-application.md
+[schema-concepts]: schema-concepts.md
+[schema-creation]: schema-creation.md
+[schema-inspection]: schema-inspection.md
+[type-coercion]: type-coercion.md
+
+<!-- Core types -->
+
 [`csvreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html
-[`csvreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema
-[`ndjsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html
-[`ndjsonreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema
-[`csvreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
-[`ndjsonreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.NdJsonReadOptions.html#method.schema_infer_max_records
-[`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
 [`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
-[`schema::try_merge()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.try_merge
+[`ndjsonreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html
+
+<!-- Methods and functions -->
+
+[`csvreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema
+[`csvreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
 [`fileformat::infer_schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/trait.FileFormat.html#tymethod.infer_schema
 [`has_equivalent_names_and_types()`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
+[`ndjsonreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.schema
+[`ndjsonreadoptions::schema_infer_max_records()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.schema_infer_max_records
+[`schema::try_merge()`]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.try_merge
+[`truncated_rows`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.truncated_rows
+[csv-schema-infer-max]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.CsvReadOptions.html#method.schema_infer_max_records
+[dfschema-has-equivalent-names-and-types]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html#method.has_equivalent_names_and_types
+[fileformat-infer-schema]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/trait.FileFormat.html#tymethod.infer_schema
+[ndjson-schema-infer-max]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.JsonReadOptions.html#method.schema_infer_max_records
+[schema-try-merge]: https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html#method.try_merge

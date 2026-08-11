@@ -23,6 +23,13 @@
 
 Analytical questions often require one result from several related rows rather than one result for every input row. SQL expresses these analyses with aggregate functions and optional clauses such as `GROUP BY`; DataFusion's DataFrame API creates the same grouped or whole-input summaries with [`.aggregate()`][aggregate-method], grouping expressions, and aggregate expressions. This page shows how to choose the result grain, select aggregate expressions with the intended count and contribution semantics, and position filters before or after aggregation. It also identifies common cases where a valid aggregation can still answer the wrong question.
 
+**Key Methods**
+
+| Method           | Purpose                                                                 |
+| :--------------- | :---------------------------------------------------------------------- |
+| [`.aggregate()`] | Change grain by grouping related rows and computing summary expressions |
+| [`.filter()`]    | Narrow rows before aggregation (WHERE-like) or after it (HAVING-like)   |
+
 :::{admonition} Style Note
 :class: note
 :collapsible: closed
@@ -574,6 +581,8 @@ When individual rows cannot answer an analytical question, [`.aggregate()`][aggr
 <!-- REFERENCES -->
 
 [aggregate-expression-api]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/index.html
+[`.aggregate()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
+[`.filter()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.filter
 [aggregate-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.aggregate
 [approx-distinct-function]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_distinct.html
 [approx-median-function]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.approx_median.html
@@ -611,6 +620,6 @@ When individual rows cannot answer an analytical question, [`.aggregate()`][aggr
 [session-context-new]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.new
 [show-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
 [stddev-function]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.stddev.html
-[string-agg-function]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.string_agg.html
+[string-agg-function]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/string_agg/fn.string_agg.html
 [sum-function]: https://docs.rs/datafusion/latest/datafusion/functions_aggregate/expr_fn/fn.sum.html
 [when-function]: https://docs.rs/datafusion/latest/datafusion/logical_expr/expr_fn/fn.when.html

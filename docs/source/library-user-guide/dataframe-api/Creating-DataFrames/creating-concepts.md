@@ -62,7 +62,7 @@ into a single hub.
 
 At the end of the pipeline, the [`SessionContext`] clones its
 [`SessionState`] and pairs it with a [`LogicalPlan`] — producing the
-[`DataFrame`]: a lazy, composable handle where every transformation
+[`DataFrame`] — a lazy, composable handle where every transformation
 returns a new plan and Rust's ownership model guarantees thread safety.
 
 The following diagram shows the dataflow through each layer:
@@ -141,13 +141,13 @@ DATAFRAME CREATION PATHWAYS
                        (via SessionState: Optimize ➔ Plan ➔ Execute)
 ```
 
-| Layer              | Input                                   | Output                               | Mechanism                         |
-| ------------------ | --------------------------------------- | ------------------------------------ | --------------------------------- |
-| **Data Source**    | Raw bytes (files, streams, memory, DBs) | Source-specific data                 | —                                 |
-| **TableProvider**  | Source-specific data                    | Arrow [`Schema`] + scan plan         | `impl TableProvider`              |
-| **Access Pattern** | TableProvider                           | Ephemeral plan or catalog entry      | [`.read_*()`] / [`.register_*()`] |
-| **SessionContext** | Plans + catalog + config + runtime      | SessionState clone + [`LogicalPlan`] | State clone                       |
-| **DataFrame**      | SessionState clone + [`LogicalPlan`]    | Lazy, composable query handle        | `DataFrame::new(state, plan)`     |
+| Layer              | Input                                   | Output                               | Mechanism                     |
+| ------------------ | --------------------------------------- | ------------------------------------ | ----------------------------- |
+| **Data Source**    | Raw bytes (files, streams, memory, DBs) | Source-specific data                 | —                             |
+| **TableProvider**  | Source-specific data                    | Arrow [`Schema`] + scan plan         | `impl TableProvider`          |
+| **Access Pattern** | TableProvider                           | Ephemeral plan or catalog entry      | `.read_*()` / `.register_*()` |
+| **SessionContext** | Plans + catalog + config + runtime      | SessionState clone + [`LogicalPlan`] | State clone                   |
+| **DataFrame**      | SessionState clone + [`LogicalPlan`]    | Lazy, composable query handle        | `DataFrame::new(state, plan)` |
 
 For hands-on guides to each creation method (Parquet, CSV, SQL,
 RecordBatches, and more), see the [Creating DataFrames](index.md)
@@ -524,31 +524,40 @@ time; the optimizer can only work with what the plan provides.
 
 **And this is how a DataFrame is born.**
 
-<!-- Link references -->
+---
 
+<!-- References -->
+
+<!-- Core types -->
+
+[`catalogprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
 [`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
-[`logicalplan`]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.LogicalPlan.html
 [`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`diskmanager`]: https://docs.rs/datafusion/latest/datafusion/execution/disk_manager/struct.DiskManager.html
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`memorypool`]: https://docs.rs/datafusion/latest/datafusion/execution/memory_pool/trait.MemoryPool.html
+[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html
+[`objectstoreregistry`]: https://docs.rs/datafusion/latest/datafusion/execution/object_store/trait.ObjectStoreRegistry.html
+[`partitionstream`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/trait.PartitionStream.html
+[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
 [`schema`]: https://docs.rs/arrow/latest/arrow/datatypes/struct.Schema.html
+[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
 [`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
 [`sessionstate`]: https://docs.rs/datafusion/latest/datafusion/execution/session_state/struct.SessionState.html
+[`streamingtable`]: https://docs.rs/datafusion/latest/datafusion/catalog/streaming/struct.StreamingTable.html
 [`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
-[`listingtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/listing/struct.ListingTable.html
-[`memtable`]: https://docs.rs/datafusion/latest/datafusion/datasource/memory/struct.MemTable.html
-[`streamingtable`]: https://docs.rs/datafusion/latest/datafusion/catalog/struct.StreamingTable.html
-[`partitionstream`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/streaming/trait.PartitionStream.html
-[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
-[`recordbatch`]: https://docs.rs/arrow/latest/arrow/record_batch/struct.RecordBatch.html
+
+<!-- Methods and functions -->
+
 [`.collect()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.collect
-[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
 [`.execute_stream()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.execute_stream
-[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
 [`.read_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_csv
-[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
+[`.read_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_parquet
 [`.register_csv()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_csv
+[`.register_parquet()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_parquet
 [`.register_table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_table
-[`memorypool`]: https://docs.rs/datafusion/latest/datafusion/execution/memory_pool/trait.MemoryPool.html
-[`diskmanager`]: https://docs.rs/datafusion/latest/datafusion/execution/disk_manager/struct.DiskManager.html
-[`objectstoreregistry`]: https://docs.rs/datafusion/latest/datafusion/execution/object_store/trait.ObjectStoreRegistry.html
-[`catalogprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.CatalogProvider.html
-[`schemaprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.SchemaProvider.html
+[`.show()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.show
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`.table()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.table

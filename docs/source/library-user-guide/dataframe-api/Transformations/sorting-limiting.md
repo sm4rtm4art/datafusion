@@ -55,11 +55,13 @@ STAGE PLAN
 
 Analytical queries often need more than the right rows: they need those rows in a meaningful sequence and sometimes only a bounded portion of that sequence. In DataFusion, `.sort()` and `.sort_by()` establish order, while `.limit(skip, fetch)` skips rows and bounds the result without evaluating a predicate. This page shows how sort-key precedence, direction, null placement, and method order determine which rows are returned, then combines sorting and limiting for deterministic global Top-N results. Because limiting is positional, place it deliberately and establish a sufficiently complete sort order whenever the selected rows must be reproducible.
 
-| Method                                 | Purpose                                                               |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| [`.sort()`](#defining-a-sort-order)    | Define sort-key precedence, direction, and null placement explicitly. |
-| [`.sort_by()`](#defining-a-sort-order) | Apply the fixed `ASC NULLS LAST` policy to each sort expression.      |
-| [`.limit()`](#taking-a-bounded-slice)  | Skip input rows and return an optionally bounded result.              |
+**Key Methods**
+
+| Method         | Purpose                                                               |
+| :------------- | :-------------------------------------------------------------------- |
+| [`.sort()`]    | Define sort-key precedence, direction, and null placement explicitly. |
+| [`.sort_by()`] | Apply the fixed `ASC NULLS LAST` policy to each sort expression.      |
+| [`.limit()`]   | Skip input rows and return an optionally bounded result.              |
 
 :::{admonition} Style Note
 :class: note
@@ -350,6 +352,9 @@ Combined as `.sort(...).limit(...)`, these transformations return a global Top-N
 - Execution and display actions such as `.collect()`, `.show()`, and `.show_limit()` belong with Writing DataFrames.
 - For physical TopK execution and dynamic-filter pushdown, see [Dynamic Filters: Passing Information Between Operators During Execution][dynamic-filters-blog].
 
+[`.limit()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.limit
+[`.sort()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
+[`.sort_by()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort_by
 [sort-by-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort_by
 [sort-method]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.sort
 [expr-sort-method]: https://docs.rs/datafusion/latest/datafusion/logical_expr/enum.Expr.html#method.sort

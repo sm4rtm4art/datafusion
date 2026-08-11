@@ -23,6 +23,12 @@
 
 Analytical applications rarely need every row from each input, and their filtering criteria are often determined by application state or user input. DataFusion narrows a `DataFrame` with [`.filter()`], using Boolean-compatible expressions that can be composed, validated against the input schema, and handled through Rust's normal `Result` flow. This page covers comparisons, Boolean composition, membership tests, ranges, patterns, null-aware rules, and predicates assembled from optional application inputs. It also explains why some predicate errors surface later and why filter pushdown is a performance optimization rather than a semantic guarantee.
 
+**Key Methods**
+
+| Method        | Purpose                                                         |
+| :------------ | :-------------------------------------------------------------- |
+| [`.filter()`] | Retain rows whose Boolean-compatible `Expr` evaluates to `true` |
+
 :::{admonition} Style Note
 :class: note
 :collapsible: closed

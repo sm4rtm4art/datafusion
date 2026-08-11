@@ -27,7 +27,7 @@ Arrow IPC — also known as Feather v2 — persists Arrow's in-memory columnar
 layout directly to disk. DataFusion is built on Arrow, so IPC files are
 its most natural data source: the on-disk bytes already match the in-memory
 representation, so reading requires minimal conversion. DataFusion reads IPC
-**files** from disk or object stores via `ctx.read_arrow()` — it does not
+**files** from disk or object stores via [`.read_arrow()`] — it does not
 natively connect to live message brokers.
 
 :::{admonition} Style Note
@@ -59,7 +59,7 @@ deserialization cost.**
 The name "Arrow IPC" stands for Inter-Process Communication — a serialization protocol
 that stores Arrow record batches as a flat sequence of binary messages.
 DataFusion reads the schema from the file header (or footer, for the File
-format), then returns a lazy `DataFrame`. Unlike CSV or JSON, no schema
+format), then returns a lazy [`DataFrame`]. Unlike CSV or JSON, no schema
 inference is needed — types are preserved exactly as they were written.
 
 Arrow IPC is columnar, so DataFusion performs true I/O-level column projection:
@@ -74,7 +74,7 @@ which one a file uses:
    batch offsets; supports range-based **parallel reading**
 2. **Stream format** — no footer; must be read **sequentially** from start to
    end (not to be confused with live event streaming — see
-   [Streaming Sources](../streaming.md))
+   [Streaming Sources][streaming])
 
 :::{seealso}
 
@@ -86,8 +86,8 @@ enabling near-zero deserialization.
 
 For more details, See:
 
-- [Arrow Columnar Format — Serialization and IPC](https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc)
-- [Arrow Flight RPC](https://arrow.apache.org/docs/format/Flight.html)
+- [Arrow Columnar Format — Serialization and IPC][arrow-ipc-format]
+- [Arrow Flight RPC][arrow-flight]
   :::
 
 ```rust
@@ -163,7 +163,7 @@ reader before the file is processed. This defines the contract for how
 DataFusion should interpret the incoming bytes.
 
 This differs from [`DataFrame::schema()`], which _returns_ the resolved
-`DFSchema` of an already-created DataFrame.
+[`DFSchema`] of an already-created DataFrame.
 :::
 
 ---
@@ -200,10 +200,10 @@ lossy round-trips that can occur with CSV or JSON.
 :::{admonition} Register for repeated queries and SQL access
 :class: tip
 
-Use `ctx.register_arrow("table_name", "path.arrow", options)` to register
-the IPC file as a named table in the `SessionContext` catalog. This enables:
+Use [`.register_arrow()`] to register
+the IPC file as a named table in the [`SessionContext`] catalog. This enables:
 
-- **SQL access** — query the table via `ctx.sql("SELECT * FROM table_name")`
+- **SQL access** — query the table via [`.sql()`]
 - **Cross-query reuse** — multiple DataFrame operations and SQL queries
   can reference the same table name without re-reading options or paths
 
@@ -226,11 +226,41 @@ guidelines help avoid common pitfalls.
 | :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
 | Caching intermediate results | Write DataFusion outputs as IPC to avoid re-computation. LZ4 buffer compression is applied by default — no configuration needed.       |
 | Cross-process sharing        | Standard format for passing record batches between processes on the same machine. Columnar alignment enables memory-mapped reads.      |
-| File extensions              | Files may use `.arrow`, `.feather`, or `.ipc`. Set `file_extension` in `ArrowReadOptions` to match your naming convention.             |
+| File extensions              | Files may use `.arrow`, `.feather`, or `.ipc`. Set `file_extension` in [`ArrowReadOptions`] to match your naming convention.           |
 | Long-term storage            | Prefer Parquet — smaller files, embedded statistics, and predicate pushdown provide significantly better analytical query performance. |
 
 ## Arrow IPC References
 
-- [`ArrowReadOptions` API](https://docs.rs/datafusion/latest/datafusion/execution/options/struct.ArrowReadOptions.html) — All configuration options
-- [Arrow Columnar Format — IPC](https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc) — Format specification for the IPC protocol
-- [Arrow Flight RPC](https://arrow.apache.org/docs/format/Flight.html) — High-performance network data transfer built on Arrow IPC
+- [`ArrowReadOptions` API][`arrowreadoptions`] — All configuration options
+- [Arrow Columnar Format — IPC][arrow-ipc-format] — Format specification for the IPC protocol
+- [Arrow Flight RPC][arrow-flight] — High-performance network data transfer built on Arrow IPC
+
+---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[streaming]: ../streaming.md
+
+<!-- Core types -->
+
+[`arrowreadoptions`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`dfschema`]: https://docs.rs/datafusion/latest/datafusion/common/struct.DFSchema.html
+[`file_extension`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+
+<!-- Methods and functions -->
+
+[`.read_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.read_arrow
+[`.register_arrow()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.register_arrow
+[`.sql()`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html#method.sql
+[`arrowreadoptions::schema()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html#method.schema
+[`arrowreadoptions::table_partition_cols()`]: https://docs.rs/datafusion/latest/datafusion/datasource/file_format/options/struct.ArrowReadOptions.html#method.table_partition_cols
+[`dataframe::schema()`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html#method.schema
+
+<!-- External resources -->
+
+[arrow-flight]: https://arrow.apache.org/docs/format/Flight.html
+[arrow-ipc-format]: https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc

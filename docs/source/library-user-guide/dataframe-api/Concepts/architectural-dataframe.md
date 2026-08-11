@@ -34,10 +34,10 @@ DataFusion is an embeddable, modular query engine built on Apache Arrow. It prov
 
 **DataFusion a modern OLAP query engine with a `Boring` but battle tested architecture.**
 
-DataFusion's architecture follows three guiding principles (see [SIGMOD 2024 Paper] Section 5.1):
+DataFusion's architecture follows three guiding principles (see [SIGMOD 2024 Paper][sigmod-paper]):
 
 1. **Work "out of the box"** — Provide a very fast, world-class query engine with minimal setup or required configuration.
-2. **Customizable everything** — All behavior should be customizable by implementing traits (`TableProvider`, `OptimizerRule`, `ExecutionPlan`, etc.).
+2. **Customizable everything** — All behavior should be customizable by implementing traits ([`TableProvider`], [`OptimizerRule`], [`ExecutionPlan`], etc.).
 3. **Architecturally boring** — Follow industrial best practice rather than trying cutting-edge, but unproven, techniques.
 
 With these principles, users start with a basic, high-performance engine and specialize it over time to suit their needs and available engineering capacity.
@@ -50,9 +50,9 @@ With these principles, users start with a basic, high-performance engine and spe
 
 In modern data architectures, information resides across multiple systems and formats. DataFusion acts as a central query engine designed to process this distributed data efficiently. It natively reads standard file formats (Parquet, CSV, JSON, Avro) and integrates seamlessly with the Apache Arrow in-memory format.
 
-Beyond native files, DataFusion is highly extensible. Through the `TableProvider` trait, developers can connect the engine to external databases (via JDBC/ODBC extensions), REST APIs, or modern data lakehouse formats (Iceberg, Delta Lake). External systems can even pre-filter data at the source — a concept known as predicate pushdown — before delivering it to DataFusion. Once ingested, all data is processed in DataFusion's highly optimized, columnar Arrow framework.
+Beyond native files, DataFusion is highly extensible. Through the [`TableProvider`] trait, developers can connect the engine to external databases (via JDBC/ODBC extensions), REST APIs, or modern data lakehouse formats (Iceberg, Delta Lake). External systems can even pre-filter data at the source — a concept known as predicate pushdown — before delivering it to DataFusion. Once ingested, all data is processed in DataFusion's highly optimized, columnar Arrow framework.
 
-The following diagram traces how data enters DataFusion — from diverse sources through `TableProvider`s and `SessionContext`, branching into two APIs that converge into one `DataFrame`:
+The following diagram traces how data enters DataFusion — from diverse sources through [`TableProvider`]s and [`SessionContext`], branching into two APIs that converge into one [`DataFrame`]:
 
 ```text
 [ DATA SOURCES ]
@@ -90,7 +90,7 @@ The following diagram traces how data enters DataFusion — from diverse sources
 
 ```
 
-DataFusion exposes the same query engine through **two equivalent interfaces**: the SQL API (parser-based) and the DataFrame API (builder-based). Both compile to the same `LogicalPlan`, receive identical optimizations, and execute with the same performance. For a detailed side-by-side comparison, see [Builder vs. Parser](builder-parser.md).
+DataFusion exposes the same query engine through **two equivalent interfaces**: the SQL API (parser-based) and the DataFrame API (builder-based). Both compile to the same [`LogicalPlan`] , receive identical optimizations, and execute with the same performance. For a detailed side-by-side comparison, see [Builder vs. Parser][builder-parser].
 
 ---
 
@@ -123,6 +123,26 @@ DataFusion is optimized for read-heavy analytical queries where you scan large a
 
 ---
 
-Everything is configured and set in place in the `SessionContext` — catalogs, table providers, UDFs, and runtime configuration all live there. Continue to [SessionContext](sessioncontext.md) for the full picture.
+Everything is configured and set in place in the [`SessionContext`] — catalogs, table providers, UDFs, and runtime configuration all live there. Continue to [SessionContext][sessioncontext] for the full picture.
 
 ---
+
+<!-- References -->
+
+<!-- Internal documentation -->
+
+[builder-parser]: builder-parser.md
+[sessioncontext]: sessioncontext.md
+
+<!-- Core types -->
+
+[`dataframe`]: https://docs.rs/datafusion/latest/datafusion/dataframe/struct.DataFrame.html
+[`executionplan`]: https://docs.rs/datafusion/latest/datafusion/physical_plan/trait.ExecutionPlan.html
+[`logicalplan`]: https://docs.rs/datafusion-expr/latest/datafusion_expr/logical_plan/enum.LogicalPlan.html
+[`optimizerrule`]: https://docs.rs/datafusion/latest/datafusion/optimizer/trait.OptimizerRule.html
+[`sessioncontext`]: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionContext.html
+[`tableprovider`]: https://docs.rs/datafusion/latest/datafusion/catalog/trait.TableProvider.html
+
+<!-- External resources -->
+
+[sigmod-paper]: https://andrew.nerdnetworks.org/pdf/SIGMOD-2024-lamb.pdf
